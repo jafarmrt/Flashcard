@@ -57,10 +57,33 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
 
   useEffect(() => {
     if (card) {
-      setFormData(card);
+      // Destructure to only get the fields relevant to the form,
+      // excluding SRS data and the old deckId. This prevents stale data.
+      const { 
+          front, back, pronunciation, partOfSpeech, definition, 
+          exampleSentenceTarget, notes, audioSrc 
+      } = card;
+      setFormData({ 
+          front, back, pronunciation, partOfSpeech, definition, 
+          exampleSentenceTarget, notes, audioSrc 
+      });
+
       if (initialDeckName) {
         setDeckName(initialDeckName);
       }
+    } else {
+      // Reset the form when creating a new card
+      setFormData({
+        front: '',
+        back: '',
+        pronunciation: '',
+        partOfSpeech: '',
+        definition: '',
+        exampleSentenceTarget: '',
+        notes: '',
+        audioSrc: undefined,
+      });
+      setDeckName('Default Deck');
     }
   }, [card, initialDeckName]);
 
