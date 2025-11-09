@@ -13,7 +13,8 @@
     "react-dom": "^19.2.0",
     "dexie": "^4.0.7",
     "webworker": "^0.8.4",
-    "@vercel/node": "^5.5.5"
+    "@vercel/node": "^5.5.5",
+    "@google/genai": "^1.29.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
