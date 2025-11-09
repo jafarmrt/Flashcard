@@ -15,51 +15,39 @@ export default async function handler(request, response) {
   }
   
   try {
-    // Get the parameters sent from our frontend
     const { model, contents, config } = request.body;
-
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
-    // Initialize the body for the Google API call.
-    const googleApiBody: any = {};
+    let googleApiBody;
 
-    // 1. Set the contents. The format can vary depending on the request type.
-    if (Array.isArray(contents)) { // For chat history and TTS
-        googleApiBody.contents = contents;
-    } else if (typeof contents === 'object' && contents.parts) { // For multimodal input (e.g., image + text)
-        googleApiBody.contents = [contents];
-    } else { // For simple text prompts
-        googleApiBody.contents = [{ parts: [{ text: contents }] }];
-    }
-
-    // 2. Intelligently add configuration from the client to the correct places.
-    if (config) {
-      // Properties for standard text generation go inside 'generationConfig'.
-      if (config.responseMimeType || config.responseSchema) {
-        googleApiBody.generationConfig = {};
-        if (config.responseMimeType) {
-          googleApiBody.generationConfig.responseMimeType = config.responseMimeType;
-        }
-        if (config.responseSchema) {
-          googleApiBody.generationConfig.responseSchema = config.responseSchema;
-        }
-      }
-      
-      // Properties for TTS (and other special modalities) are top-level fields.
-      if (config.responseModalities) {
-        googleApiBody.responseModalities = config.responseModalities;
-      }
-      if (config.speechConfig) {
-        googleApiBody.speechConfig = config.speechConfig;
-      }
+    // Explicitly check if it's a Text-to-Speech request based on the model name.
+    // This is more reliable than inferring from the config object.
+    if (model && model.includes('tts')) {
+        // Build the specific body required for TTS
+        googleApiBody = {
+            contents: contents, // TTS expects `contents` to be an array e.g. [{ parts: [{ text: "..." }] }]
+            responseModalities: config?.responseModalities,
+            speechConfig: config?.speechConfig,
+        };
+    } else {
+        // Handle all other types of requests (text, json, chat, multimodal)
+        googleApiBody = {
+            // Normalize `contents` to the expected format for the API
+            contents: Array.isArray(contents)
+                ? contents // For chat history
+                : (typeof contents === 'object' && contents.parts)
+                    ? [contents] // For multimodal input
+                    : [{ parts: [{ text: contents }] }], // For simple text prompts
+            
+            // For text/json generation, parameters go inside generationConfig
+            generationConfig: config,
+        };
     }
 
     // Call the actual Google GenAI REST API on the server
     const geminiResponse = await fetch(`${endpoint}?key=${apiKey}`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(googleApiBody),
     });
 
@@ -76,14 +64,14 @@ export default async function handler(request, response) {
 
     const responseData = await geminiResponse.json();
     
-    // Adapt the REST API response to a structure that the client-side code expects.
-    // This ensures the frontend can correctly parse both text and audio data from the 'candidates' array.
+    // Adapt the REST API response to a structure the client-side code expects.
+    // This allows the client to handle both text and audio responses consistently.
     const adaptedResponse = {
         text: responseData.candidates?.[0]?.content?.parts?.[0]?.text || '',
         candidates: responseData.candidates,
     };
 
-    // Send the adapted response from Gemini back to our frontend
+    // Send the adapted response back to our frontend
     response.status(200).json(adaptedResponse);
 
   } catch (error) {
