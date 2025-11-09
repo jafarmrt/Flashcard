@@ -291,15 +291,27 @@ const App: React.FC = () => {
         const localData = { decks, cards: flashcards };
         const response = await callProxy('sync-merge', { syncKey, data: localData });
         
-        // After merging on the server, update local state with the authoritative merged data
         const { data: mergedData } = response;
-        if (mergedData) {
-            await db.transaction('rw', db.decks, db.flashcards, async () => {
-                await db.decks.bulkPut(mergedData.decks);
-                await db.flashcards.bulkPut(mergedData.cards);
-            });
-            // Re-fetch from DB to ensure UI is consistent with the merged state
-            await fetchData(); 
+
+        if (mergedData && mergedData.cards && mergedData.decks) {
+            const localDataString = JSON.stringify({ decks, cards: flashcards });
+            const remoteDataString = JSON.stringify({ decks: mergedData.decks, cards: mergedData.cards });
+
+            // Only update local state if the authoritative data from the server is different.
+            // This is the key to breaking the sync loop that caused the continuous spinner and study view jumps.
+            if (localDataString !== remoteDataString) {
+                await db.transaction('rw', db.decks, db.flashcards, async () => {
+                    // Overwrite local data with the authoritative merged version from the cloud
+                    await db.decks.clear();
+                    await db.flashcards.clear();
+                    await db.decks.bulkPut(mergedData.decks);
+                    await db.flashcards.bulkPut(mergedData.cards);
+                });
+                // Update React state. This will cause one final, safe re-run of the effect.
+                // On the next run, the string comparison will match, and the loop will terminate.
+                setFlashcards(mergedData.cards);
+                setDecks(mergedData.decks);
+            }
         }
 
         const now = new Date();
@@ -315,7 +327,7 @@ const App: React.FC = () => {
     return () => {
       clearTimeout(handler);
     };
-  }, [flashcards, decks]);
+  }, [flashcards, decks, syncKey]);
 
 
   const showToast = (message: string) => {
