@@ -4,7 +4,7 @@ type View = 'LIST' | 'STUDY' | 'STATS' | 'FORM' | 'PRACTICE' | 'SYNC' | 'DECKS';
 type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 
 interface HeaderProps {
-  onNavigate: (view: 'LIST' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SYNC' | 'DECKS') => void;
+  onNavigate: (view: View) => void;
   onAddCard: () => void;
   isStudyDisabled: boolean;
   currentView: View;
@@ -34,11 +34,12 @@ const Header: React.FC<HeaderProps> = ({ onNavigate, onAddCard, isStudyDisabled,
     <header className="bg-white dark:bg-slate-800/50 backdrop-blur-sm shadow-sm sticky top-0 z-10">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
-          <div className="flex-shrink-0 flex items-center gap-2 cursor-pointer" onClick={() => onNavigate('LIST')}>
+          <div className="flex-shrink-0 flex items-center gap-2 cursor-pointer" onClick={() => onNavigate('DECKS')}>
              <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-500"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 15h4"/><path d="M10 15v-4.5a1.5 1.5 0 0 1 3 0V15"/><path d="M14 15h3"/></svg>
             <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Lingua Cards</h1>
           </div>
-          <div className="flex items-center space-x-2 sm:space-x-4">
+          {/* Desktop Navigation - Hidden on mobile */}
+          <div className="hidden md:flex items-center space-x-2 sm:space-x-4">
             <button
               onClick={() => onNavigate('LIST')}
               className={`${navButtonStyle} ${currentView === 'LIST' || currentView === 'FORM' ? activeStyle : inactiveStyle}`}
