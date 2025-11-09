@@ -1,6 +1,9 @@
 import React from 'react';
 
-type View = 'LIST' | 'STUDY' | 'STATS' | 'FORM' | 'PRACTICE' | 'SYNC' | 'DECKS';
+// Fix: Add 'CHANGELOG' to the View type to match the definition in App.tsx.
+// This resolves a TypeScript error where the `currentView` prop, which could be 'CHANGELOG',
+// was not assignable to Header's more restrictive View type.
+type View = 'LIST' | 'STUDY' | 'STATS' | 'FORM' | 'PRACTICE' | 'SYNC' | 'DECKS' | 'CHANGELOG';
 type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 
 interface HeaderProps {

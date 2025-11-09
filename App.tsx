@@ -9,8 +9,9 @@ import { StatsView } from './components/StatsView';
 import { ConversationView } from './components/ConversationView';
 import Toast from './components/Toast';
 import DeckList from './components/DeckList';
+import { ChangelogView } from './components/ChangelogView';
 
-type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SYNC' | 'DECKS';
+type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SYNC' | 'DECKS' | 'CHANGELOG';
 type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted'>;
 
@@ -213,7 +214,7 @@ const BottomNav: React.FC<{
 const App: React.FC = () => {
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
   const [decks, setDecks] = useState<Deck[]>([]);
-  const [view, setView] = useState<View>('LIST');
+  const [view, setView] = useState<View>('DECKS');
   const [editingCard, setEditingCard] = useState<Flashcard | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [syncKey, setSyncKey] = useState('');
@@ -392,7 +393,7 @@ const App: React.FC = () => {
     }
     await fetchData(); // Re-fetch to trigger sync
     setEditingCard(null);
-    setView('LIST');
+    setView('DECKS');
   };
   
   const handleSessionEnd = async (updatedCardsFromSession: Flashcard[]) => {
@@ -400,7 +401,7 @@ const App: React.FC = () => {
       await db.flashcards.bulkPut(updatedCardsFromSession);
     }
     await fetchData(); // Re-fetch to trigger sync
-    setView('LIST');
+    setView('DECKS');
     showToast('Study session complete. Progress saved!');
   };
 
@@ -507,9 +508,11 @@ const App: React.FC = () => {
         />;
       case 'FORM':
         const editingCardDeckName = visibleDecks.find(d => d.id === editingCard?.deckId)?.name || '';
-        return <FlashcardForm card={editingCard} decks={visibleDecks} onSave={handleSaveCard} onCancel={() => setView('LIST')} initialDeckName={editingCardDeckName}/>;
+        return <FlashcardForm card={editingCard} decks={visibleDecks} onSave={handleSaveCard} onCancel={() => setView('DECKS')} initialDeckName={editingCardDeckName}/>;
       case 'STATS':
-        return <StatsView onBack={() => setView('LIST')} />;
+        return <StatsView onBack={() => setView('DECKS')} />;
+      case 'CHANGELOG':
+        return <ChangelogView onBack={() => setView('DECKS')} />;
       case 'LIST':
       default:
         return <FlashcardList cards={visibleFlashcards} decks={visibleDecks} onEdit={handleEditCard} onDelete={handleDeleteCard} onExportCSV={handleExportCSV} onBackToDecks={() => setView('DECKS')} />;
@@ -534,7 +537,9 @@ const App: React.FC = () => {
       
       {toastMessage && <Toast message={toastMessage} />}
       <footer className="text-center py-4 pb-20 md:pb-4 text-xs text-slate-400 dark:text-slate-500">
-        <p>Version 1.7.1 - Incremental Updates</p>
+         <button onClick={() => handleNavigate('CHANGELOG')} className="hover:underline">
+            Version 1.8.0 - View Changelog
+        </button>
       </footer>
     </div>
   );
