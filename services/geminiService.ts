@@ -1,9 +1,6 @@
 // This service now sends requests to our own secure proxy on Vercel
 // instead of directly to the Google GenAI API. This protects the API key.
 
-// Fix: Import Type enum for responseSchema as per coding guidelines. This assumes @google/genai is a dependency.
-import { Type, Modality } from "@google/genai";
-
 export interface FlashcardDetails {
   back: string; // Persian translation
   pronunciation: string;
@@ -53,15 +50,14 @@ Please provide the following:
       config: {
         responseMimeType: "application/json",
         responseSchema: {
-          // Fix: Use Type enum for response schema properties.
-          type: Type.OBJECT,
+          type: 'OBJECT',
           properties: {
-            translation: { type: Type.STRING, description: 'The Persian translation of the English word.' },
-            pronunciation: { type: Type.STRING, description: 'The IPA phonetic pronunciation.' },
-            partOfSpeech: { type: Type.STRING, description: 'The grammatical part of speech.' },
-            definition: { type: Type.STRING, description: 'A simple English definition for the word.' },
-            exampleSentence: { type: Type.STRING, description: 'An example sentence in English.' },
-            notes: { type: Type.STRING, description: 'A helpful note or mnemonic in Persian.' },
+            translation: { type: 'STRING', description: 'The Persian translation of the English word.' },
+            pronunciation: { type: 'STRING', description: 'The IPA phonetic pronunciation.' },
+            partOfSpeech: { type: 'STRING', description: 'The grammatical part of speech.' },
+            definition: { type: 'STRING', description: 'A simple English definition for the word.' },
+            exampleSentence: { type: 'STRING', description: 'An example sentence in English.' },
+            notes: { type: 'STRING', description: 'A helpful note or mnemonic in Persian.' },
           },
           required: ["translation", "pronunciation", "partOfSpeech", "definition", "exampleSentence", "notes"],
         },
@@ -119,8 +115,7 @@ export const generateAudio = async (text: string): Promise<string | undefined> =
             model: "gemini-2.5-flash-preview-tts",
             contents: [{ parts: [{ text }] }],
             config: {
-                // Fix: Use Modality enum as per guidelines.
-                responseModalities: [Modality.AUDIO],
+                responseModalities: ['AUDIO'],
                 speechConfig: {
                     voiceConfig: {
                         prebuiltVoiceConfig: { voiceName: 'Zephyr' },
