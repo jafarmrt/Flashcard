@@ -1,10 +1,10 @@
 import React from 'react';
 
-type View = 'LIST' | 'STUDY' | 'STATS' | 'FORM' | 'PRACTICE' | 'SYNC';
+type View = 'LIST' | 'STUDY' | 'STATS' | 'FORM' | 'PRACTICE' | 'SYNC' | 'DECKS';
 type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 
 interface HeaderProps {
-  onNavigate: (view: 'LIST' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SYNC') => void;
+  onNavigate: (view: 'LIST' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SYNC' | 'DECKS') => void;
   onAddCard: () => void;
   isStudyDisabled: boolean;
   currentView: View;
@@ -44,6 +44,12 @@ const Header: React.FC<HeaderProps> = ({ onNavigate, onAddCard, isStudyDisabled,
               className={`${navButtonStyle} ${currentView === 'LIST' || currentView === 'FORM' ? activeStyle : inactiveStyle}`}
             >
               All Cards
+            </button>
+            <button
+              onClick={() => onNavigate('DECKS')}
+              className={`${navButtonStyle} ${currentView === 'DECKS' ? activeStyle : inactiveStyle}`}
+            >
+              Decks
             </button>
             <button
               onClick={() => onNavigate('STUDY')}

@@ -8,8 +8,9 @@ import { StudyView } from './components/StudyView';
 import { StatsView } from './components/StatsView';
 import { ConversationView } from './components/ConversationView';
 import Toast from './components/Toast';
+import DeckList from './components/DeckList';
 
-type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SYNC';
+type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SYNC' | 'DECKS';
 type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId'>;
 
@@ -171,6 +172,7 @@ const App: React.FC = () => {
   const [syncKey, setSyncKey] = useState('');
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const [lastSyncDate, setLastSyncDate] = useState<string | null>(null);
+  const [studyDeckId, setStudyDeckId] = useState<string | null>(null);
   
   const isInitialMount = useRef(true);
 
@@ -360,11 +362,52 @@ const App: React.FC = () => {
         showToast('Export failed.');
     }
   };
+  
+  const handleStudyDeck = (deckId: string) => {
+    setStudyDeckId(deckId);
+    setView('STUDY');
+  };
+  
+  const handleNavigate = (newView: View) => {
+    if (newView === 'STUDY') {
+      setStudyDeckId(null); // Reset to study all decks when clicking header button
+    }
+    setView(newView);
+  }
+
+  const handleRenameDeck = async (deckId: string, newName: string) => {
+    const existingDeck = decks.find(d => d.name.toLowerCase() === newName.toLowerCase());
+    if (existingDeck && existingDeck.id !== deckId) {
+        showToast('A deck with this name already exists.');
+        return;
+    }
+
+    await db.decks.update(deckId, { name: newName });
+    await fetchData(); // Re-fetch to update state and trigger sync
+    showToast('Deck renamed successfully!');
+  };
+
+  const handleDeleteDeck = async (deckId: string) => {
+    // Delete all cards in the deck
+    const cardIdsToDelete = flashcards
+      .filter(card => card.deckId === deckId)
+      .map(card => card.id);
+    
+    await db.transaction('rw', db.flashcards, db.decks, async () => {
+        await db.flashcards.bulkDelete(cardIdsToDelete);
+        await db.decks.delete(deckId);
+    });
+
+    await fetchData(); // Re-fetch to update state and trigger sync
+    showToast('Deck and its cards deleted successfully!');
+  };
+
 
   const renderContent = () => {
     switch (view) {
       case 'STUDY':
-        return <StudyView cards={flashcards} onExit={handleSessionEnd} />;
+        const cardsForStudy = studyDeckId ? flashcards.filter(card => card.deckId === studyDeckId) : flashcards;
+        return <StudyView cards={cardsForStudy} onExit={handleSessionEnd} />;
       case 'PRACTICE':
         return <ConversationView cards={flashcards} />;
       case 'SYNC':
@@ -376,6 +419,14 @@ const App: React.FC = () => {
                     onLoadFromCloud={handleLoadFromCloud}
                     showToast={showToast}
                 />;
+       case 'DECKS':
+        return <DeckList 
+            decks={decks} 
+            cards={flashcards} 
+            onStudyDeck={handleStudyDeck}
+            onRenameDeck={handleRenameDeck}
+            onDeleteDeck={handleDeleteDeck}
+        />;
       case 'FORM':
         const editingCardDeckName = decks.find(d => d.id === editingCard?.deckId)?.name || '';
         return <FlashcardForm card={editingCard} decks={decks} onSave={handleSaveCard} onCancel={() => setView('LIST')} initialDeckName={editingCardDeckName}/>;
@@ -390,7 +441,7 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen font-sans flex flex-col">
       <Header 
-        onNavigate={setView} 
+        onNavigate={handleNavigate} 
         onAddCard={handleAddCard} 
         isStudyDisabled={flashcards.length === 0}
         currentView={view}
@@ -401,7 +452,7 @@ const App: React.FC = () => {
       </main>
       {toastMessage && <Toast message={toastMessage} />}
       <footer className="text-center py-4 text-xs text-slate-400 dark:text-slate-500">
-        <p>Version 1.3.0 - Auto Cloud Sync</p>
+        <p>Version 1.4.0 - Deck Management</p>
       </footer>
     </div>
   );
