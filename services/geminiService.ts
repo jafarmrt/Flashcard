@@ -1,6 +1,5 @@
-import { GoogleGenAI, Type, Modality } from "@google/genai";
-
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// This service now sends requests to our own secure proxy on Vercel
+// instead of directly to the Google GenAI API. This protects the API key.
 
 export interface FlashcardDetails {
   back: string; // Persian translation
@@ -10,6 +9,24 @@ export interface FlashcardDetails {
   exampleSentenceTarget: string;
   notes: string;
 }
+
+// A helper function to call our secure proxy
+const callProxy = async (body: object) => {
+    const response = await fetch('/api/proxy', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Proxy request failed');
+    }
+    return response.json();
+};
+
 
 export const generateFlashcardDetails = async (englishWord: string): Promise<FlashcardDetails> => {
   try {
@@ -27,20 +44,20 @@ Please provide the following:
 5. "exampleSentence": A simple example sentence in English using the word.
 6. "notes": A brief note or mnemonic in Persian to help remember the word.`;
 
-    const response = await ai.models.generateContent({
+    const response = await callProxy({
       model: "gemini-2.5-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
-          type: Type.OBJECT,
+          type: 'OBJECT',
           properties: {
-            translation: { type: Type.STRING, description: 'The Persian translation of the English word.' },
-            pronunciation: { type: Type.STRING, description: 'The IPA phonetic pronunciation.' },
-            partOfSpeech: { type: Type.STRING, description: 'The grammatical part of speech.' },
-            definition: { type: Type.STRING, description: 'A simple English definition for the word.' },
-            exampleSentence: { type: Type.STRING, description: 'An example sentence in English.' },
-            notes: { type: Type.STRING, description: 'A helpful note or mnemonic in Persian.' },
+            translation: { type: 'STRING', description: 'The Persian translation of the English word.' },
+            pronunciation: { type: 'STRING', description: 'The IPA phonetic pronunciation.' },
+            partOfSpeech: { type: 'STRING', description: 'The grammatical part of speech.' },
+            definition: { type: 'STRING', description: 'A simple English definition for the word.' },
+            exampleSentence: { type: 'STRING', description: 'An example sentence in English.' },
+            notes: { type: 'STRING', description: 'A helpful note or mnemonic in Persian.' },
           },
           required: ["translation", "pronunciation", "partOfSpeech", "definition", "exampleSentence", "notes"],
         },
@@ -59,8 +76,7 @@ Please provide the following:
       notes: parsed.notes || '',
     };
   } catch (error) {
-    console.error("Error generating flashcard details with Gemini:", error);
-    // Return a structured error response
+    console.error("Error generating flashcard details via proxy:", error);
     return {
       back: "Could not generate translation.",
       pronunciation: "",
@@ -95,14 +111,13 @@ function decode(base64: string) {
 
 export const generateAudio = async (text: string): Promise<string | undefined> => {
     try {
-        const response = await ai.models.generateContent({
+        const response = await callProxy({
             model: "gemini-2.5-flash-preview-tts",
             contents: [{ parts: [{ text }] }],
             config: {
-                responseModalities: [Modality.AUDIO],
+                responseModalities: ['AUDIO'],
                 speechConfig: {
                     voiceConfig: {
-                        // Using a standard American-style voice
                         prebuiltVoiceConfig: { voiceName: 'Zephyr' },
                     },
                 },
@@ -161,7 +176,7 @@ export const getGrammarExplanation = async (sentence: string): Promise<string> =
         Provide the explanation in Persian. Be concise and focus on the main grammatical points.
         Sentence: "${sentence}"`;
         
-        const response = await ai.models.generateContent({
+        const response = await callProxy({
             model: "gemini-2.5-flash",
             contents: prompt,
         });
@@ -197,7 +212,7 @@ export const getPronunciationFeedback = async (word: string, audioBase64: string
             Please listen to the audio and provide simple, concise, and encouraging feedback in Persian.
             For example: "تلفظ عالی بود!" or "خوب بود، اما سعی کن صدای 'r' را واضح‌تر بگویی."`
         };
-        const response = await ai.models.generateContent({
+        const response = await callProxy({
             model: 'gemini-2.5-pro',
             contents: { parts: [textPart, audioPart] },
         });

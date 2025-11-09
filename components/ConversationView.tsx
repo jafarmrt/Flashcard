@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { GoogleGenAI, Chat } from '@google/genai';
 import { Flashcard } from '../types';
 
 interface Message {
@@ -11,10 +10,46 @@ interface ConversationViewProps {
   cards: Flashcard[];
 }
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Helper to manage conversation history for the proxy
+let chatHistory: any[] = [];
+
+// A helper function to call our secure proxy for the chat
+const callChatProxy = async (message: string, systemInstruction?: string) => {
+    if (systemInstruction) {
+        // Start a new conversation
+        chatHistory = [
+            { role: 'user', parts: [{ text: systemInstruction }] },
+            { role: 'model', parts: [{ text: "Okay, I'm ready to start the conversation." }] }
+        ];
+    }
+    
+    // Add the new user message
+    chatHistory.push({ role: 'user', parts: [{ text: message }] });
+
+    const response = await fetch('/api/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            model: 'gemini-2.5-flash',
+            contents: chatHistory, // Send the whole history
+        }),
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Proxy request failed');
+    }
+    const data = await response.json();
+    const modelResponseText = data.text;
+
+    // Add model's response to history
+    chatHistory.push({ role: 'model', parts: [{ text: modelResponseText }] });
+    
+    return modelResponseText;
+};
+
 
 export const ConversationView: React.FC<ConversationViewProps> = ({ cards }) => {
-  const [chat, setChat] = useState<Chat | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [userInput, setUserInput] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -26,8 +61,8 @@ export const ConversationView: React.FC<ConversationViewProps> = ({ cards }) => 
       setIsLoading(true);
       
       const words = [...cards]
-        .sort(() => 0.5 - Math.random()) // Shuffle
-        .slice(0, 10) // Take up to 10
+        .sort(() => 0.5 - Math.random())
+        .slice(0, 10)
         .map(c => c.front);
       setPracticeWords(words);
       
@@ -36,18 +71,8 @@ export const ConversationView: React.FC<ConversationViewProps> = ({ cards }) => 
       During the conversation, you MUST try to naturally use the following vocabulary words: ${words.join(', ')}.
       Keep your responses relatively short and easy to understand. Start the conversation with a friendly greeting.`;
 
-      const newChat = ai.chats.create({
-        model: 'gemini-2.5-flash',
-        config: { systemInstruction },
-      });
-      setChat(newChat);
-
       // Start with the model's greeting
-      const initialResponse = await newChat.sendMessageStream({ message: "Hello!" });
-      let initialText = '';
-      for await (const chunk of initialResponse) {
-          initialText += chunk.text;
-      }
+      const initialText = await callChatProxy("Hello!", systemInstruction);
       setMessages([{ role: 'model', text: initialText }]);
       setIsLoading(false);
     };
@@ -60,36 +85,22 @@ export const ConversationView: React.FC<ConversationViewProps> = ({ cards }) => 
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!userInput.trim() || !chat || isLoading) return;
+    if (!userInput.trim() || isLoading) return;
 
     const userMessage: Message = { role: 'user', text: userInput };
     setMessages(prev => [...prev, userMessage]);
+    const currentInput = userInput;
     setUserInput('');
     setIsLoading(true);
-
-    const modelResponse: Message = { role: 'model', text: '' };
-    setMessages(prev => [...prev, modelResponse]);
-
+    
     try {
-      const responseStream = await chat.sendMessageStream({ message: userInput });
-      let currentText = '';
-      for await (const chunk of responseStream) {
-        currentText += chunk.text;
-        setMessages(prev => {
-          const newMessages = [...prev];
-          newMessages[newMessages.length - 1].text = currentText;
-          return newMessages;
-        });
-      }
+        const modelResponseText = await callChatProxy(currentInput);
+        setMessages(prev => [...prev, { role: 'model', text: modelResponseText }]);
     } catch (error) {
-      console.error("Error sending message:", error);
-      setMessages(prev => {
-        const newMessages = [...prev];
-        newMessages[newMessages.length - 1].text = "Sorry, something went wrong. Please try again.";
-        return newMessages;
-      });
+        console.error("Error sending message:", error);
+        setMessages(prev => [...prev, { role: 'model', text: "Sorry, something went wrong. Please try again." }]);
     } finally {
-      setIsLoading(false);
+        setIsLoading(false);
     }
   };
   
@@ -109,7 +120,7 @@ export const ConversationView: React.FC<ConversationViewProps> = ({ cards }) => 
             </div>
           </div>
         ))}
-         {isLoading && messages.length > 0 && messages[messages.length-1].role === 'user' && (
+         {isLoading && messages.length > 0 && (
              <div className="flex justify-start">
                  <div className="max-w-lg px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-700">
                      <span className="animate-pulse">...</span>
