@@ -2,13 +2,6 @@
 // This is a Vercel Serverless Function that acts as a secure proxy.
 // It prevents the API_KEY from being exposed in the frontend client code.
 
-// IMPORTANT: Because this file will be deployed in a Node.js environment on Vercel,
-// we CANNOT use browser-specific types like `Request` or `Response`.
-// We use a syntax compatible with Vercel's Node.js runtime.
-// We also cannot directly import from the `@google/genai` CDN link here.
-// Instead, we can use `fetch` to call the REST API endpoint directly,
-// which is a more robust approach for a serverless environment.
-
 export default async function handler(request, response) {
   // Only allow POST requests
   if (request.method !== 'POST') {
@@ -25,32 +18,41 @@ export default async function handler(request, response) {
     // Get the parameters sent from our frontend
     const { model, contents, config } = request.body;
 
-    // Determine the correct API endpoint based on the model
-    // This simple logic covers both generateContent and generateText
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
-    // The body for the Google API call
-    const googleApiBody = {
-        contents: Array.isArray(contents) ? contents : [{ parts: [{ text: contents }] }],
-        generationConfig: {
-            // map our config to generationConfig
-            responseMimeType: config?.responseMimeType,
-        },
-        // We can't send the full schema over, but we can send the responseMimeType
-        // which is the most critical part for JSON mode.
-        // For more complex scenarios, this proxy would need to be more sophisticated.
-    };
-    
-    // For audio and pronunciation feedback, the `contents` format is different
-    if (typeof contents === 'object' && contents.parts) {
-        googleApiBody.contents = [contents];
-    }
-    
-    // For chat history
-     if (Array.isArray(contents)) {
+    // Initialize the body for the Google API call.
+    const googleApiBody: any = {};
+
+    // 1. Set the contents. The format can vary depending on the request type.
+    if (Array.isArray(contents)) { // For chat history and TTS
         googleApiBody.contents = contents;
+    } else if (typeof contents === 'object' && contents.parts) { // For multimodal input (e.g., image + text)
+        googleApiBody.contents = [contents];
+    } else { // For simple text prompts
+        googleApiBody.contents = [{ parts: [{ text: contents }] }];
     }
 
+    // 2. Intelligently add configuration from the client to the correct places.
+    if (config) {
+      // Properties for standard text generation go inside 'generationConfig'.
+      if (config.responseMimeType || config.responseSchema) {
+        googleApiBody.generationConfig = {};
+        if (config.responseMimeType) {
+          googleApiBody.generationConfig.responseMimeType = config.responseMimeType;
+        }
+        if (config.responseSchema) {
+          googleApiBody.generationConfig.responseSchema = config.responseSchema;
+        }
+      }
+      
+      // Properties for TTS (and other special modalities) are top-level fields.
+      if (config.responseModalities) {
+        googleApiBody.responseModalities = config.responseModalities;
+      }
+      if (config.speechConfig) {
+        googleApiBody.speechConfig = config.speechConfig;
+      }
+    }
 
     // Call the actual Google GenAI REST API on the server
     const geminiResponse = await fetch(`${endpoint}?key=${apiKey}`, {
@@ -64,7 +66,6 @@ export default async function handler(request, response) {
     if (!geminiResponse.ok) {
         const errorText = await geminiResponse.text();
         console.error('Google API Error:', errorText);
-        // Try to parse as JSON, but fall back to text
         try {
              const errorJson = JSON.parse(errorText);
              return response.status(geminiResponse.status).json({ error: 'Google API Error', details: errorJson });
@@ -75,8 +76,8 @@ export default async function handler(request, response) {
 
     const responseData = await geminiResponse.json();
     
-    // The Gemini REST API has a slightly different structure. Let's adapt it to what the SDK provided.
-    // This makes our frontend changes minimal.
+    // Adapt the REST API response to a structure that the client-side code expects.
+    // This ensures the frontend can correctly parse both text and audio data from the 'candidates' array.
     const adaptedResponse = {
         text: responseData.candidates?.[0]?.content?.parts?.[0]?.text || '',
         candidates: responseData.candidates,
