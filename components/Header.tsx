@@ -1,9 +1,9 @@
 import React from 'react';
 
-type View = 'LIST' | 'STUDY' | 'STATS' | 'FORM' | 'PRACTICE';
+type View = 'LIST' | 'STUDY' | 'STATS' | 'FORM' | 'PRACTICE' | 'SYNC';
 
 interface HeaderProps {
-  onNavigate: (view: 'LIST' | 'STUDY' | 'STATS' | 'PRACTICE') => void;
+  onNavigate: (view: 'LIST' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SYNC') => void;
   onAddCard: () => void;
   isStudyDisabled: boolean;
   currentView: View;
@@ -48,6 +48,12 @@ const Header: React.FC<HeaderProps> = ({ onNavigate, onAddCard, isStudyDisabled,
               className={`${navButtonStyle} ${currentView === 'STATS' ? activeStyle : inactiveStyle}`}
             >
               Stats
+            </button>
+            <button
+              onClick={() => onNavigate('SYNC')}
+              className={`${navButtonStyle} ${currentView === 'SYNC' ? activeStyle : inactiveStyle}`}
+            >
+              Sync
             </button>
             <button
               onClick={onAddCard}

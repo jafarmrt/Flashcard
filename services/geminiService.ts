@@ -17,7 +17,7 @@ const callProxy = async (body: object) => {
         headers: {
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ action: 'gemini-generate', ...body }),
     });
 
     if (!response.ok) {

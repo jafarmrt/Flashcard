@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { Flashcard, Deck } from '../types';
 
 interface FlashcardListProps {
@@ -6,8 +6,7 @@ interface FlashcardListProps {
   decks: Deck[];
   onEdit: (card: Flashcard) => void;
   onDelete: (id: string) => void;
-  onImport: (file: File) => void;
-  onExport: (format: 'json' | 'csv', cards?: Flashcard[]) => void;
+  onExportCSV: (cards: Flashcard[]) => void;
 }
 
 const EditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>;
@@ -31,25 +30,10 @@ const formatDate = (isoString: string) => {
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
-const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onDelete, onImport, onExport }) => {
+const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onDelete, onExportCSV }) => {
   const [sortConfig, setSortConfig] = useState<{ key: keyof Flashcard | 'deckName'; direction: 'ascending' | 'descending' }>({ key: 'dueDate', direction: 'ascending' });
   const [selectedDeckId, setSelectedDeckId] = useState<string>('all');
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
-  const exportMenuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) {
-        setIsExportMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, []);
-
+ 
   const decksById = useMemo(() => new Map(decks.map(deck => [deck.id, deck.name])), [decks]);
 
   const filteredCards = useMemo(() => {
@@ -86,25 +70,12 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
     }
     setSortConfig({ key, direction });
   };
-
-  const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      onImport(file);
-    }
-  };
   
   if (cards.length === 0) {
     return (
       <div className="text-center py-20 bg-white dark:bg-slate-800 rounded-lg shadow-sm">
         <h2 className="text-2xl font-semibold text-slate-700 dark:text-slate-200">No flashcards yet!</h2>
-        <p className="mt-2 text-slate-500 dark:text-slate-400">Click "Add Card" to create your first one, or import an existing set.</p>
-        <div className="mt-6">
-            <input type="file" ref={fileInputRef} onChange={handleFileImport} accept=".json" className="hidden" />
-            <button onClick={() => fileInputRef.current?.click()} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors">
-                Import Cards
-            </button>
-        </div>
+        <p className="mt-2 text-slate-500 dark:text-slate-400">Click "Add Card" to create your first one or use the "Sync" page to load cards from the cloud.</p>
       </div>
     );
   }
@@ -120,23 +91,7 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                 </select>
             </div>
             <div className="flex gap-2">
-                 <input type="file" ref={fileInputRef} onChange={handleFileImport} accept=".json" className="hidden" />
-                <button onClick={() => fileInputRef.current?.click()} className="px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">Import</button>
-                <div className="relative" ref={exportMenuRef}>
-                    <button onClick={() => setIsExportMenuOpen(prev => !prev)} className="px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">Export</button>
-                     {isExportMenuOpen && (
-                        <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-slate-700 rounded-md shadow-lg ring-1 ring-black ring-opacity-5 z-10">
-                        <div className="py-1">
-                            <button onClick={() => { onExport('json'); setIsExportMenuOpen(false); }} className="block w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600">
-                            Full Backup (.json)
-                            </button>
-                            <button onClick={() => { onExport('csv', sortedCards); setIsExportMenuOpen(false); }} className="block w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600">
-                            Export View (.csv)
-                            </button>
-                        </div>
-                        </div>
-                    )}
-                </div>
+                <button onClick={() => onExportCSV(sortedCards)} className="px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">Export View (.csv)</button>
             </div>
         </div>
         <div className="overflow-x-auto">
