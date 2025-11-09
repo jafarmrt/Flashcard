@@ -8,6 +8,8 @@ interface DeckListProps {
     onRenameDeck: (deckId: string, newName: string) => Promise<void>;
     onDeleteDeck: (deckId: string) => Promise<void>;
     onViewAllCards: () => void;
+    onAddCard: () => void;
+    onAddSampleDeck: () => void;
 }
 
 const StudyIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>;
@@ -85,16 +87,46 @@ const DeckCard: React.FC<{
     );
 };
 
+const EmptyState: React.FC<{
+  onAddCard: () => void;
+  onAddSampleDeck: () => void;
+}> = ({ onAddCard, onAddSampleDeck }) => {
+  return (
+    <div className="text-center py-16 px-6 bg-white dark:bg-slate-800 rounded-lg shadow-sm">
+      <svg className="mx-auto h-16 w-16 text-slate-400" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M22 10V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12c0 1.1.9 2 2 2h8"/>
+        <path d="m22 17-3-3-3 3"/>
+        <path d="M19 14v9"/>
+        <path d="M18 12h-5"/>
+      </svg>
+      <h2 className="mt-4 text-2xl font-semibold text-slate-700 dark:text-slate-200">Welcome to Lingua Cards!</h2>
+      <p className="mt-2 text-slate-500 dark:text-slate-400 max-w-md mx-auto">
+        It looks empty in here. Let's get you started on your language learning journey.
+      </p>
+      <div className="mt-8 flex flex-col sm:flex-row justify-center items-center gap-4">
+        <button
+          onClick={onAddCard}
+          className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 shadow-md"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          Create Your First Card
+        </button>
+        <button
+          onClick={onAddSampleDeck}
+          className="w-full sm:w-auto text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:underline"
+        >
+          or add a sample deck (50 common verbs)
+        </button>
+      </div>
+    </div>
+  );
+};
 
-const DeckList: React.FC<DeckListProps> = ({ decks, cards, onStudyDeck, onRenameDeck, onDeleteDeck, onViewAllCards }) => {
+
+const DeckList: React.FC<DeckListProps> = ({ decks, cards, onStudyDeck, onRenameDeck, onDeleteDeck, onViewAllCards, onAddCard, onAddSampleDeck }) => {
     
     if (decks.length === 0) {
-        return (
-            <div className="text-center py-20 bg-white dark:bg-slate-800 rounded-lg shadow-sm">
-                <h2 className="text-2xl font-semibold text-slate-700 dark:text-slate-200">No decks found.</h2>
-                <p className="mt-2 text-slate-500 dark:text-slate-400">Create a new card to automatically create your first deck, or use the "Sync" page to load decks from the cloud.</p>
-            </div>
-        );
+        return <EmptyState onAddCard={onAddCard} onAddSampleDeck={onAddSampleDeck} />;
     }
     
     const today = new Date();

@@ -28,6 +28,27 @@ const callProxy = async (action: 'sync-save' | 'sync-load' | 'sync-merge', paylo
     return response.json();
 };
 
+// --- Sample Data for Onboarding ---
+const sampleVerbs = [
+    { front: 'be', back: 'بودن' }, { front: 'have', back: 'داشتن' }, { front: 'do', back: 'انجام دادن' },
+    { front: 'say', back: 'گفتن' }, { front: 'go', back: 'رفتن' }, { front: 'get', back: 'گرفتن' },
+    { front: 'make', back: 'ساختن' }, { front: 'know', back: 'دانستن' }, { front: 'think', back: 'فکر کردن' },
+    { front: 'see', back: 'دیدن' }, { front: 'come', back: 'آمدن' }, { front: 'want', back: 'خواستن' },
+    { front: 'look', back: 'نگاه کردن' }, { front: 'use', back: 'استفاده کردن' }, { front: 'find', back: 'پیدا کردن' },
+    { front: 'give', back: 'دادن' }, { front: 'tell', back: 'گفتن' }, { front: 'work', back: 'کار کردن' },
+    { front: 'call', back: 'صدا زدن' }, { front: 'try', back: 'امتحان کردن' }, { front: 'ask', back: 'پرسیدن' },
+    { front: 'need', back: 'نیاز داشتن' }, { front: 'feel', back: 'احساس کردن' }, { front: 'become', back: 'شدن' },
+    { front: 'leave', back: 'ترک کردن' }, { front: 'put', back: 'گذاشتن' }, { front: 'mean', back: 'معنی دادن' },
+    { front: 'keep', back: 'نگه داشتن' }, { front: 'let', back: 'اجازه دادن' }, { front: 'begin', back: 'شروع کردن' },
+    { front: 'seem', back: 'به نظر رسیدن' }, { front: 'help', back: 'کمک کردن' }, { front: 'talk', back: 'صحبت کردن' },
+    { front: 'turn', back: 'چرخیدن' }, { front: 'start', back: 'شروع کردن' }, { front: 'show', back: 'نشان دادن' },
+    { front: 'hear', back: 'شنیدن' }, { front: 'play', back: 'بازی کردن' }, { front: 'run', back: 'دویدن' },
+    { front: 'move', back: 'حرکت دادن' }, { front: 'like', back: 'دوست داشتن' }, { front: 'live', back: 'زندگی کردن' },
+    { front: 'believe', back: 'باور کردن' }, { front: 'hold', back: 'نگه داشتن' }, { front: 'bring', back: 'آوردن' },
+    { front: 'happen', back: 'اتفاق افتادن' }, { front: 'write', back: 'نوشتن' }, { front: 'provide', back: 'فراهم کردن' },
+    { front: 'sit', back: 'نشستن' }, { front: 'stand', back: 'ایستادن' }
+];
+
 
 // --- SyncView Component ---
 const SyncView: React.FC<{ 
@@ -213,7 +234,7 @@ const BottomNav: React.FC<{
 const App: React.FC = () => {
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
   const [decks, setDecks] = useState<Deck[]>([]);
-  const [view, setView] = useState<View>('LIST');
+  const [view, setView] = useState<View>('DECKS');
   const [editingCard, setEditingCard] = useState<Flashcard | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [syncKey, setSyncKey] = useState('');
@@ -392,15 +413,37 @@ const App: React.FC = () => {
     }
     await fetchData(); // Re-fetch to trigger sync
     setEditingCard(null);
-    setView('LIST');
+    setView('DECKS');
   };
   
+  const handleAddSampleDeck = async () => {
+    const newDeck: Deck = { id: `sample-${Date.now()}`, name: 'Sample: Common Verbs' };
+    
+    const newCards: Flashcard[] = sampleVerbs.map((verb, index) => ({
+      id: `sample-${Date.now()}-${index}`,
+      deckId: newDeck.id,
+      front: verb.front,
+      back: verb.back,
+      // Default SRS values
+      repetition: 0,
+      easinessFactor: 2.5,
+      interval: 0,
+      dueDate: new Date().toISOString(),
+    }));
+    
+    await db.decks.add(newDeck);
+    await db.flashcards.bulkAdd(newCards);
+    
+    await fetchData(); // Refresh state
+    showToast('Sample deck added successfully!');
+  };
+
   const handleSessionEnd = async (updatedCardsFromSession: Flashcard[]) => {
     if (updatedCardsFromSession.length > 0) {
       await db.flashcards.bulkPut(updatedCardsFromSession);
     }
     await fetchData(); // Re-fetch to trigger sync
-    setView('LIST');
+    setView('DECKS');
     showToast('Study session complete. Progress saved!');
   };
 
@@ -504,17 +547,29 @@ const App: React.FC = () => {
             onRenameDeck={handleRenameDeck}
             onDeleteDeck={handleDeleteDeck}
             onViewAllCards={() => setView('LIST')}
+            onAddCard={handleAddCard}
+            onAddSampleDeck={handleAddSampleDeck}
         />;
       case 'FORM':
         const editingCardDeckName = visibleDecks.find(d => d.id === editingCard?.deckId)?.name || '';
-        return <FlashcardForm card={editingCard} decks={visibleDecks} onSave={handleSaveCard} onCancel={() => setView('LIST')} initialDeckName={editingCardDeckName}/>;
+        return <FlashcardForm card={editingCard} decks={visibleDecks} onSave={handleSaveCard} onCancel={() => setView('DECKS')} initialDeckName={editingCardDeckName}/>;
       case 'STATS':
-        return <StatsView onBack={() => setView('LIST')} />;
+        return <StatsView onBack={() => setView('DECKS')} />;
       case 'LIST':
       default:
         return <FlashcardList cards={visibleFlashcards} decks={visibleDecks} onEdit={handleEditCard} onDelete={handleDeleteCard} onExportCSV={handleExportCSV} onBackToDecks={() => setView('DECKS')} />;
     }
   };
+  
+  // Default view to DECKS for better mobile-first experience
+  useEffect(() => {
+    if (view === 'LIST' || view === 'FORM') {
+        const isMobile = window.innerWidth < 768;
+        if(isMobile) {
+            setView('DECKS');
+        }
+    }
+  }, [view]);
 
   return (
     <div className="min-h-screen font-sans flex flex-col">
@@ -529,12 +584,12 @@ const App: React.FC = () => {
         {renderContent()}
       </main>
       
-      {['LIST', 'DECKS'].includes(view) && <FloatingActionButton onClick={handleAddCard} />}
+      {['DECKS'].includes(view) && <FloatingActionButton onClick={handleAddCard} />}
       <BottomNav currentView={view} onNavigate={handleNavigate} isStudyDisabled={visibleFlashcards.length === 0} />
       
       {toastMessage && <Toast message={toastMessage} />}
       <footer className="text-center py-4 pb-20 md:pb-4 text-xs text-slate-400 dark:text-slate-500">
-        <p>Version 1.7.0 - Branded & Polished</p>
+        <p>Version 1.7.1 - Incremental Updates</p>
       </footer>
     </div>
   );
