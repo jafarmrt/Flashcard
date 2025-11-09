@@ -114,7 +114,7 @@ const SyncView: React.FC<{
                 If you're on a new device, enter your key above and click here to load your data. This will replace any data currently on this device.
             </p>
             <button onClick={handleLoad} disabled={isLoading || !syncKey} className="w-full flex justify-center items-center gap-2 px-4 py-3 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors disabled:opacity-50 disabled:cursor-wait">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                <svg xmlns="http://www.w.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                 Load & Overwrite Local Data
             </button>
         </div>
@@ -270,20 +270,22 @@ const App: React.FC = () => {
     }
     
     const initialLoad = async () => {
-        if(savedKey) {
-            await handleLoadFromCloud();
-        }
+        // We no longer auto-load from cloud on startup to avoid blocking UI.
+        // User should use the Sync page to explicitly load data.
         await fetchData();
     };
-    initialLoad();
+    initialLoad().then(() => {
+        isInitialMount.current = false;
+    });
   }, []);
 
   // Effect for debounced auto-syncing
   useEffect(() => {
+    // Don't sync on the initial mount, wait for data to be loaded.
     if (isInitialMount.current) {
-      isInitialMount.current = false;
       return;
     }
+    // Don't sync if the user hasn't set up a sync key.
     if (!syncKey) {
         setSyncStatus('idle');
         return;
@@ -308,7 +310,7 @@ const App: React.FC = () => {
     return () => {
       clearTimeout(handler);
     };
-  }, [flashcards, decks, syncKey]);
+  }, [flashcards, decks]); // FIX: Removed syncKey from deps to prevent wipe-on-key-change race condition.
 
 
   const showToast = (message: string) => {
