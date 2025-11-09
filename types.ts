@@ -1,6 +1,7 @@
 export interface Deck {
   id: string;
   name: string;
+  isDeleted?: boolean;
 }
 
 export type PerformanceRating = 'AGAIN' | 'GOOD' | 'EASY';
@@ -23,6 +24,7 @@ export interface Flashcard {
   definition?: string;
   exampleSentenceTarget?: string;
   notes?: string;
+  isDeleted?: boolean;
 
   // Field for audio
   audioSrc?: string; // base64 data URL

@@ -12,10 +12,10 @@ import DeckList from './components/DeckList';
 
 type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SYNC' | 'DECKS';
 type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
-type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId'>;
+type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted'>;
 
 // --- API Helper ---
-const callProxy = async (action: 'sync-save' | 'sync-load', payload: object) => {
+const callProxy = async (action: 'sync-save' | 'sync-load' | 'sync-merge', payload: object) => {
     const response = await fetch('/api/proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -168,7 +168,7 @@ const FloatingActionButton: React.FC<{ onClick: () => void }> = ({ onClick }) =>
     className="md:hidden fixed bottom-20 right-5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full w-14 h-14 flex items-center justify-center shadow-lg animate-fab-in"
     aria-label="Add new card"
   >
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg xmlns="http://www.w.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
       <line x1="12" y1="5" x2="12" y2="19"></line>
       <line x1="5" y1="12" x2="19" y2="12"></line>
     </svg>
@@ -270,8 +270,6 @@ const App: React.FC = () => {
     }
     
     const initialLoad = async () => {
-        // We no longer auto-load from cloud on startup to avoid blocking UI.
-        // User should use the Sync page to explicitly load data.
         await fetchData();
     };
     initialLoad().then(() => {
@@ -279,14 +277,9 @@ const App: React.FC = () => {
     });
   }, []);
 
-  // Effect for debounced auto-syncing
+  // Effect for debounced auto-syncing with MERGE strategy
   useEffect(() => {
-    // Don't sync on the initial mount, wait for data to be loaded.
-    if (isInitialMount.current) {
-      return;
-    }
-    // Don't sync if the user hasn't set up a sync key.
-    if (!syncKey) {
+    if (isInitialMount.current || !syncKey) {
         setSyncStatus('idle');
         return;
     };
@@ -295,8 +288,20 @@ const App: React.FC = () => {
 
     const handler = setTimeout(async () => {
       try {
-        const data = { decks: await db.decks.toArray(), cards: await db.flashcards.toArray() };
-        await callProxy('sync-save', { syncKey, data });
+        const localData = { decks, cards: flashcards };
+        const response = await callProxy('sync-merge', { syncKey, data: localData });
+        
+        // After merging on the server, update local state with the authoritative merged data
+        const { data: mergedData } = response;
+        if (mergedData) {
+            await db.transaction('rw', db.decks, db.flashcards, async () => {
+                await db.decks.bulkPut(mergedData.decks);
+                await db.flashcards.bulkPut(mergedData.cards);
+            });
+            // Re-fetch from DB to ensure UI is consistent with the merged state
+            await fetchData(); 
+        }
+
         const now = new Date();
         localStorage.setItem('lastSyncDate', now.toISOString());
         setLastSyncDate(now.toLocaleString());
@@ -310,7 +315,7 @@ const App: React.FC = () => {
     return () => {
       clearTimeout(handler);
     };
-  }, [flashcards, decks]); // FIX: Removed syncKey from deps to prevent wipe-on-key-change race condition.
+  }, [flashcards, decks]);
 
 
   const showToast = (message: string) => {
@@ -334,7 +339,8 @@ const App: React.FC = () => {
   };
 
   const handleDeleteCard = async (id: string) => {
-    await db.flashcards.delete(id);
+    // Soft delete: mark as deleted instead of removing
+    await db.flashcards.update(id, { isDeleted: true });
     await fetchData(); // Re-fetch to trigger sync
     showToast('Card deleted successfully!');
   };
@@ -345,8 +351,9 @@ const App: React.FC = () => {
       showToast('Deck name cannot be empty.');
       return;
     }
-
-    let deck = (await db.decks.toArray()).find(d => d.name.toLowerCase() === trimmedDeckName.toLowerCase());
+    
+    const allDecks = await db.decks.toArray();
+    let deck = allDecks.find(d => d.name.toLowerCase() === trimmedDeckName.toLowerCase() && !d.isDeleted);
 
     if (!deck) {
       const newDeck: Deck = { id: Date.now().toString(), name: trimmedDeckName };
@@ -430,7 +437,7 @@ const App: React.FC = () => {
   }
 
   const handleRenameDeck = async (deckId: string, newName: string) => {
-    const existingDeck = decks.find(d => d.name.toLowerCase() === newName.toLowerCase());
+    const existingDeck = decks.find(d => d.name.toLowerCase() === newName.toLowerCase() && !d.isDeleted);
     if (existingDeck && existingDeck.id !== deckId) {
         showToast('A deck with this name already exists.');
         return;
@@ -442,28 +449,32 @@ const App: React.FC = () => {
   };
 
   const handleDeleteDeck = async (deckId: string) => {
-    // Delete all cards in the deck
-    const cardIdsToDelete = flashcards
+    // Soft delete the deck and all its cards
+    const cardIdsToSoftDelete = flashcards
       .filter(card => card.deckId === deckId)
       .map(card => card.id);
     
-    await db.transaction('rw', db.flashcards, db.decks, async () => {
-        await db.flashcards.bulkDelete(cardIdsToDelete);
-        await db.decks.delete(deckId);
-    });
+    const cardUpdates = cardIdsToSoftDelete.map(id => db.flashcards.update(id, { isDeleted: true }));
+
+    await Promise.all([
+        ...cardUpdates,
+        db.decks.update(deckId, { isDeleted: true })
+    ]);
 
     await fetchData(); // Re-fetch to update state and trigger sync
     showToast('Deck and its cards deleted successfully!');
   };
 
+  const visibleFlashcards = flashcards.filter(c => !c.isDeleted);
+  const visibleDecks = decks.filter(d => !d.isDeleted);
 
   const renderContent = () => {
     switch (view) {
       case 'STUDY':
-        const cardsForStudy = studyDeckId ? flashcards.filter(card => card.deckId === studyDeckId) : flashcards;
-        return <StudyView cards={cardsForStudy} onExit={handleSessionEnd} />;
+        const allCardsForStudy = studyDeckId ? visibleFlashcards.filter(card => card.deckId === studyDeckId) : visibleFlashcards;
+        return <StudyView cards={allCardsForStudy} onExit={handleSessionEnd} />;
       case 'PRACTICE':
-        return <ConversationView cards={flashcards} />;
+        return <ConversationView cards={visibleFlashcards} />;
       case 'SYNC':
         return <SyncView 
                     syncKey={syncKey} 
@@ -475,21 +486,21 @@ const App: React.FC = () => {
                 />;
        case 'DECKS':
         return <DeckList 
-            decks={decks} 
-            cards={flashcards} 
+            decks={visibleDecks} 
+            cards={visibleFlashcards} 
             onStudyDeck={handleStudyDeck}
             onRenameDeck={handleRenameDeck}
             onDeleteDeck={handleDeleteDeck}
             onViewAllCards={() => setView('LIST')}
         />;
       case 'FORM':
-        const editingCardDeckName = decks.find(d => d.id === editingCard?.deckId)?.name || '';
-        return <FlashcardForm card={editingCard} decks={decks} onSave={handleSaveCard} onCancel={() => setView('LIST')} initialDeckName={editingCardDeckName}/>;
+        const editingCardDeckName = visibleDecks.find(d => d.id === editingCard?.deckId)?.name || '';
+        return <FlashcardForm card={editingCard} decks={visibleDecks} onSave={handleSaveCard} onCancel={() => setView('LIST')} initialDeckName={editingCardDeckName}/>;
       case 'STATS':
         return <StatsView onBack={() => setView('LIST')} />;
       case 'LIST':
       default:
-        return <FlashcardList cards={flashcards} decks={decks} onEdit={handleEditCard} onDelete={handleDeleteCard} onExportCSV={handleExportCSV} onBackToDecks={() => setView('DECKS')} />;
+        return <FlashcardList cards={visibleFlashcards} decks={visibleDecks} onEdit={handleEditCard} onDelete={handleDeleteCard} onExportCSV={handleExportCSV} onBackToDecks={() => setView('DECKS')} />;
     }
   };
 
@@ -498,7 +509,7 @@ const App: React.FC = () => {
       <Header 
         onNavigate={handleNavigate} 
         onAddCard={handleAddCard}
-        isStudyDisabled={flashcards.length === 0}
+        isStudyDisabled={visibleFlashcards.length === 0}
         currentView={view}
         syncStatus={syncStatus}
       />
@@ -507,11 +518,11 @@ const App: React.FC = () => {
       </main>
       
       {['LIST', 'DECKS'].includes(view) && <FloatingActionButton onClick={handleAddCard} />}
-      <BottomNav currentView={view} onNavigate={handleNavigate} isStudyDisabled={flashcards.length === 0} />
+      <BottomNav currentView={view} onNavigate={handleNavigate} isStudyDisabled={visibleFlashcards.length === 0} />
       
       {toastMessage && <Toast message={toastMessage} />}
       <footer className="text-center py-4 text-xs text-slate-400 dark:text-slate-500 hidden md:block">
-        <p>Version 1.5.0 - Mobile UX Overhaul</p>
+        <p>Version 1.6.0 - Smart Merge Sync</p>
       </footer>
     </div>
   );

@@ -1,9 +1,27 @@
 // File: /api/proxy.ts
 // This Vercel Serverless Function acts as a secure proxy and router.
 // It handles requests for both the Google GenAI API and the new Cloud Sync feature.
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+
+// Define types for our data structure
+interface Deck {
+  id: string;
+  name: string;
+  isDeleted?: boolean;
+}
+interface Flashcard {
+  id: string;
+  // ... other properties
+  isDeleted?: boolean;
+}
+interface SyncData {
+  decks: Deck[];
+  cards: Flashcard[];
+}
+
 
 // --- HANDLER FOR GEMINI API ---
-async function handleGeminiGenerate(payload, response, apiKey) {
+async function handleGeminiGenerate(payload: any, response: VercelResponse, apiKey: string) {
   const { model, contents, config } = payload;
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
@@ -46,7 +64,7 @@ async function handleGeminiGenerate(payload, response, apiKey) {
 const KV_URL = process.env.KV_REST_API_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN;
 
-async function handleSyncSave(payload, response) {
+async function handleSyncSave(payload: any, response: VercelResponse) {
   if (!KV_URL) return response.status(500).json({ error: 'KV_REST_API_URL is not configured on the server.' });
   if (!KV_TOKEN) return response.status(500).json({ error: 'KV_REST_API_TOKEN is not configured on the server.' });
   
@@ -71,7 +89,7 @@ async function handleSyncSave(payload, response) {
   return response.status(200).json({ message: 'Data saved successfully.' });
 }
 
-async function handleSyncLoad(payload, response) {
+async function handleSyncLoad(payload: any, response: VercelResponse) {
   if (!KV_URL) return response.status(500).json({ error: 'KV_REST_API_URL is not configured on the server.' });
   if (!KV_TOKEN) return response.status(500).json({ error: 'KV_REST_API_TOKEN is not configured on the server.' });
 
@@ -103,9 +121,61 @@ async function handleSyncLoad(payload, response) {
   }
 }
 
+async function handleSyncMerge(payload: any, response: VercelResponse) {
+  if (!KV_URL || !KV_TOKEN) {
+    return response.status(500).json({ error: 'KV Store is not configured on the server.' });
+  }
+  const { syncKey, data: clientData } = payload;
+  if (!syncKey || !clientData) {
+    return response.status(400).json({ error: 'Sync key and data are required.' });
+  }
+
+  // 1. Fetch current data from the cloud
+  const getResponse = await fetch(`${KV_URL}/get/${syncKey}`, {
+    headers: { 'Authorization': `Bearer ${KV_TOKEN}` },
+  });
+
+  let cloudData: SyncData = { decks: [], cards: [] };
+  if (getResponse.ok) {
+    const { result } = await getResponse.json();
+    if (result) {
+      cloudData = JSON.parse(result);
+    }
+  }
+
+  // 2. Merge client data and cloud data
+  const mergedDecksMap = new Map<string, Deck>();
+  (cloudData.decks || []).forEach(deck => mergedDecksMap.set(deck.id, deck));
+  (clientData.decks || []).forEach(deck => mergedDecksMap.set(deck.id, deck));
+
+  const mergedCardsMap = new Map<string, Flashcard>();
+  (cloudData.cards || []).forEach(card => mergedCardsMap.set(card.id, card));
+  (clientData.cards || []).forEach(card => mergedCardsMap.set(card.id, card));
+
+  const mergedData: SyncData = {
+    decks: Array.from(mergedDecksMap.values()),
+    cards: Array.from(mergedCardsMap.values()),
+  };
+
+  // 3. Save the merged data back to the cloud
+  const setResponse = await fetch(`${KV_URL}/set/${syncKey}`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${KV_TOKEN}` },
+    body: JSON.stringify(mergedData),
+  });
+
+  if (!setResponse.ok) {
+    const errorText = await setResponse.text();
+    return response.status(500).json({ error: 'Failed to save merged data.', details: errorText });
+  }
+  
+  // 4. Return the authoritative merged data to the client
+  return response.status(200).json({ data: mergedData });
+}
+
 
 // --- MAIN HANDLER ---
-export default async function handler(request, response) {
+export default async function handler(request: VercelRequest, response: VercelResponse) {
   if (request.method !== 'POST') {
     return response.status(405).json({ message: 'Method Not Allowed' });
   }
@@ -121,17 +191,28 @@ export default async function handler(request, response) {
         }
         return await handleGeminiGenerate(payload, response, apiKey);
 
-      case 'sync-save':
+      case 'sync-save': // Kept for legacy or specific uses, but merge is preferred
         return await handleSyncSave(payload, response);
 
       case 'sync-load':
         return await handleSyncLoad(payload, response);
+        
+      case 'sync-merge':
+        return await handleSyncMerge(payload, response);
 
       default:
-        return response.status(400).json({ message: `Invalid action: ${action}` });
+        // If no action is specified, assume it's a gemini-generate call for backward compatibility
+        if (payload.model && payload.contents) {
+            const apiKey = process.env.API_KEY;
+            if (!apiKey) {
+              return response.status(500).json({ error: 'API key not configured.' });
+            }
+            return await handleGeminiGenerate(request.body, response, apiKey);
+        }
+        return response.status(400).json({ message: `Invalid or missing action.` });
     }
   } catch (error) {
     console.error(`Error in proxy action '${action}':`, error);
-    response.status(500).json({ error: 'An internal server error occurred.', details: error.message });
+    response.status(500).json({ error: 'An internal server error occurred.', details: (error as Error).message });
   }
 }
