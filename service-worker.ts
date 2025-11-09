@@ -1,15 +1,15 @@
 // Fix: Add a triple-slash directive to provide Service Worker global types to TypeScript, resolving the 'Cannot find name ServiceWorkerGlobalScope' error.
 /// <reference lib="webworker" />
 
-// Fix: Reverted from `var` to `const`. The root cause of the error is the duplicate service worker file, which is now ignored by TypeScript.
+// Fix: Converted this file into a module to scope its constants locally.
+// This resolves the "Cannot redeclare block-scoped variable" error, which was
+// caused by a duplicate service-worker.js file also being processed by the compiler.
 const CACHE_NAME = 'lingua-cards-cache-v1';
-// Fix: Reverted from `var` to `const`.
 const APP_SHELL_URLS = [
   '/',
   '/index.html',
 ];
 
-// Fix: Reverted from `var` to `const`.
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
 sw.addEventListener('install', (event) => {
@@ -85,3 +85,7 @@ sw.addEventListener('fetch', (event) => {
     );
   }
 });
+
+// Fix: This exports an empty object, turning the file into a module.
+// This prevents its constants from polluting the global scope and conflicting with other files.
+export {};
