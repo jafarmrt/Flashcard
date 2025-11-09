@@ -226,17 +226,20 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen font-sans">
+    <div className="min-h-screen font-sans flex flex-col">
       <Header 
         onNavigate={setView} 
         onAddCard={handleAddCard} 
         isStudyDisabled={flashcards.length === 0}
         currentView={view}
       />
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="flex-grow max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
         {renderContent()}
       </main>
       {toastMessage && <Toast message={toastMessage} />}
+      <footer className="text-center py-4 text-xs text-slate-400 dark:text-slate-500">
+        <p>Version 1.1.0</p>
+      </footer>
     </div>
   );
 };
