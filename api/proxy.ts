@@ -47,9 +47,9 @@ const KV_URL = process.env.KV_REST_API_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN;
 
 async function handleSyncSave(payload, response) {
-  if (!KV_URL || !KV_TOKEN) {
-    return response.status(500).json({ error: 'Sync feature not configured on the server.' });
-  }
+  if (!KV_URL) return response.status(500).json({ error: 'KV_REST_API_URL is not configured on the server.' });
+  if (!KV_TOKEN) return response.status(500).json({ error: 'KV_REST_API_TOKEN is not configured on the server.' });
+  
   const { syncKey, data } = payload;
   if (!syncKey || !data) {
     return response.status(400).json({ error: 'Sync key and data are required.' });
@@ -72,9 +72,9 @@ async function handleSyncSave(payload, response) {
 }
 
 async function handleSyncLoad(payload, response) {
-  if (!KV_URL || !KV_TOKEN) {
-    return response.status(500).json({ error: 'Sync feature not configured on the server.' });
-  }
+  if (!KV_URL) return response.status(500).json({ error: 'KV_REST_API_URL is not configured on the server.' });
+  if (!KV_TOKEN) return response.status(500).json({ error: 'KV_REST_API_TOKEN is not configured on the server.' });
+
   const { syncKey } = payload;
   if (!syncKey) {
     return response.status(400).json({ error: 'Sync key is required.' });
