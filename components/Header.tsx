@@ -1,0 +1,66 @@
+import React from 'react';
+
+type View = 'LIST' | 'STUDY' | 'STATS' | 'FORM' | 'PRACTICE';
+
+interface HeaderProps {
+  onNavigate: (view: 'LIST' | 'STUDY' | 'STATS' | 'PRACTICE') => void;
+  onAddCard: () => void;
+  isStudyDisabled: boolean;
+  currentView: View;
+}
+
+const Header: React.FC<HeaderProps> = ({ onNavigate, onAddCard, isStudyDisabled, currentView }) => {
+  const navButtonStyle = "px-3 py-2 text-sm font-medium rounded-md transition-colors";
+  const activeStyle = "bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100";
+  const inactiveStyle = "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700";
+
+  return (
+    <header className="bg-white dark:bg-slate-800/50 backdrop-blur-sm shadow-sm sticky top-0 z-10">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex justify-between items-center h-16">
+          <div className="flex-shrink-0 flex items-center gap-2 cursor-pointer" onClick={() => onNavigate('LIST')}>
+             <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-500"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 15h4"/><path d="M10 15v-4.5a1.5 1.5 0 0 1 3 0V15"/><path d="M14 15h3"/></svg>
+            <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Lingua Cards</h1>
+          </div>
+          <div className="flex items-center space-x-2 sm:space-x-4">
+            <button
+              onClick={() => onNavigate('LIST')}
+              className={`${navButtonStyle} ${currentView === 'LIST' || currentView === 'FORM' ? activeStyle : inactiveStyle}`}
+            >
+              All Cards
+            </button>
+            <button
+              onClick={() => onNavigate('STUDY')}
+              disabled={isStudyDisabled}
+              className={`${navButtonStyle} ${currentView === 'STUDY' ? activeStyle : inactiveStyle} disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              Study
+            </button>
+            <button
+              onClick={() => onNavigate('PRACTICE')}
+              disabled={isStudyDisabled}
+              className={`${navButtonStyle} ${currentView === 'PRACTICE' ? activeStyle : inactiveStyle} disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              Practice
+            </button>
+             <button
+              onClick={() => onNavigate('STATS')}
+              className={`${navButtonStyle} ${currentView === 'STATS' ? activeStyle : inactiveStyle}`}
+            >
+              Stats
+            </button>
+            <button
+              onClick={onAddCard}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              <span>Add Card</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+};
+
+export default Header;
