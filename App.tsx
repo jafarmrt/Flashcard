@@ -6,7 +6,7 @@ import FlashcardList from './components/FlashcardList';
 import FlashcardForm from './components/FlashcardForm';
 import { StudyView } from './components/StudyView';
 import { StatsView } from './components/StatsView';
-import { QuizView } from './components/ConversationView';
+import { PracticeView } from './components/ConversationView';
 import Toast from './components/Toast';
 import DeckList from './components/DeckList';
 import { ChangelogView } from './components/ChangelogView';
@@ -657,7 +657,7 @@ const App: React.FC = () => {
         const allCardsForStudy = studyDeckId ? visibleFlashcards.filter(card => card.deckId === studyDeckId) : visibleFlashcards;
         return <StudyView cards={allCardsForStudy} onExit={handleSessionEnd} />;
       case 'PRACTICE':
-        return <QuizView cards={visibleFlashcards} />;
+        return <PracticeView cards={visibleFlashcards} />;
       case 'SETTINGS':
         return <SettingsView 
             settings={settings}
