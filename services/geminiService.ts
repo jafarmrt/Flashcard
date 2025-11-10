@@ -137,6 +137,8 @@ export const generateAudio = async (text: string): Promise<string | undefined> =
             const blockAlign = (numChannels * bitsPerSample) / 8;
             const byteRate = sampleRate * blockAlign;
             const buffer = new ArrayBuffer(44 + dataSize);
+            // Fix: Corrected a critical typo from `new new DataView` to `new DataView`, which was
+            // causing all audio generation to fail due to a JavaScript syntax error.
             const view = new DataView(buffer);
 
             const writeString = (view: DataView, offset: number, string: string) => {

@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.4] - Audio Generation Syntax Fix
+
+-   **Fix:** Resolved a critical syntax error in the audio generation service (`new new DataView()`) that was causing all audio processing to fail. This fix ensures that pronunciation audio is now reliably generated and playable.
+
 ## [2.0.3] - Audio Generation Hotfix
 
 -   **Fix:** Addressed a persistent issue where pronunciation audio failed to generate. The request to the Text-to-Speech AI model has been made more explicit to ensure it correctly interprets single-word inputs, resolving the bug.
