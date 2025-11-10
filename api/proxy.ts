@@ -33,23 +33,21 @@ async function handleGeminiGenerate(payload: any, response: VercelResponse, apiK
     ...generationConfig // All other config properties are for generationConfig
   } = config || {};
 
-  const googleApiBody: Record<string, any> = {
-    contents: Array.isArray(contents)
-      ? contents
-      : (typeof contents === 'object' && contents.parts)
-        ? [contents]
-        : [{ parts: [{ text: contents }] }],
-  };
-  
-  // Add top-level parameters if they exist
-  if (systemInstruction) googleApiBody.systemInstruction = systemInstruction;
-  if (responseModalities) googleApiBody.responseModalities = responseModalities;
-  if (speechConfig) googleApiBody.speechConfig = speechConfig;
+  // Normalize the `contents` to the `Content[]` format required by the API
+  const finalContents = Array.isArray(contents)
+    ? contents // Already in correct array format e.g., for TTS
+    : (contents && typeof contents === 'object' && contents.parts)
+      ? [contents] // An object with parts, wrap it in an array
+      : [{ parts: [{ text: contents }] }]; // A simple string, wrap it fully
 
-  // Add generationConfig only if it contains properties
-  if (generationConfig && Object.keys(generationConfig).length > 0) {
-    googleApiBody.generationConfig = generationConfig;
-  }
+  // Build the request body, including optional fields only if they exist
+  const googleApiBody: Record<string, any> = {
+    contents: finalContents,
+    ...(systemInstruction && { systemInstruction }),
+    ...(responseModalities && { responseModalities }),
+    ...(speechConfig && { speechConfig }),
+    ...(Object.keys(generationConfig).length > 0 && { generationConfig }),
+  };
 
   const geminiResponse = await fetch(`${endpoint}?key=${apiKey}`, {
     method: 'POST',
