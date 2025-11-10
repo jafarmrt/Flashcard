@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.3] - Critical Crash Fix
+
+-   **Fix:** Resolved a critical crash (`.map is not a function` or `.join is not a function`) that occurred in the "Study" view and the "Edit Card" form. The app now correctly handles legacy flashcard data where `exampleSentenceTarget` or `definition` fields were saved as a string instead of an array. This ensures backward compatibility and prevents the app from crashing when viewing or editing older cards.
+
 ## [2.2.2] - Critical Stability Fixes
 
 -   **Fix:** Resolved a critical crash (`definition.map is not a function`) in the "Study" view and "Edit Card" form. The app now correctly handles legacy flashcard data where the `definition` field was a string instead of an array, preventing crashes and ensuring backward compatibility.

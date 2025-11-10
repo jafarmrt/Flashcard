@@ -20,8 +20,9 @@ const FlashcardComponent: React.FC<{ card: Flashcard; isFlipped: boolean; }> = (
     }
   };
 
-  // Fix: Defensively handle `card.definition` which could be a string in old data.
+  // Fix: Defensively handle legacy data where definition or example could be a string.
   const definitions = Array.isArray(card.definition) ? card.definition : (card.definition ? [String(card.definition)] : []);
+  const exampleSentences = Array.isArray(card.exampleSentenceTarget) ? card.exampleSentenceTarget : (card.exampleSentenceTarget ? [String(card.exampleSentenceTarget)] : []);
 
   return (
     <div className="w-full h-full" style={{ perspective: '1000px' }}>
@@ -59,11 +60,11 @@ const FlashcardComponent: React.FC<{ card: Flashcard; isFlipped: boolean; }> = (
                 </div>
             )}
 
-            {card.exampleSentenceTarget && card.exampleSentenceTarget.length > 0 && (
+            {exampleSentences && exampleSentences.length > 0 && (
                 <div>
                     <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wider">Example(s)</p>
                      <ul className="space-y-1 mt-1">
-                      {card.exampleSentenceTarget.map((ex, i) => <li key={i} className="italic text-indigo-50">"{ex}"</li>)}
+                      {exampleSentences.map((ex, i) => <li key={i} className="italic text-indigo-50">"{ex}"</li>)}
                     </ul>
                 </div>
             )}

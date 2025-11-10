@@ -67,13 +67,15 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
           exampleSentenceTarget, notes, audioSrc 
       } = card;
 
-      // Fix: Ensure 'definition' is always an array to handle legacy data where it was a string.
+      // Fix: Ensure 'definition' and 'exampleSentenceTarget' are always arrays to handle legacy data.
       const safeDefinition = Array.isArray(definition) ? definition : (definition ? [String(definition)] : []);
+      const safeExamples = Array.isArray(exampleSentenceTarget) ? exampleSentenceTarget : (exampleSentenceTarget ? [String(exampleSentenceTarget)] : []);
 
       setFormData({ 
           front, back, pronunciation, partOfSpeech, 
           definition: safeDefinition, 
-          exampleSentenceTarget, notes, audioSrc 
+          exampleSentenceTarget: safeExamples,
+          notes, audioSrc 
       });
 
       if (initialDeckName) {
