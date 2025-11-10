@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.7] - Study Session Stability
+
+-   **Fix:** Resolved a bug in the "Study" view where the flashcard would unexpectedly change or reset shortly after the session started. This was caused by the background cloud sync refreshing the component's data. The study session is now properly isolated and will no longer be interrupted.
+
 ## [2.0.6] - Reliable Audio Source
 
 -   **Fix:** Replaced the unreliable AI-based audio generation with a direct integration to the Free Dictionary API. This provides faster, more consistent pronunciation audio and resolves the persistent bugs related to the Text-to-Speech model.

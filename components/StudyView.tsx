@@ -35,11 +35,39 @@ const FlashcardComponent: React.FC<{ card: Flashcard; isFlipped: boolean; }> = (
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">{card.partOfSpeech}</p>
         </div>
         {/* Back */}
-        <div className="absolute w-full h-full bg-indigo-500 dark:bg-indigo-600 rounded-lg shadow-xl flex flex-col justify-center items-center p-6 text-white" style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}>
-          <h2 className="text-4xl md:text-5xl font-bold text-center mb-4 break-words">{card.back}</h2>
-          {card.definition && <p className="text-lg text-center text-indigo-200 mb-4">({card.definition})</p>}
-          {card.exampleSentenceTarget && <p className="text-center italic mt-4 text-indigo-100">"{card.exampleSentenceTarget}"</p>}
-          {card.notes && <p className="text-center mt-4 text-xs bg-indigo-700/50 px-2 py-1 rounded">{card.notes}</p>}
+        <div 
+          className="absolute w-full h-full bg-indigo-500 dark:bg-indigo-600 rounded-lg shadow-xl flex flex-col p-6 text-white overflow-hidden" 
+          style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
+        >
+          {/* Main Translation */}
+          <div className="text-center mb-4 shrink-0">
+            <h2 className="text-4xl md:text-5xl font-bold break-words">{card.back}</h2>
+            {card.partOfSpeech && <p className="text-lg text-indigo-200 mt-1">{card.partOfSpeech}</p>}
+          </div>
+
+          {/* Details Section */}
+          <div className="w-full space-y-4 text-left border-t border-indigo-400/50 pt-4 overflow-y-auto">
+            {card.definition && (
+                <div>
+                    <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wider">Definition</p>
+                    <p className="text-md mt-1 text-indigo-50">{card.definition}</p>
+                </div>
+            )}
+
+            {card.exampleSentenceTarget && (
+                <div>
+                    <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wider">Example</p>
+                    <p className="italic mt-1 text-indigo-50">"{card.exampleSentenceTarget}"</p>
+                </div>
+            )}
+
+            {card.notes && (
+                <div>
+                    <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wider">Notes</p>
+                    <p className="mt-1 text-indigo-50">{card.notes}</p>
+                </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -75,6 +103,9 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, onExit }) => {
   useEffect(() => {
     const today = new Date();
     today.setHours(0,0,0,0);
+    // The cards prop is stable for the lifetime of a study session.
+    // This effect should only run once on mount to initialize the session queue.
+    // Background data syncs should not reset the user's progress.
     const dueCards = cards.filter(c => new Date(c.dueDate) <= today);
     setDueCardCount(dueCards.length);
     if (dueCards.length > 0) {
@@ -82,7 +113,8 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, onExit }) => {
     } else {
       setSessionComplete(true);
     }
-  }, [cards]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (studyMode === 'type' && !isFlipped) {
