@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.3] - Audio Generation Hotfix
+
+-   **Fix:** Addressed a persistent issue where pronunciation audio failed to generate. The request to the Text-to-Speech AI model has been made more explicit to ensure it correctly interprets single-word inputs, resolving the bug.
+
 ## [2.0.2] - Critical AI Proxy Fix
 
 -   **Fix:** Resolved a critical bug in the server-side proxy that caused all AI content generation (both text details and audio) to fail. The proxy was incorrectly structuring requests to the Gemini API. This has been fixed, and all AI features are now fully functional.

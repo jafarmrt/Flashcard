@@ -113,7 +113,9 @@ export const generateAudio = async (text: string): Promise<string | undefined> =
     try {
         const response = await callProxy({
             model: "gemini-2.5-flash-preview-tts",
-            contents: [{ parts: [{ text }] }],
+            // Fix: Add an explicit instruction to the prompt to make the request more robust,
+            // ensuring the TTS model correctly handles single-word inputs for pronunciation.
+            contents: [{ parts: [{ text: `Pronounce the following word clearly: ${text}` }] }],
             config: {
                 responseModalities: ['AUDIO'],
                 speechConfig: {
