@@ -674,7 +674,7 @@ const App: React.FC = () => {
             <StatusIndicator status={mwDictApiStatus} label="MW Dict."/>
          </div>
          <button onClick={() => handleNavigate('CHANGELOG')} className="hover:underline">
-            Version 2.1.1 - View Changelog
+            Version 2.1.2 - View Changelog
         </button>
       </footer>
     </div>

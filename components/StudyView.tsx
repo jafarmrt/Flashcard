@@ -142,16 +142,19 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, onExit }) => {
     const updatedCard = calculateSrs(currentCard, rating);
     setUpdatedCards(prev => new Map(prev).set(updatedCard.id, updatedCard));
     
-    let newQueue = [...sessionQueue];
+    // Fix: Use a new variable `finalQueue` to ensure the correct queue length is
+    // used in the timeout closure, preventing premature session completion
+    // when a card is marked 'Again'.
+    let finalQueue = [...sessionQueue];
     if (rating === 'AGAIN') {
-      const reAddIndex = Math.min(currentIndex + 5, newQueue.length);
-      newQueue.splice(reAddIndex, 0, currentCard);
-      setSessionQueue(newQueue);
+      const reAddIndex = Math.min(currentIndex + 5, finalQueue.length);
+      finalQueue.splice(reAddIndex, 0, currentCard);
+      setSessionQueue(finalQueue);
     }
 
     setIsFlipped(false);
     setTimeout(() => {
-      if (currentIndex + 1 < newQueue.length) {
+      if (currentIndex + 1 < finalQueue.length) {
         setCurrentIndex(prev => prev + 1);
         setTypedAnswer('');
         setAnswerState(null);

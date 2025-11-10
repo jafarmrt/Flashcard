@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.2] - Study Session Fix
+
+-   **Fix:** Resolved a critical bug in the "Study" view where the session would end prematurely if a card was marked as 'Again'. The logic now correctly handles the updated queue length, ensuring cards marked for repetition are properly reviewed within the same session.
+
 ## [2.1.1] - Study Performance Fix
 
 -   **Fix:** Resolved a major performance issue that caused the application to hang or freeze when entering the "Study" view with a large number of cards. The logic for finding due cards has been optimized to avoid slow date calculations in a loop, making the study session start instantly.
