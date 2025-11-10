@@ -47,7 +47,6 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
     audioSrc: undefined,
   });
   const [deckName, setDeckName] = useState('Default Deck');
-  const [dictionarySource, setDictionarySource] = useState<DictionarySource>(defaultApiSource);
   
   // Loading states
   const [isFetchingDetails, setIsFetchingDetails] = useState(false);
@@ -94,10 +93,8 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
         audioSrc: undefined,
       });
       setDeckName('Default Deck');
-      // Set API source to user's default for new cards
-      setDictionarySource(defaultApiSource);
     }
-  }, [card, initialDeckName, defaultApiSource]);
+  }, [card, initialDeckName]);
 
   const handleTextChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -124,7 +121,7 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
       setFormData(prev => ({...prev, audioSrc: undefined}));
       
       try {
-          const fetcher = dictionarySource === 'free' ? fetchFromFreeDictionary : fetchFromMerriamWebster;
+          const fetcher = defaultApiSource === 'free' ? fetchFromFreeDictionary : fetchFromMerriamWebster;
           const details: DictionaryResult = await fetcher(formData.front);
           
           let audioDataUrl: string | undefined = undefined;
@@ -145,7 +142,7 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
               exampleSentenceTarget: details.exampleSentences,
               audioSrc: audioDataUrl,
           }));
-          showToast(`Details fetched from ${dictionarySource === 'free' ? 'Free Dictionary' : 'Merriam-Webster'}.`);
+          showToast(`Details fetched from ${defaultApiSource === 'free' ? 'Free Dictionary' : 'Merriam-Webster'}.`);
 
       } catch (error) {
           console.error("Failed to fetch details from dictionary API:", error);
@@ -242,28 +239,13 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
              )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 border border-slate-200 dark:border-slate-700 rounded-lg">
-            <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Dictionary Source</label>
-                <div className="mt-2 flex gap-4">
-                    <label className="flex items-center gap-2 text-sm">
-                        <input type="radio" name="dictionary-source" value="free" checked={dictionarySource === 'free'} onChange={() => setDictionarySource('free')} className="form-radio h-4 w-4 text-indigo-600 border-slate-300 focus:ring-indigo-500" />
-                        Free Dictionary
-                    </label>
-                    <label className="flex items-center gap-2 text-sm">
-                        <input type="radio" name="dictionary-source" value="mw" checked={dictionarySource === 'mw'} onChange={() => setDictionarySource('mw')} className="form-radio h-4 w-4 text-indigo-600 border-slate-300 focus:ring-indigo-500"/>
-                        Merriam-Webster
-                    </label>
-                </div>
-            </div>
-            <div className="flex flex-col gap-2">
-                 <button type="button" onClick={handleFetchDetails} disabled={isFetchingDetails || !formData.front} className="px-4 py-2 text-sm font-medium text-white bg-slate-600 hover:bg-slate-700 dark:bg-slate-500 dark:hover:bg-slate-600 rounded-md transition-colors disabled:opacity-50 disabled:cursor-wait">
-                    {isFetchingDetails ? 'Fetching...' : 'Fetch Details & Audio'}
-                </button>
-                 <button type="button" onClick={handleGenerateAiDetails} disabled={isGeneratingAI || !formData.front} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-wait">
-                    {isGeneratingAI ? 'Generating...' : '✨ AI Generate Persian'}
-                </button>
-            </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <button type="button" onClick={handleFetchDetails} disabled={isFetchingDetails || !formData.front} className="w-full px-4 py-3 text-sm font-medium text-white bg-slate-600 hover:bg-slate-700 dark:bg-slate-500 dark:hover:bg-slate-600 rounded-md transition-colors disabled:opacity-50 disabled:cursor-wait">
+                {isFetchingDetails ? 'Fetching...' : 'Fetch Details'}
+            </button>
+            <button type="button" onClick={handleGenerateAiDetails} disabled={isGeneratingAI || !formData.front} className="w-full px-4 py-3 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-wait">
+                {isGeneratingAI ? 'Generating...' : '✨ AI Generate Persian'}
+            </button>
         </div>
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
