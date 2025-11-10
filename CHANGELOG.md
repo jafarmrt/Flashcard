@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.8] - Mobile UI Fix
+
+-   **Fix:** Resolved a layout bug in the "All Cards" list where the audio playback button was not visible on mobile devices. The text content was not truncating correctly, pushing the action buttons off-screen. The button is now always visible.
+
 ## [2.0.7] - Study Session Stability
 
 -   **Fix:** Resolved a bug in the "Study" view where the flashcard would unexpectedly change or reset shortly after the session started. This was caused by the background cloud sync refreshing the component's data. The study session is now properly isolated and will no longer be interrupted.
