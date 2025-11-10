@@ -47,17 +47,21 @@ const FlashcardComponent: React.FC<{ card: Flashcard; isFlipped: boolean; }> = (
 
           {/* Details Section */}
           <div className="w-full space-y-4 text-left border-t border-indigo-400/50 pt-4 overflow-y-auto">
-            {card.definition && (
+            {card.definition && card.definition.length > 0 && (
                 <div>
-                    <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wider">Definition</p>
-                    <p className="text-md mt-1 text-indigo-50">{card.definition}</p>
+                    <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wider">Definition(s)</p>
+                    <ol className="list-decimal list-inside space-y-1 mt-1">
+                      {card.definition.map((def, i) => <li key={i} className="text-md text-indigo-50">{def}</li>)}
+                    </ol>
                 </div>
             )}
 
-            {card.exampleSentenceTarget && (
+            {card.exampleSentenceTarget && card.exampleSentenceTarget.length > 0 && (
                 <div>
-                    <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wider">Example</p>
-                    <p className="italic mt-1 text-indigo-50">"{card.exampleSentenceTarget}"</p>
+                    <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wider">Example(s)</p>
+                     <ul className="space-y-1 mt-1">
+                      {card.exampleSentenceTarget.map((ex, i) => <li key={i} className="italic text-indigo-50">"{ex}"</li>)}
+                    </ul>
                 </div>
             )}
 

@@ -18,8 +18,8 @@ const callProxy = async (action: 'dictionary-free' | 'dictionary-mw', payload: o
 export interface DictionaryResult {
     pronunciation: string;
     partOfSpeech: string;
-    definition: string;
-    exampleSentence: string;
+    definitions: string[];
+    exampleSentences: string[];
     audioUrl?: string;
 }
 
@@ -34,14 +34,30 @@ export const fetchFromFreeDictionary = async (word: string): Promise<DictionaryR
     const entry = data[0];
     const phonetic = entry.phonetics?.find((p: any) => p.text && p.audio)?.text || entry.phonetic || '';
     const audioUrl = entry.phonetics?.find((p: any) => p.audio)?.audio;
-    const meaning = entry.meanings?.[0];
-    const definition = meaning?.definitions?.[0];
+    
+    const definitions: string[] = [];
+    const exampleSentences: string[] = [];
+    let partOfSpeech = '';
+
+    entry.meanings?.forEach((meaning: any) => {
+        if (!partOfSpeech) {
+             partOfSpeech = meaning.partOfSpeech || '';
+        }
+        meaning.definitions?.forEach((def: any) => {
+            if (def.definition) {
+                definitions.push(def.definition);
+            }
+            if (def.example) {
+                exampleSentences.push(def.example);
+            }
+        });
+    });
 
     return {
         pronunciation: phonetic,
-        partOfSpeech: meaning?.partOfSpeech || '',
-        definition: definition?.definition || '',
-        exampleSentence: definition?.example || '',
+        partOfSpeech: partOfSpeech,
+        definitions: definitions,
+        exampleSentences: exampleSentences,
         audioUrl: audioUrl,
     };
 };
@@ -62,6 +78,25 @@ const getMwAudioUrl = (audio: string): string | undefined => {
     return `https://media.merriam-webster.com/audio/prons/en/us/mp3/${subdir}/${audio}.mp3`;
 };
 
+// Helper to recursively find example sentences in MW's complex structure
+const findMwExamples = (obj: any, examples: string[]) => {
+    if (Array.isArray(obj)) {
+        if (obj[0] === 'vis') { // 'vis' marks a "verbal illustration" (example)
+            obj[1].forEach((item: any) => {
+                if (item.t) {
+                    // Clean the example text from formatting tags
+                    const exampleText = item.t.replace(/{it}|{\/it}|{ldquo}|{rdquo}/g, '').replace(/ {dx}.*?{\/dx}/g, '');
+                    examples.push(exampleText);
+                }
+            });
+        } else {
+            obj.forEach(item => findMwExamples(item, examples));
+        }
+    } else if (typeof obj === 'object' && obj !== null) {
+        Object.values(obj).forEach(value => findMwExamples(value, examples));
+    }
+};
+
 
 export const fetchFromMerriamWebster = async (word: string): Promise<DictionaryResult> => {
     const data = await callProxy('dictionary-mw', { word });
@@ -74,18 +109,18 @@ export const fetchFromMerriamWebster = async (word: string): Promise<DictionaryR
     const pronunciation = entry.hwi?.prs?.[0]?.mw || '';
     const audioFile = entry.hwi?.prs?.[0]?.sound?.audio;
 
-    // Extract example sentence - it can be nested inside definitions.
-    let example = '';
-    const sense = entry.def?.[0]?.sseq?.[0]?.[0]?.[1];
-    if (sense?.dt?.[1]?.[1]?.[0]?.t) {
-       example = sense.dt[1][1][0].t.replace(/{it}|{\/it}/g, ''); // remove italic tags
+    const definitions = entry.shortdef || [];
+    const exampleSentences: string[] = [];
+    if (entry.def) {
+        findMwExamples(entry.def, exampleSentences);
     }
+
 
     return {
         pronunciation: `/${pronunciation}/`,
         partOfSpeech: entry.fl || '',
-        definition: entry.shortdef?.[0] || '',
-        exampleSentence: example,
+        definitions: definitions,
+        exampleSentences: exampleSentences,
         audioUrl: getMwAudioUrl(audioFile),
     };
 };

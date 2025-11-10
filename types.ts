@@ -21,8 +21,8 @@ export interface Flashcard {
   back: string; // Native Language (Persian)
   pronunciation?: string;
   partOfSpeech?: string;
-  definition?: string;
-  exampleSentenceTarget?: string;
+  definition?: string[];
+  exampleSentenceTarget?: string[];
   notes?: string;
   isDeleted?: boolean;
 

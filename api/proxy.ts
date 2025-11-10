@@ -219,10 +219,15 @@ export default async function handler(request: VercelRequest, response: VercelRe
     switch (action) {
       case 'ping': // For Gemini API
         return response.status(200).json({ message: 'pong' });
-      case 'ping-dict': // For Dictionary APIs
+      case 'ping-free-dict': // For Free Dictionary API
         const dictResponse = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/hello`);
         return response.status(dictResponse.ok ? 200 : 503).json({ message: dictResponse.ok ? 'pong' : 'api unreachable' });
-        
+      case 'ping-mw': // For Merriam-Webster API
+        const mwApiKeyPing = process.env.MW_API_KEY;
+        if (!mwApiKeyPing) return response.status(500).json({ error: 'Merriam-Webster API key not configured.' });
+        const mwResponse = await fetch(`https://www.dictionaryapi.com/api/v3/references/collegiate/json/test?key=${mwApiKeyPing}`);
+        return response.status(mwResponse.ok ? 200 : 503).json({ message: mwResponse.ok ? 'pong' : 'api unreachable' });
+
       case 'gemini-generate':
         const apiKey = process.env.API_KEY;
         if (!apiKey) return response.status(500).json({ error: 'API key not configured.' });

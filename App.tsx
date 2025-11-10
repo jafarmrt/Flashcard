@@ -17,7 +17,7 @@ type HealthStatus = 'ok' | 'error' | 'checking';
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted'>;
 
 // --- API Helper ---
-const callProxy = async (action: 'sync-save' | 'sync-load' | 'sync-merge' | 'ping' | 'ping-dict' | 'gemini-generate' | 'dictionary-free' | 'dictionary-mw', payload: object) => {
+const callProxy = async (action: 'sync-save' | 'sync-load' | 'sync-merge' | 'ping' | 'ping-free-dict' | 'ping-mw' | 'gemini-generate' | 'dictionary-free' | 'dictionary-mw', payload: object) => {
     const response = await fetch('/api/proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -138,9 +138,10 @@ const convertToCSV = (cards: Flashcard[], decks: Deck[]): string => {
     'definition', 'exampleSentenceTarget', 'notes'
   ];
 
-  const escapeCSV = (value: string | undefined): string => {
+  const escapeCSV = (value: string | string[] | undefined): string => {
     if (value === undefined || value === null) return '';
-    let str = String(value);
+    // Handle array fields by joining them with a semicolon
+    let str = Array.isArray(value) ? value.join('; ') : String(value);
     if (str.includes(',') || str.includes('"') || str.includes('\n')) {
       str = `"${str.replace(/"/g, '""')}"`;
     }
@@ -247,7 +248,8 @@ const App: React.FC = () => {
   const [studyDeckId, setStudyDeckId] = useState<string | null>(null);
   const [dbStatus, setDbStatus] = useState<HealthStatus>('checking');
   const [apiStatus, setApiStatus] = useState<HealthStatus>('checking');
-  const [dictApiStatus, setDictApiStatus] = useState<HealthStatus>('checking');
+  const [freeDictApiStatus, setFreeDictApiStatus] = useState<HealthStatus>('checking');
+  const [mwDictApiStatus, setMwDictApiStatus] = useState<HealthStatus>('checking');
 
   
   const isInitialMount = useRef(true);
@@ -316,15 +318,25 @@ const App: React.FC = () => {
     };
     checkGeminiApi();
 
-    const checkDictApi = async () => {
+    const checkFreeDictApi = async () => {
       try {
-        await callProxy('ping-dict', {});
-        setDictApiStatus('ok');
+        await callProxy('ping-free-dict', {});
+        setFreeDictApiStatus('ok');
       } catch (e) {
-        setDictApiStatus('error');
+        setFreeDictApiStatus('error');
       }
     };
-    checkDictApi();
+    checkFreeDictApi();
+    
+    const checkMwDictApi = async () => {
+      try {
+        await callProxy('ping-mw', {});
+        setMwDictApiStatus('ok');
+      } catch (e) {
+        setMwDictApiStatus('error');
+      }
+    };
+    checkMwDictApi();
 
   }, []);
 
@@ -520,8 +532,8 @@ const App: React.FC = () => {
                 back: row.back,
                 pronunciation: row.pronunciation || '',
                 partOfSpeech: row.partOfSpeech || '',
-                definition: row.definition || '',
-                exampleSentenceTarget: row.exampleSentenceTarget || '',
+                definition: row.definition?.split(';').map(s => s.trim()) || [],
+                exampleSentenceTarget: row.exampleSentenceTarget?.split(';').map(s => s.trim()) || [],
                 notes: row.notes || '',
                 repetition: 0,
                 easinessFactor: 2.5,
@@ -658,7 +670,8 @@ const App: React.FC = () => {
          <div className="flex justify-center items-center gap-4 mb-2">
             <StatusIndicator status={dbStatus} label="DB"/>
             <StatusIndicator status={apiStatus} label="AI API"/>
-            <StatusIndicator status={dictApiStatus} label="Dict. API"/>
+            <StatusIndicator status={freeDictApiStatus} label="Free Dict."/>
+            <StatusIndicator status={mwDictApiStatus} label="MW Dict."/>
          </div>
          <button onClick={() => handleNavigate('CHANGELOG')} className="hover:underline">
             Version 2.1.0 - View Changelog

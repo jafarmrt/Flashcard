@@ -40,8 +40,8 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
     back: '',
     pronunciation: '',
     partOfSpeech: '',
-    definition: '',
-    exampleSentenceTarget: '',
+    definition: [],
+    exampleSentenceTarget: [],
     notes: '',
     audioSrc: undefined,
   });
@@ -79,8 +79,8 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
         back: '',
         pronunciation: '',
         partOfSpeech: '',
-        definition: '',
-        exampleSentenceTarget: '',
+        definition: [],
+        exampleSentenceTarget: [],
         notes: '',
         audioSrc: undefined,
       });
@@ -88,10 +88,17 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
     }
   }, [card, initialDeckName]);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const handleTextChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
+
+  const handleTextAreaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const { name, value } = e.target;
+    const valueAsArray = value.split('\n\n').filter(s => s.trim() !== '');
+    setFormData(prev => ({ ...prev, [name]: valueAsArray }));
+  };
+
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -123,8 +130,8 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
               ...prev,
               pronunciation: details.pronunciation,
               partOfSpeech: details.partOfSpeech,
-              definition: details.definition,
-              exampleSentenceTarget: details.exampleSentence,
+              definition: details.definitions,
+              exampleSentenceTarget: details.exampleSentences,
               audioSrc: audioDataUrl,
           }));
           showToast(`Details fetched from ${dictionarySource === 'free' ? 'Free Dictionary' : 'Merriam-Webster'}.`);
@@ -208,7 +215,7 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
                     id="front"
                     name="front"
                     value={formData.front || ''}
-                    onChange={handleChange}
+                    onChange={handleTextChange}
                     required
                     className="mt-1 block w-full pl-3 pr-10 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                     placeholder="e.g., hello"
@@ -279,7 +286,7 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
               id="back"
               name="back"
               value={formData.back || ''}
-              onChange={handleChange}
+              onChange={handleTextChange}
               required
               className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
             />
@@ -297,7 +304,7 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
               id="pronunciation"
               name="pronunciation"
               value={formData.pronunciation || ''}
-              onChange={handleChange}
+              onChange={handleTextChange}
               className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
             />
           </div>
@@ -310,25 +317,25 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
                 id="partOfSpeech"
                 name="partOfSpeech"
                 value={formData.partOfSpeech || ''}
-                onChange={handleChange}
+                onChange={handleTextChange}
                 className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
               />
             </div>
         </div>
         
         <div>
-          <label htmlFor="definition" className="block text-sm font-medium text-slate-700 dark:text-slate-300">English Definition</label>
-          <textarea id="definition" name="definition" rows={2} value={formData.definition || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
+          <label htmlFor="definition" className="block text-sm font-medium text-slate-700 dark:text-slate-300">English Definition(s)</label>
+          <textarea id="definition" name="definition" rows={3} value={formData.definition?.join('\n\n') || ''} onChange={handleTextAreaChange} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" placeholder="Separate multiple definitions with two newlines (Enter key twice)"/>
         </div>
         
         <div>
-           <label htmlFor="exampleSentenceTarget" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Example Sentence (English)</label>
-          <textarea id="exampleSentenceTarget" name="exampleSentenceTarget" rows={2} value={formData.exampleSentenceTarget || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
+           <label htmlFor="exampleSentenceTarget" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Example Sentence(s)</label>
+          <textarea id="exampleSentenceTarget" name="exampleSentenceTarget" rows={3} value={formData.exampleSentenceTarget?.join('\n\n') || ''} onChange={handleTextAreaChange} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" placeholder="Separate multiple examples with two newlines (Enter key twice)"/>
         </div>
 
         <div>
           <label htmlFor="notes" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Notes / Mnemonics (Persian)</label>
-          <textarea id="notes" name="notes" rows={3} value={formData.notes || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
+          <textarea id="notes" name="notes" rows={3} value={formData.notes || ''} onChange={handleTextChange} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
         </div>
 
         <div>
