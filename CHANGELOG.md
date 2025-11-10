@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.1] - Study Performance Fix
+
+-   **Fix:** Resolved a major performance issue that caused the application to hang or freeze when entering the "Study" view with a large number of cards. The logic for finding due cards has been optimized to avoid slow date calculations in a loop, making the study session start instantly.
+
 ## [2.1.0] - Dictionary APIs & Offline Audio
 
 -   **Feature:** Separated data sources for more control. Card details (definition, pronunciation, etc.) are now fetched from reliable dictionary APIs, while AI is focused on generating Persian translations and notes.

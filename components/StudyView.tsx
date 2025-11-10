@@ -105,13 +105,16 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, onExit }) => {
   };
   
   useEffect(() => {
+    // Optimization: To prevent freezing with large datasets, we avoid creating
+    // a new Date object for every card. Instead, we get today's ISO string
+    // once and perform a much faster string comparison.
     const today = new Date();
-    today.setHours(0,0,0,0);
-    // The cards prop is stable for the lifetime of a study session.
-    // This effect should only run once on mount to initialize the session queue.
-    // Background data syncs should not reset the user's progress.
-    const dueCards = cards.filter(c => new Date(c.dueDate) <= today);
+    today.setHours(0, 0, 0, 0);
+    const todayISOString = today.toISOString();
+    
+    const dueCards = cards.filter(c => c.dueDate <= todayISOString);
     setDueCardCount(dueCards.length);
+
     if (dueCards.length > 0) {
       setupSession(dueCards);
     } else {
