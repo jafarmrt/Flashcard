@@ -120,7 +120,9 @@ export const generateAudio = async (text: string): Promise<string | undefined> =
                 responseModalities: ['AUDIO'],
                 speechConfig: {
                     voiceConfig: {
-                        prebuiltVoiceConfig: { voiceName: 'Zephyr' },
+                        // Fix: Changed voice from 'Zephyr' to 'Kore'. 'Zephyr' is intended for the Live API,
+                        // while 'Kore' is compatible with the standard TTS model. This was causing silent failures.
+                        prebuiltVoiceConfig: { voiceName: 'Kore' },
                     },
                 },
             },

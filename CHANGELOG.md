@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.5] - Audio Generation Voice Fix
+
+-   **Fix:** Resolved a persistent audio generation failure by switching the Text-to-Speech voice from 'Zephyr' to 'Kore'. 'Zephyr' is intended for the real-time Live API, and its use with the standard TTS model caused the API to return no audio data. Using the compatible 'Kore' voice ensures audio is now generated correctly.
+
 ## [2.0.4] - Audio Generation Syntax Fix
 
 -   **Fix:** Resolved a critical syntax error in the audio generation service (`new new DataView()`) that was causing all audio processing to fail. This fix ensures that pronunciation audio is now reliably generated and playable.
