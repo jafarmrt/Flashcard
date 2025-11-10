@@ -123,7 +123,7 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
         <div className="space-y-3">
             {sortedCards.map((card) => (
                 <div key={card.id} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-4 flex justify-between items-center transition-all hover:shadow-md hover:bg-slate-50 dark:hover:bg-slate-700/50">
-                    <div className="flex-1 overflow-hidden">
+                    <div className="flex-1 overflow-hidden min-w-0">
                         <p className="text-lg font-semibold text-slate-800 dark:text-slate-100 truncate">{card.front}</p>
                         <p className="text-slate-600 dark:text-slate-400 truncate">{card.back}</p>
                         <div className="flex items-center gap-4 text-xs text-slate-500 dark:text-slate-400 mt-2">
@@ -131,7 +131,7 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                              <span>{formatDate(card.dueDate)}</span>
                         </div>
                     </div>
-                    <div className="flex gap-1 sm:gap-2 pl-2 items-center">
+                    <div className="flex flex-shrink-0 gap-1 sm:gap-2 pl-2 items-center">
                         {card.audioSrc && (
                              <button onClick={(e) => playAudio(card.audioSrc!, e)} aria-label={`Play audio for ${card.front}`} className="p-2 text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-300 transition-colors rounded-full hover:bg-slate-200 dark:hover:bg-slate-600"><SpeakerIcon /></button>
                         )}

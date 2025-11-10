@@ -1,12 +1,8 @@
 // This service now sends requests to our own secure proxy on Vercel
 // instead of directly to the Google GenAI API. This protects the API key.
 
-export interface FlashcardDetails {
+export interface PersianDetails {
   back: string; // Persian translation
-  pronunciation: string;
-  partOfSpeech: string;
-  definition: string;
-  exampleSentenceTarget: string;
   notes: string;
 }
 
@@ -28,21 +24,17 @@ const callProxy = async (body: object) => {
 };
 
 
-export const generateFlashcardDetails = async (englishWord: string): Promise<FlashcardDetails> => {
+export const generatePersianDetails = async (englishWord: string): Promise<PersianDetails> => {
   try {
     const prompt = `You are an expert English language tutor for a native Persian speaker.
 I will give you an English word or phrase.
-Your task is to provide all the necessary details for a language learning flashcard in a JSON format.
+Your task is to provide a Persian translation and a helpful note for a flashcard in JSON format.
 
 The English word is: "${englishWord}"
 
 Please provide the following:
-1. "translation": The Persian translation.
-2. "pronunciation": The phonetic pronunciation, preferably in IPA format (e.g., /həˈloʊ/).
-3. "partOfSpeech": The grammatical part of speech (e.g., "Noun", "Verb", "Adjective").
-4. "definition": A simple English definition of the word, suitable for a language learner.
-5. "exampleSentence": A simple example sentence in English using the word.
-6. "notes": A brief note or mnemonic in Persian to help remember the word.`;
+1. "translation": The most common Persian translation.
+2. "notes": A brief note or mnemonic in Persian to help remember the word. For example, mention a root word, a similar sounding Persian word, or a cultural context.`;
 
     const response = await callProxy({
       model: "gemini-2.5-flash",
@@ -53,13 +45,9 @@ Please provide the following:
           type: 'OBJECT',
           properties: {
             translation: { type: 'STRING', description: 'The Persian translation of the English word.' },
-            pronunciation: { type: 'STRING', description: 'The IPA phonetic pronunciation.' },
-            partOfSpeech: { type: 'STRING', description: 'The grammatical part of speech.' },
-            definition: { type: 'STRING', description: 'A simple English definition for the word.' },
-            exampleSentence: { type: 'STRING', description: 'An example sentence in English.' },
             notes: { type: 'STRING', description: 'A helpful note or mnemonic in Persian.' },
           },
-          required: ["translation", "pronunciation", "partOfSpeech", "definition", "exampleSentence", "notes"],
+          required: ["translation", "notes"],
         },
       },
     });
@@ -69,86 +57,15 @@ Please provide the following:
     
     return {
       back: parsed.translation || '',
-      pronunciation: parsed.pronunciation || '',
-      partOfSpeech: parsed.partOfSpeech || '',
-      definition: parsed.definition || '',
-      exampleSentenceTarget: parsed.exampleSentence || '',
       notes: parsed.notes || '',
     };
   } catch (error) {
-    console.error("Error generating flashcard details via proxy:", error);
+    console.error("Error generating Persian details via proxy:", error);
     return {
       back: "Could not generate translation.",
-      pronunciation: "",
-      partOfSpeech: "",
-      definition: "",
-      exampleSentenceTarget: "Could not generate an example sentence.",
-      notes: "",
+      notes: "Could not generate notes.",
     };
   }
-};
-
-export const generateAudio = async (text: string): Promise<string | undefined> => {
-    try {
-        const response = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${text}`);
-        if (!response.ok) {
-            console.error(`Dictionary API request failed for "${text}" with status: ${response.status}`);
-            return undefined;
-        }
-        const data = await response.json();
-
-        if (!Array.isArray(data) || data.length === 0) {
-            console.warn(`No dictionary entries found for "${text}".`);
-            return undefined;
-        }
-
-        let audioUrl: string | undefined = undefined;
-
-        // Search through all entries and their phonetics for a valid audio link.
-        // The API can return multiple entries for a word, and each entry can have multiple phonetic objects.
-        // We need to find the first one that has a valid, non-empty audio URL.
-        for (const entry of data) {
-            if (entry.phonetics && Array.isArray(entry.phonetics)) {
-                // Prioritize phonetics that have a non-empty audio string ending in .mp3
-                for (const phonetic of entry.phonetics) {
-                    if (phonetic.audio && typeof phonetic.audio === 'string' && phonetic.audio.endsWith('.mp3')) {
-                        audioUrl = phonetic.audio;
-                        break; // Found a high-quality URL, stop searching in this entry
-                    }
-                }
-            }
-            if (audioUrl) break; // Exit the main loop if we found an mp3
-        }
-
-        // If no .mp3 was found, do a less strict search for any non-empty audio string.
-        if (!audioUrl) {
-            for (const entry of data) {
-                if (entry.phonetics && Array.isArray(entry.phonetics)) {
-                    // Find the first phonetic object that has any truthy audio property.
-                    const foundPhonetic = entry.phonetics.find((p: any) => p.audio && typeof p.audio === 'string');
-                    if (foundPhonetic) {
-                        audioUrl = foundPhonetic.audio;
-                        break; // Found a usable URL, stop searching
-                    }
-                }
-            }
-        }
-
-        if (audioUrl) {
-            // The API sometimes returns protocol-relative URLs (e.g., //ssl.gstatic.com/...)
-            // We prepend https: to ensure they are always valid.
-            if (audioUrl.startsWith('//')) {
-                return `https:${audioUrl}`;
-            }
-            return audioUrl;
-        }
-
-        console.warn(`No valid audio URL found for "${text}" in the dictionary API response.`);
-        return undefined; // No audio found after thorough search
-    } catch (error) {
-        console.error("Error fetching pronunciation audio from Dictionary API:", error);
-        return undefined;
-    }
 };
 
 export const blobToBase64 = (blob: Blob): Promise<string> => {

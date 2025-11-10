@@ -17,7 +17,7 @@ type HealthStatus = 'ok' | 'error' | 'checking';
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted'>;
 
 // --- API Helper ---
-const callProxy = async (action: 'sync-save' | 'sync-load' | 'sync-merge' | 'ping' | 'gemini-generate', payload: object) => {
+const callProxy = async (action: 'sync-save' | 'sync-load' | 'sync-merge' | 'ping' | 'ping-dict' | 'gemini-generate' | 'dictionary-free' | 'dictionary-mw', payload: object) => {
     const response = await fetch('/api/proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -247,6 +247,7 @@ const App: React.FC = () => {
   const [studyDeckId, setStudyDeckId] = useState<string | null>(null);
   const [dbStatus, setDbStatus] = useState<HealthStatus>('checking');
   const [apiStatus, setApiStatus] = useState<HealthStatus>('checking');
+  const [dictApiStatus, setDictApiStatus] = useState<HealthStatus>('checking');
 
   
   const isInitialMount = useRef(true);
@@ -305,7 +306,7 @@ const App: React.FC = () => {
         isInitialMount.current = false;
     });
 
-    const checkApi = async () => {
+    const checkGeminiApi = async () => {
       try {
         await callProxy('ping', {});
         setApiStatus('ok');
@@ -313,7 +314,17 @@ const App: React.FC = () => {
         setApiStatus('error');
       }
     };
-    checkApi();
+    checkGeminiApi();
+
+    const checkDictApi = async () => {
+      try {
+        await callProxy('ping-dict', {});
+        setDictApiStatus('ok');
+      } catch (e) {
+        setDictApiStatus('error');
+      }
+    };
+    checkDictApi();
 
   }, []);
 
@@ -609,7 +620,7 @@ const App: React.FC = () => {
         />;
       case 'FORM':
         const editingCardDeckName = visibleDecks.find(d => d.id === editingCard?.deckId)?.name || '';
-        return <FlashcardForm card={editingCard} decks={visibleDecks} onSave={handleSaveCard} onCancel={() => setView('DECKS')} initialDeckName={editingCardDeckName}/>;
+        return <FlashcardForm card={editingCard} decks={visibleDecks} onSave={handleSaveCard} onCancel={() => setView('DECKS')} initialDeckName={editingCardDeckName} showToast={showToast} />;
       case 'STATS':
         return <StatsView onBack={() => setView('DECKS')} />;
       case 'CHANGELOG':
@@ -646,10 +657,11 @@ const App: React.FC = () => {
       <footer className="text-center py-4 pb-20 md:pb-4 text-xs text-slate-400 dark:text-slate-500">
          <div className="flex justify-center items-center gap-4 mb-2">
             <StatusIndicator status={dbStatus} label="DB"/>
-            <StatusIndicator status={apiStatus} label="API"/>
+            <StatusIndicator status={apiStatus} label="AI API"/>
+            <StatusIndicator status={dictApiStatus} label="Dict. API"/>
          </div>
          <button onClick={() => handleNavigate('CHANGELOG')} className="hover:underline">
-            Version 2.0.7 - View Changelog
+            Version 2.1.0 - View Changelog
         </button>
       </footer>
     </div>

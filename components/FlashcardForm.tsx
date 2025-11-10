@@ -1,14 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Flashcard, Deck } from '../types';
 import { 
-  generateFlashcardDetails, 
-  generateAudio, 
+  generatePersianDetails, 
   getPronunciationFeedback,
   blobToBase64 
 } from '../services/geminiService';
+import {
+  fetchFromFreeDictionary,
+  fetchFromMerriamWebster,
+  fetchAudioData,
+  DictionaryResult
+} from '../services/dictionaryService';
 
 
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId'>;
+type DictionarySource = 'free' | 'mw';
 
 interface FlashcardFormProps {
   card: Flashcard | null;
@@ -16,6 +22,7 @@ interface FlashcardFormProps {
   onSave: (card: FlashcardFormData, deckName: string) => void;
   onCancel: () => void;
   initialDeckName?: string;
+  showToast: (message: string) => void;
 }
 
 const MicIcon = ({ recording }: { recording: boolean }) => (
@@ -27,7 +34,7 @@ const MicIcon = ({ recording }: { recording: boolean }) => (
 );
 
 
-const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCancel, initialDeckName }) => {
+const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCancel, initialDeckName, showToast }) => {
   const [formData, setFormData] = useState<FlashcardFormData>({
     front: '',
     back: '',
@@ -39,7 +46,11 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
     audioSrc: undefined,
   });
   const [deckName, setDeckName] = useState('Default Deck');
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [dictionarySource, setDictionarySource] = useState<DictionarySource>('free');
+  
+  // Loading states
+  const [isFetchingDetails, setIsFetchingDetails] = useState(false);
+  const [isGeneratingAI, setIsGeneratingAI] = useState(false);
 
   // Pronunciation feedback state
   const [isRecording, setIsRecording] = useState(false);
@@ -50,8 +61,6 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
 
   useEffect(() => {
     if (card) {
-      // Destructure to only get the fields relevant to the form,
-      // excluding SRS data and the old deckId. This prevents stale data.
       const { 
           front, back, pronunciation, partOfSpeech, definition, 
           exampleSentenceTarget, notes, audioSrc 
@@ -65,7 +74,6 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
         setDeckName(initialDeckName);
       }
     } else {
-      // Reset the form when creating a new card
       setFormData({
         front: '',
         back: '',
@@ -92,33 +100,61 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
     }
   };
   
-  const handleGenerateDetails = async () => {
-    if (!formData.front) return;
-    setIsGenerating(true);
-    setFormData(prev => ({...prev, audioSrc: undefined}));
-
-    try {
-      const detailsPromise = generateFlashcardDetails(formData.front);
-      const audioPromise = generateAudio(formData.front);
-      const [details, audioSrc] = await Promise.all([detailsPromise, audioPromise]);
+  const handleFetchDetails = async () => {
+      if (!formData.front) return;
+      setIsFetchingDetails(true);
+      setFormData(prev => ({...prev, audioSrc: undefined}));
       
+      try {
+          const fetcher = dictionarySource === 'free' ? fetchFromFreeDictionary : fetchFromMerriamWebster;
+          const details: DictionaryResult = await fetcher(formData.front);
+          
+          let audioDataUrl: string | undefined = undefined;
+          if (details.audioUrl) {
+              try {
+                  audioDataUrl = await fetchAudioData(details.audioUrl);
+              } catch (audioError) {
+                  console.warn("Could not fetch audio, but details were retrieved.", audioError);
+                  showToast('Details loaded, but audio failed.');
+              }
+          }
+          
+          setFormData(prev => ({
+              ...prev,
+              pronunciation: details.pronunciation,
+              partOfSpeech: details.partOfSpeech,
+              definition: details.definition,
+              exampleSentenceTarget: details.exampleSentence,
+              audioSrc: audioDataUrl,
+          }));
+          showToast(`Details fetched from ${dictionarySource === 'free' ? 'Free Dictionary' : 'Merriam-Webster'}.`);
+
+      } catch (error) {
+          console.error("Failed to fetch details from dictionary API:", error);
+          showToast(`Could not find "${formData.front}" in the selected dictionary.`);
+      } finally {
+          setIsFetchingDetails(false);
+      }
+  };
+
+  const handleGenerateAiDetails = async () => {
+    if (!formData.front) return;
+    setIsGeneratingAI(true);
+    try {
+      const details = await generatePersianDetails(formData.front);
       setFormData(prev => ({
         ...prev,
         back: details.back,
-        pronunciation: details.pronunciation,
-        partOfSpeech: details.partOfSpeech,
-        definition: details.definition,
-        exampleSentenceTarget: details.exampleSentenceTarget,
-        notes: details.notes,
-        audioSrc: audioSrc,
+        notes: details.notes
       }));
-    } catch (error) {
-        console.error("Failed to generate all card details:", error);
+    } catch(error) {
+       console.error("Failed to generate AI details:", error);
+       showToast('AI generation failed.');
     } finally {
-        setIsGenerating(false);
+      setIsGeneratingAI(false);
     }
   };
-  
+
   const handleToggleRecording = async () => {
     if (isRecording) {
       mediaRecorderRef.current?.stop();
@@ -162,38 +198,57 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
     <div className="max-w-3xl mx-auto bg-white dark:bg-slate-800 p-8 rounded-lg shadow-md">
       <h2 className="text-2xl font-bold mb-6 text-slate-800 dark:text-slate-100">{card ? 'Edit Card' : 'Create New Card'}</h2>
       <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Front of Card */}
-            <div>
-                <div className="flex justify-between items-center">
-                    <label htmlFor="front" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-                        Front (English Word) <span className="text-red-500">*</span>
-                    </label>
-                    <button type="button" onClick={handleGenerateDetails} disabled={isGenerating || !formData.front} className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline disabled:opacity-50 disabled:cursor-wait">
-                        {isGenerating ? 'Generating...' : '✨ AI Generate Details'}
-                    </button>
-                </div>
-                <div className="relative">
-                    <input
-                        type="text"
-                        id="front"
-                        name="front"
-                        value={formData.front || ''}
-                        onChange={handleChange}
-                        required
-                        className="mt-1 block w-full pl-3 pr-10 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                        placeholder="e.g., hello"
-                    />
-                    <button type="button" onClick={handleToggleRecording} disabled={!formData.front || isCheckingPronunciation} className="absolute inset-y-0 right-0 top-1 flex items-center pr-3 disabled:opacity-50" aria-label="Record pronunciation">
-                        <MicIcon recording={isRecording} />
-                    </button>
-                </div>
-                 {(isCheckingPronunciation || pronunciationFeedback) && (
-                    <div className="mt-2 text-sm p-2 bg-slate-100 dark:bg-slate-700 rounded-md">
-                        {isCheckingPronunciation ? 'Analyzing...' : `AI Feedback: ${pronunciationFeedback}`}
-                    </div>
-                 )}
+        <div>
+            <label htmlFor="front" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                Front (English Word) <span className="text-red-500">*</span>
+            </label>
+            <div className="relative">
+                <input
+                    type="text"
+                    id="front"
+                    name="front"
+                    value={formData.front || ''}
+                    onChange={handleChange}
+                    required
+                    className="mt-1 block w-full pl-3 pr-10 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                    placeholder="e.g., hello"
+                />
+                <button type="button" onClick={handleToggleRecording} disabled={!formData.front || isCheckingPronunciation} className="absolute inset-y-0 right-0 top-1 flex items-center pr-3 disabled:opacity-50" aria-label="Record pronunciation">
+                    <MicIcon recording={isRecording} />
+                </button>
             </div>
+             {(isCheckingPronunciation || pronunciationFeedback) && (
+                <div className="mt-2 text-sm p-2 bg-slate-100 dark:bg-slate-700 rounded-md">
+                    {isCheckingPronunciation ? 'Analyzing...' : `AI Feedback: ${pronunciationFeedback}`}
+                </div>
+             )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 border border-slate-200 dark:border-slate-700 rounded-lg">
+            <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Dictionary Source</label>
+                <div className="mt-2 flex gap-4">
+                    <label className="flex items-center gap-2 text-sm">
+                        <input type="radio" name="dictionary-source" value="free" checked={dictionarySource === 'free'} onChange={() => setDictionarySource('free')} className="form-radio h-4 w-4 text-indigo-600 border-slate-300 focus:ring-indigo-500" />
+                        Free Dictionary
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                        <input type="radio" name="dictionary-source" value="mw" checked={dictionarySource === 'mw'} onChange={() => setDictionarySource('mw')} className="form-radio h-4 w-4 text-indigo-600 border-slate-300 focus:ring-indigo-500"/>
+                        Merriam-Webster
+                    </label>
+                </div>
+            </div>
+            <div className="flex flex-col gap-2">
+                 <button type="button" onClick={handleFetchDetails} disabled={isFetchingDetails || !formData.front} className="px-4 py-2 text-sm font-medium text-white bg-slate-600 hover:bg-slate-700 dark:bg-slate-500 dark:hover:bg-slate-600 rounded-md transition-colors disabled:opacity-50 disabled:cursor-wait">
+                    {isFetchingDetails ? 'Fetching...' : 'Fetch Details & Audio'}
+                </button>
+                 <button type="button" onClick={handleGenerateAiDetails} disabled={isGeneratingAI || !formData.front} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-wait">
+                    {isGeneratingAI ? 'Generating...' : '✨ AI Generate Persian'}
+                </button>
+            </div>
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
              {/* Deck Name */}
             <div>
                 <label htmlFor="deckName" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
@@ -214,10 +269,7 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
                     {decks.map(d => <option key={d.id} value={d.name} />)}
                 </datalist>
             </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Back of Card */}
+            {/* Back of Card */}
           <div>
             <label htmlFor="back" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
               Back (Persian) <span className="text-red-500">*</span>
@@ -232,6 +284,9 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
               className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
             />
           </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Pronunciation */}
           <div>
             <label htmlFor="pronunciation" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
@@ -246,9 +301,6 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
               className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
             />
           </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label htmlFor="partOfSpeech" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
                 Part of Speech
@@ -261,18 +313,6 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
                 onChange={handleChange}
                 className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
               />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Pronunciation Audio</label>
-              <div className="flex items-center justify-center p-2 h-[42px] rounded-md bg-slate-100 dark:bg-slate-700/50">
-                 {formData.audioSrc ? (
-                    <audio controls src={formData.audioSrc} className="w-full h-8"></audio>
-                ) : isGenerating ? (
-                    <span className="text-sm text-slate-500 dark:text-slate-400">Generating audio...</span>
-                ) : (
-                    <span className="text-sm text-slate-500 dark:text-slate-400">Audio will be auto-generated.</span>
-                )}
-              </div>
             </div>
         </div>
         
@@ -289,6 +329,19 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
         <div>
           <label htmlFor="notes" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Notes / Mnemonics (Persian)</label>
           <textarea id="notes" name="notes" rows={3} value={formData.notes || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
+        </div>
+
+        <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Pronunciation Audio</label>
+            <div className="flex items-center justify-center p-2 h-[52px] rounded-md bg-slate-100 dark:bg-slate-700/50">
+                {formData.audioSrc ? (
+                    <audio controls src={formData.audioSrc} className="w-full h-10"></audio>
+                ) : isFetchingDetails ? (
+                    <span className="text-sm text-slate-500 dark:text-slate-400">Fetching audio...</span>
+                ) : (
+                    <span className="text-sm text-slate-500 dark:text-slate-400">Audio will be fetched with details.</span>
+                )}
+            </div>
         </div>
 
         <div className="flex justify-end gap-4 pt-4">

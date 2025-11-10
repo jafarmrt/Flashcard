@@ -3,6 +3,7 @@ const CACHE_NAME = 'lingua-cards-cache-v1';
 const APP_SHELL_URLS = [
   '/',
   '/index.html',
+  '/CHANGELOG.md',
 ];
 
 const sw = self;

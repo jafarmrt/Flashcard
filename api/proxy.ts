@@ -75,6 +75,24 @@ async function handleGeminiGenerate(payload: any, response: VercelResponse, apiK
   return response.status(200).json(adaptedResponse);
 }
 
+// --- HANDLERS FOR DICTIONARY APIS ---
+async function handleFreeDictionary(payload: any, res: VercelResponse) {
+    const { word } = payload;
+    if (!word) return res.status(400).json({ error: 'Word is required.' });
+    const apiResponse = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`);
+    const data = await apiResponse.json();
+    return res.status(apiResponse.status).json(data);
+}
+
+async function handleMerriamWebster(payload: any, res: VercelResponse, apiKey: string) {
+    const { word } = payload;
+    if (!word) return res.status(400).json({ error: 'Word is required.' });
+    const apiResponse = await fetch(`https://www.dictionaryapi.com/api/v3/references/collegiate/json/${encodeURIComponent(word)}?key=${apiKey}`);
+    const data = await apiResponse.json();
+    return res.status(apiResponse.status).json(data);
+}
+
+
 // --- HANDLERS FOR SYNC FEATURE (using Vercel KV Store REST API) ---
 const KV_URL = process.env.KV_REST_API_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN;
@@ -199,17 +217,26 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
   try {
     switch (action) {
-      case 'ping':
+      case 'ping': // For Gemini API
         return response.status(200).json({ message: 'pong' });
+      case 'ping-dict': // For Dictionary APIs
+        const dictResponse = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/hello`);
+        return response.status(dictResponse.ok ? 200 : 503).json({ message: dictResponse.ok ? 'pong' : 'api unreachable' });
         
       case 'gemini-generate':
         const apiKey = process.env.API_KEY;
-        if (!apiKey) {
-          return response.status(500).json({ error: 'API key not configured.' });
-        }
+        if (!apiKey) return response.status(500).json({ error: 'API key not configured.' });
         return await handleGeminiGenerate(payload, response, apiKey);
 
-      case 'sync-save': // Kept for legacy or specific uses, but merge is preferred
+      case 'dictionary-free':
+        return await handleFreeDictionary(payload, response);
+      
+      case 'dictionary-mw':
+        const mwApiKey = process.env.MW_API_KEY;
+        if (!mwApiKey) return response.status(500).json({ error: 'Merriam-Webster API key not configured.' });
+        return await handleMerriamWebster(payload, response, mwApiKey);
+
+      case 'sync-save':
         return await handleSyncSave(payload, response);
 
       case 'sync-load':
@@ -219,14 +246,6 @@ export default async function handler(request: VercelRequest, response: VercelRe
         return await handleSyncMerge(payload, response);
 
       default:
-        // If no action is specified, assume it's a gemini-generate call for backward compatibility
-        if (payload.model && payload.contents) {
-            const apiKey = process.env.API_KEY;
-            if (!apiKey) {
-              return response.status(500).json({ error: 'API key not configured.' });
-            }
-            return await handleGeminiGenerate(request.body, response, apiKey);
-        }
         return response.status(400).json({ message: `Invalid or missing action.` });
     }
   } catch (error) {

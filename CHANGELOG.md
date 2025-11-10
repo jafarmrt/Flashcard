@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.0] - Dictionary APIs & Offline Audio
+
+-   **Feature:** Separated data sources for more control. Card details (definition, pronunciation, etc.) are now fetched from reliable dictionary APIs, while AI is focused on generating Persian translations and notes.
+-   **Feature:** Added support for two dictionary sources: the free `dictionaryapi.dev` and the Merriam-Webster API. Users can choose their preferred source in the card creation form.
+-   **Feature:** Audio is now saved for offline use. The app downloads the pronunciation audio file once and stores it in the local database, allowing for instant, offline playback.
+-   **Feature:** Added a new "Dict. API" status indicator in the footer to show the health of the dictionary services.
+-   **UI/UX:** The card creation form has been updated with separate buttons to "Fetch Details" from a dictionary and "Generate Persian with AI".
+-   **Fix:** Resolved a layout bug where the audio playback button in the "All Cards" list was not visible on mobile devices. The button is now always visible.
+
+## [2.0.9] - Bug Fixes
+
+-   **Fix:** Re-enabled Gemini Text-to-Speech for audio generation, replacing the dictionary API which was failing to provide audio URLs. The audio play button in the card list is now functional again.
+-   **Fix:** Resolved an issue where the in-app changelog would fail to load. The changelog file is now cached by the service worker, making it available offline and ensuring it loads reliably.
+
+## [2.0.8] - Mobile UI Fix
+
+-   **Fix:** Resolved a layout bug in the "All Cards" list where the audio playback button was not visible on mobile devices. The text content was not truncating correctly, pushing the action buttons off-screen. The button is now always visible.
+
 ## [2.0.7] - Study Session Stability
 
 -   **Fix:** Resolved a bug in the "Study" view where the flashcard would unexpectedly change or reset shortly after the session started. This was caused by the background cloud sync refreshing the component's data. The study session is now properly isolated and will no longer be interrupted.
