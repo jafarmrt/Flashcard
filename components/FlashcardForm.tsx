@@ -66,8 +66,13 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
           front, back, pronunciation, partOfSpeech, definition, 
           exampleSentenceTarget, notes, audioSrc 
       } = card;
+
+      // Fix: Ensure 'definition' is always an array to handle legacy data where it was a string.
+      const safeDefinition = Array.isArray(definition) ? definition : (definition ? [String(definition)] : []);
+
       setFormData({ 
-          front, back, pronunciation, partOfSpeech, definition, 
+          front, back, pronunciation, partOfSpeech, 
+          definition: safeDefinition, 
           exampleSentenceTarget, notes, audioSrc 
       });
 

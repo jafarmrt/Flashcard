@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.2] - Critical Stability Fixes
+
+-   **Fix:** Resolved a critical crash (`definition.map is not a function`) in the "Study" view and "Edit Card" form. The app now correctly handles legacy flashcard data where the `definition` field was a string instead of an array, preventing crashes and ensuring backward compatibility.
+-   **Fix:** Corrected the Service Worker registration process, which was failing to install due to a misconfiguration. This ensures PWA offline capabilities function correctly.
+-   **Fix:** Removed references to non-existent PWA icon files (`icon-192x192.png`, etc.) that were causing 404 errors and contributing to the service worker failure.
+
 ## [2.2.1] - Study View Hang Fix
 
 -   **Fix:** Resolved a critical bug where the "Study" view would get stuck on the "Loading..." screen indefinitely if the user attempted to study an empty deck or if no cards were currently due. The logic now correctly handles this scenario and shows the "You're all caught up!" message.

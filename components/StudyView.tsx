@@ -20,6 +20,9 @@ const FlashcardComponent: React.FC<{ card: Flashcard; isFlipped: boolean; }> = (
     }
   };
 
+  // Fix: Defensively handle `card.definition` which could be a string in old data.
+  const definitions = Array.isArray(card.definition) ? card.definition : (card.definition ? [String(card.definition)] : []);
+
   return (
     <div className="w-full h-full" style={{ perspective: '1000px' }}>
       <div className="relative w-full h-full transition-transform duration-500" style={{ transformStyle: 'preserve-3d', transform: isFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)' }}>
@@ -47,11 +50,11 @@ const FlashcardComponent: React.FC<{ card: Flashcard; isFlipped: boolean; }> = (
 
           {/* Details Section */}
           <div className="w-full space-y-4 text-left border-t border-indigo-400/50 pt-4 overflow-y-auto">
-            {card.definition && card.definition.length > 0 && (
+            {definitions.length > 0 && (
                 <div>
                     <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wider">Definition(s)</p>
                     <ol className="list-decimal list-inside space-y-1 mt-1">
-                      {card.definition.map((def, i) => <li key={i} className="text-md text-indigo-50">{def}</li>)}
+                      {definitions.map((def, i) => <li key={i} className="text-md text-indigo-50">{def}</li>)}
                     </ol>
                 </div>
             )}
