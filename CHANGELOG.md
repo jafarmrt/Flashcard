@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.2] - Critical AI Proxy Fix
+
+-   **Fix:** Resolved a critical bug in the server-side proxy that caused all AI content generation (both text details and audio) to fail. The proxy was incorrectly structuring requests to the Gemini API. This has been fixed, and all AI features are now fully functional.
+
 ## [2.0.1] - Audio Playback Fix
 
 -   **Fix:** Resolved a bug where the audio playback button was not appearing on flashcards. The server proxy was sending a malformed request to the Text-to-Speech API. This has been corrected, and audio will now be generated successfully for new and AI-updated cards.

@@ -25,27 +25,35 @@ async function handleGeminiGenerate(payload: any, response: VercelResponse, apiK
   const { model, contents, config } = payload;
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
-  // Destructure config to correctly place parameters for the Google API
+  // Separate top-level parameters from those that belong in generationConfig
   const {
+    responseMimeType,
+    responseSchema,
     responseModalities,
     speechConfig,
     systemInstruction,
-    ...generationConfig // All other properties fall into generationConfig
+    ...generationConfigParams // The rest go into generationConfig
   } = config || {};
 
-
-  const googleApiBody = {
+  const googleApiBody: Record<string, any> = {
     contents: Array.isArray(contents)
       ? contents
       : (typeof contents === 'object' && contents.parts)
         ? [contents]
         : [{ parts: [{ text: contents }] }],
-    // Conditionally add properties to the body if they exist
-    ...(generationConfig && Object.keys(generationConfig).length > 0 && { generationConfig }),
-    ...(responseModalities && { responseModalities }),
-    ...(speechConfig && { speechConfig }),
-    ...(systemInstruction && { systemInstruction }),
   };
+  
+  // Add top-level parameters if they exist
+  if (responseMimeType) googleApiBody.responseMimeType = responseMimeType;
+  if (responseSchema) googleApiBody.responseSchema = responseSchema;
+  if (responseModalities) googleApiBody.responseModalities = responseModalities;
+  if (speechConfig) googleApiBody.speechConfig = speechConfig;
+  if (systemInstruction) googleApiBody.systemInstruction = systemInstruction;
+
+  // Add generationConfig only if it contains properties
+  if (generationConfigParams && Object.keys(generationConfigParams).length > 0) {
+    googleApiBody.generationConfig = generationConfigParams;
+  }
 
   const geminiResponse = await fetch(`${endpoint}?key=${apiKey}`, {
     method: 'POST',
