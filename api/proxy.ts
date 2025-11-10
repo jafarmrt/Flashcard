@@ -25,13 +25,26 @@ async function handleGeminiGenerate(payload: any, response: VercelResponse, apiK
   const { model, contents, config } = payload;
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
+  // Destructure config to correctly place parameters for the Google API
+  const {
+    responseModalities,
+    speechConfig,
+    systemInstruction,
+    ...generationConfig // All other properties fall into generationConfig
+  } = config || {};
+
+
   const googleApiBody = {
     contents: Array.isArray(contents)
       ? contents
       : (typeof contents === 'object' && contents.parts)
         ? [contents]
         : [{ parts: [{ text: contents }] }],
-    generationConfig: config,
+    // Conditionally add properties to the body if they exist
+    ...(generationConfig && Object.keys(generationConfig).length > 0 && { generationConfig }),
+    ...(responseModalities && { responseModalities }),
+    ...(speechConfig && { speechConfig }),
+    ...(systemInstruction && { systemInstruction }),
   };
 
   const geminiResponse = await fetch(`${endpoint}?key=${apiKey}`, {

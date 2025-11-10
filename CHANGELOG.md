@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.1] - Audio Playback Fix
+
+-   **Fix:** Resolved a bug where the audio playback button was not appearing on flashcards. The server proxy was sending a malformed request to the Text-to-Speech API. This has been corrected, and audio will now be generated successfully for new and AI-updated cards.
+
 ## [2.0.0] - Quizzes & Imports
 
 -   **Feature:** Revamped "Practice" view into a multiple-choice quiz. Every 6 hours, the app generates 10 questions based on your cards to test your knowledge.
