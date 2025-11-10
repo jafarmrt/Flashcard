@@ -88,92 +88,32 @@ Please provide the following:
   }
 };
 
-// Helper function to encode bytes to base64
-function encode(bytes: Uint8Array) {
-  let binary = '';
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
-}
-
-// Helper function to decode base64 to bytes
-function decode(base64: string) {
-  const binaryString = atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
-}
-
 export const generateAudio = async (text: string): Promise<string | undefined> => {
     try {
-        const response = await callProxy({
-            model: "gemini-2.5-flash-preview-tts",
-            // Fix: Add an explicit instruction to the prompt to make the request more robust,
-            // ensuring the TTS model correctly handles single-word inputs for pronunciation.
-            contents: [{ parts: [{ text: `Pronounce the following word clearly: ${text}` }] }],
-            config: {
-                responseModalities: ['AUDIO'],
-                speechConfig: {
-                    voiceConfig: {
-                        // Fix: Changed voice from 'Zephyr' to 'Kore'. 'Zephyr' is intended for the Live API,
-                        // while 'Kore' is compatible with the standard TTS model. This was causing silent failures.
-                        prebuiltVoiceConfig: { voiceName: 'Kore' },
-                    },
-                },
-            },
-        });
-        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        if (base64Audio) {
-            const pcmData = decode(base64Audio);
-            
-            // Create a WAV file header and combine it with the PCM data
-            const sampleRate = 24000;
-            const numChannels = 1;
-            const bitsPerSample = 16;
-            const dataSize = pcmData.length;
-            const blockAlign = (numChannels * bitsPerSample) / 8;
-            const byteRate = sampleRate * blockAlign;
-            const buffer = new ArrayBuffer(44 + dataSize);
-            // Fix: Corrected a critical typo from `new new DataView` to `new DataView`, which was
-            // causing all audio generation to fail due to a JavaScript syntax error.
-            const view = new DataView(buffer);
-
-            const writeString = (view: DataView, offset: number, string: string) => {
-              for (let i = 0; i < string.length; i++) {
-                view.setUint8(offset + i, string.charCodeAt(i));
-              }
-            };
-            
-            writeString(view, 0, 'RIFF');
-            view.setUint32(4, 36 + dataSize, true);
-            writeString(view, 8, 'WAVE');
-            writeString(view, 12, 'fmt ');
-            view.setUint32(16, 16, true);
-            view.setUint16(20, 1, true); // PCM format
-            view.setUint16(22, numChannels, true);
-            view.setUint32(24, sampleRate, true);
-            view.setUint32(28, byteRate, true);
-            view.setUint16(32, blockAlign, true);
-            view.setUint16(34, bitsPerSample, true);
-            writeString(view, 36, 'data');
-            view.setUint32(40, dataSize, true);
-            new Uint8Array(buffer, 44).set(pcmData);
-
-            const wavBytes = new Uint8Array(buffer);
-            const base64Wav = encode(wavBytes);
-            return `data:audio/wav;base64,${base64Wav}`;
+        const response = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${text}`);
+        if (!response.ok) {
+            console.error(`Dictionary API request failed for "${text}" with status: ${response.status}`);
+            return undefined;
         }
-        return undefined;
+        const data = await response.json();
+
+        // Find the first phonetic entry that has an audio URL
+        // The type is `any` because the API response is not strictly typed here.
+        const audioUrl = data[0]?.phonetics?.find((p: any) => p.audio)?.audio;
+        
+        // The API sometimes returns protocol-relative URLs (e.g., //ssl.gstatic.com/...)
+        // We prepend https: to ensure they are always valid.
+        if (audioUrl && audioUrl.startsWith('//')) {
+            return `https:${audioUrl}`;
+        }
+        
+        return audioUrl; // This will be the direct .mp3 URL or undefined
     } catch (error) {
-        console.error("Error generating audio:", error);
+        console.error("Error fetching pronunciation audio from Dictionary API:", error);
         return undefined;
     }
 };
+
 
 export const getGrammarExplanation = async (sentence: string): Promise<string> => {
     try {

@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.6] - Reliable Audio Source
+
+-   **Fix:** Replaced the unreliable AI-based audio generation with a direct integration to the Free Dictionary API. This provides faster, more consistent pronunciation audio and resolves the persistent bugs related to the Text-to-Speech model.
+
 ## [2.0.5] - Audio Generation Voice Fix
 
 -   **Fix:** Resolved a persistent audio generation failure by switching the Text-to-Speech voice from 'Zephyr' to 'Kore'. 'Zephyr' is intended for the real-time Live API, and its use with the standard TTS model caused the API to return no audio data. Using the compatible 'Kore' voice ensures audio is now generated correctly.
