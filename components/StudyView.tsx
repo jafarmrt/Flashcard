@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Flashcard } from '../types';
 import { calculateSrs, PerformanceRating } from '../services/srsService';
 import { db } from '../services/localDBService';
@@ -90,7 +90,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, onExit }) => {
   const [answerState, setAnswerState] = useState<'correct' | 'incorrect' | null>(null);
   const answerInputRef = useRef<HTMLInputElement>(null);
 
-  const setupSession = (cardSet: Flashcard[]) => {
+  const setupSession = useCallback((cardSet: Flashcard[]) => {
     const shuffled = [...cardSet];
     for (let i = shuffled.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -102,26 +102,28 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, onExit }) => {
     setSessionComplete(false);
     setTypedAnswer('');
     setAnswerState(null);
-  };
+  }, []);
   
   useEffect(() => {
-    // Optimization: To prevent freezing with large datasets, we avoid creating
-    // a new Date object for every card. Instead, we get today's ISO string
-    // once and perform a much faster string comparison.
+    // This effect runs when the `cards` prop is updated from the parent,
+    // which is crucial for initializing the session after cards are loaded asynchronously.
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayISOString = today.toISOString();
     
-    const dueCards = cards.filter(c => c.dueDate <= todayISOString);
-    setDueCardCount(dueCards.length);
+    // We only proceed if cards have been loaded.
+    if (cards.length > 0) {
+      const dueCards = cards.filter(c => c.dueDate <= todayISOString);
+      setDueCardCount(dueCards.length);
 
-    if (dueCards.length > 0) {
-      setupSession(dueCards);
-    } else {
-      setSessionComplete(true);
+      if (dueCards.length > 0) {
+        setupSession(dueCards);
+      } else {
+        setSessionComplete(true);
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // setupSession is wrapped in useCallback, so it's a stable dependency.
+  }, [cards, setupSession]);
 
   useEffect(() => {
     if (studyMode === 'type' && !isFlipped) {

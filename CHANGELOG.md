@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.3] - Study View Reliability Fix
+
+-   **Fix:** Resolved a critical race condition that caused the "Study" view to fail or hang on startup. The component now waits for the flashcard data to be fully loaded before initializing the study session, ensuring it starts reliably every time.
+
 ## [2.1.2] - Study Session Fix
 
 -   **Fix:** Resolved a critical bug in the "Study" view where the session would end prematurely if a card was marked as 'Again'. The logic now correctly handles the updated queue length, ensuring cards marked for repetition are properly reviewed within the same session.
