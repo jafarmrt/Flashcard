@@ -1,4 +1,5 @@
-import { Dexie, type Table } from 'dexie';
+// Fix: Changed the import to use the default export for Dexie, which is the correct way to import the main class.
+import Dexie, { type Table } from 'dexie';
 import { Flashcard, Deck, StudyLog } from '../types';
 
 export class LinguaCardsDB extends Dexie {

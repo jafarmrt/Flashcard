@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0] - Quizzes & Imports
+
+-   **Feature:** Revamped "Practice" view into a multiple-choice quiz. Every 6 hours, the app generates 10 questions based on your cards to test your knowledge.
+-   **Feature:** Added CSV Import functionality. You can now import your flashcards from a CSV file, making it easy to add cards in bulk.
+-   **Feature:** Added a system health indicator in the footer to show the status of the database and API connections.
+-   **UI/UX:** Added a speaker icon to play audio directly from the "All Cards" list.
+-   **UI/UX:** Improved the in-app changelog viewer to correctly format and display version history.
+-   **Fix:** Ensured deck names are unique and handled case-insensitively during creation and import to prevent duplicates.
+
 ## [1.8.0] - In-App Changelog
 
 -   **Feature:** Added an in-app changelog viewer, accessible from the footer, to allow users to track version history and new features directly within the application.

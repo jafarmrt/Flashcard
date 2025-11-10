@@ -1,153 +1,213 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Flashcard } from '../types';
+import { generateQuizOptions } from '../services/geminiService';
 
-interface Message {
-  role: 'user' | 'model';
-  text: string;
-}
-
-interface ConversationViewProps {
+interface QuizViewProps {
   cards: Flashcard[];
 }
 
-// Helper to manage conversation history for the proxy
-let chatHistory: any[] = [];
+interface QuizQuestion {
+  card: Flashcard;
+  options: string[];
+  correctAnswer: string;
+}
 
-// A helper function to call our secure proxy for the chat
-const callChatProxy = async (message: string, systemInstruction?: string) => {
-    if (systemInstruction) {
-        // Start a new conversation
-        chatHistory = [
-            { role: 'user', parts: [{ text: systemInstruction }] },
-            { role: 'model', parts: [{ text: "Okay, I'm ready to start the conversation." }] }
-        ];
-    }
-    
-    // Add the new user message
-    chatHistory.push({ role: 'user', parts: [{ text: message }] });
+type QuizState = 'loading' | 'ready' | 'cooldown' | 'finished' | 'generating';
 
-    const response = await fetch('/api/proxy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            model: 'gemini-2.5-flash',
-            contents: chatHistory, // Send the whole history
-        }),
-    });
+const COOLDOWN_HOURS = 6;
+const QUIZ_LENGTH = 10;
+const COOLDOWN_MS = COOLDOWN_HOURS * 60 * 60 * 1000;
 
-    if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Proxy request failed');
-    }
-    const data = await response.json();
-    const modelResponseText = data.text;
-
-    // Add model's response to history
-    chatHistory.push({ role: 'model', parts: [{ text: modelResponseText }] });
-    
-    return modelResponseText;
+const shuffleArray = <T,>(array: T[]): T[] => {
+  return [...array].sort(() => Math.random() - 0.5);
 };
 
-
-export const ConversationView: React.FC<ConversationViewProps> = ({ cards }) => {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [userInput, setUserInput] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
-  const [practiceWords, setPracticeWords] = useState<string[]>([]);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const startConversation = async () => {
-      setIsLoading(true);
-      
-      const words = [...cards]
-        .sort(() => 0.5 - Math.random())
-        .slice(0, 10)
-        .map(c => c.front);
-      setPracticeWords(words);
-      
-      const systemInstruction = `You are a friendly and encouraging English tutor. Your student is a native Persian speaker.
-      Your goal is to have a natural, simple conversation in English.
-      During the conversation, you MUST try to naturally use the following vocabulary words: ${words.join(', ')}.
-      Keep your responses relatively short and easy to understand. Start the conversation with a friendly greeting.`;
-
-      // Start with the model's greeting
-      const initialText = await callChatProxy("Hello!", systemInstruction);
-      setMessages([{ role: 'model', text: initialText }]);
-      setIsLoading(false);
-    };
-    startConversation();
-  }, [cards]);
+export const QuizView: React.FC<QuizViewProps> = ({ cards }) => {
+  const [quizState, setQuizState] = useState<QuizState>('loading');
+  const [questions, setQuestions] = useState<QuizQuestion[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [score, setScore] = useState(0);
+  const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
+  const [isAnswered, setIsAnswered] = useState(false);
+  const [cooldownTime, setCooldownTime] = useState<number>(0);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    const lastQuizTime = localStorage.getItem('lastQuizTime');
+    if (lastQuizTime) {
+      const timeSinceLast = Date.now() - parseInt(lastQuizTime, 10);
+      if (timeSinceLast < COOLDOWN_MS) {
+        setQuizState('cooldown');
+        setCooldownTime(COOLDOWN_MS - timeSinceLast);
+        const interval = setInterval(() => {
+           setCooldownTime(prev => {
+               if (prev <= 1000) {
+                   clearInterval(interval);
+                   setQuizState('ready');
+                   return 0;
+               }
+               return prev - 1000;
+           });
+        }, 1000);
+        return () => clearInterval(interval);
+      }
+    }
+    setQuizState('ready');
+  }, []);
 
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!userInput.trim() || isLoading) return;
-
-    const userMessage: Message = { role: 'user', text: userInput };
-    setMessages(prev => [...prev, userMessage]);
-    const currentInput = userInput;
-    setUserInput('');
-    setIsLoading(true);
+  const startQuiz = async () => {
+    if (cards.length < 4) {
+        // Not enough cards to make a meaningful quiz
+        return;
+    }
+    setQuizState('generating');
     
-    try {
-        const modelResponseText = await callChatProxy(currentInput);
-        setMessages(prev => [...prev, { role: 'model', text: modelResponseText }]);
-    } catch (error) {
-        console.error("Error sending message:", error);
-        setMessages(prev => [...prev, { role: 'model', text: "Sorry, something went wrong. Please try again." }]);
-    } finally {
-        setIsLoading(false);
+    const quizCards = shuffleArray(cards).slice(0, QUIZ_LENGTH);
+    const generatedQuestions: QuizQuestion[] = [];
+
+    for (const card of quizCards) {
+      const incorrectOptions = await generateQuizOptions(card.front, card.back);
+      const allOptions = shuffleArray([card.back, ...incorrectOptions]);
+      generatedQuestions.push({
+        card,
+        options: allOptions,
+        correctAnswer: card.back,
+      });
+    }
+
+    setQuestions(generatedQuestions);
+    setCurrentIndex(0);
+    setScore(0);
+    setSelectedAnswer(null);
+    setIsAnswered(false);
+    setQuizState('ready');
+  };
+
+  const handleAnswer = (answer: string) => {
+    if (isAnswered) return;
+    setSelectedAnswer(answer);
+    setIsAnswered(true);
+    if (answer === questions[currentIndex].correctAnswer) {
+      setScore(prev => prev + 1);
+    }
+  };
+
+  const handleNext = () => {
+    if (currentIndex < questions.length - 1) {
+      setCurrentIndex(prev => prev + 1);
+      setSelectedAnswer(null);
+      setIsAnswered(false);
+    } else {
+      setQuizState('finished');
+      localStorage.setItem('lastQuizTime', Date.now().toString());
     }
   };
   
-  return (
-    <div className="max-w-3xl mx-auto flex flex-col h-[calc(100vh-10rem)] bg-white dark:bg-slate-800 rounded-lg shadow-md">
-      <div className="p-4 border-b border-slate-200 dark:border-slate-700">
-        <h2 className="text-xl font-bold">Conversation Practice</h2>
-        <p className="text-sm text-slate-500 dark:text-slate-400">
-            Practice using these words: <span className="font-medium text-indigo-500">{practiceWords.join(', ')}</span>
-        </p>
-      </div>
-      <div className="flex-1 p-4 overflow-y-auto space-y-4">
-        {messages.map((msg, index) => (
-          <div key={index} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-lg px-4 py-2 rounded-xl ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-100'}`}>
-              <p className="whitespace-pre-wrap">{msg.text}</p>
-            </div>
+  const currentQuestion = questions[currentIndex];
+  
+  if (cards.length < 4 && quizState !== 'cooldown') {
+      return (
+          <div className="text-center py-20 bg-white dark:bg-slate-800 rounded-lg shadow-sm">
+              <h2 className="text-2xl font-semibold text-slate-700 dark:text-slate-200">More Cards Needed</h2>
+              <p className="mt-2 text-slate-500 dark:text-slate-400">You need at least 4 flashcards to start a practice quiz.</p>
           </div>
-        ))}
-         {isLoading && messages.length > 0 && (
-             <div className="flex justify-start">
-                 <div className="max-w-lg px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-700">
-                     <span className="animate-pulse">...</span>
-                 </div>
-             </div>
-         )}
-        <div ref={messagesEndRef} />
+      );
+  }
+
+  if (quizState === 'loading') {
+    return <div className="text-center p-10">Loading...</div>;
+  }
+  
+  if (quizState === 'cooldown') {
+     const hours = Math.floor(cooldownTime / (1000 * 60 * 60));
+     const minutes = Math.floor((cooldownTime % (1000 * 60 * 60)) / (1000 * 60));
+     const seconds = Math.floor((cooldownTime % (1000 * 60)) / 1000);
+     return (
+        <div className="text-center py-20 bg-white dark:bg-slate-800 rounded-lg shadow-sm">
+          <h2 className="text-2xl font-semibold text-slate-700 dark:text-slate-200">Next quiz available in:</h2>
+          <p className="mt-2 text-4xl font-bold text-indigo-500">{`${hours}h ${minutes}m ${seconds}s`}</p>
+        </div>
+     );
+  }
+  
+  if (quizState === 'generating') {
+      return (
+        <div className="text-center py-20 bg-white dark:bg-slate-800 rounded-lg shadow-sm">
+          <h2 className="text-2xl font-semibold text-slate-700 dark:text-slate-200 animate-pulse">Generating your quiz...</h2>
+          <p className="mt-2 text-slate-500 dark:text-slate-400">This may take a moment.</p>
+        </div>
+      );
+  }
+
+  if (questions.length === 0) {
+    return (
+      <div className="text-center py-20 bg-white dark:bg-slate-800 rounded-lg shadow-sm">
+        <h2 className="text-2xl font-semibold text-slate-700 dark:text-slate-200">Ready to Practice?</h2>
+        <p className="mt-2 text-slate-500 dark:text-slate-400">Take a short quiz to test your knowledge.</p>
+        <button onClick={startQuiz} className="mt-6 px-6 py-3 text-lg font-semibold text-white bg-indigo-600 rounded-lg shadow-md hover:bg-indigo-700 transition-colors">
+            Start Quiz
+        </button>
       </div>
-      <div className="p-4 border-t border-slate-200 dark:border-slate-700">
-        <form onSubmit={handleSendMessage} className="flex items-center gap-4">
-          <input
-            type="text"
-            value={userInput}
-            onChange={(e) => setUserInput(e.target.value)}
-            placeholder="Type your message..."
-            disabled={isLoading}
-            className="flex-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm disabled:opacity-50"
-          />
-          <button
-            type="submit"
-            disabled={isLoading || !userInput.trim()}
-            className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Send
+    );
+  }
+  
+  if (quizState === 'finished') {
+       return (
+        <div className="text-center py-20 bg-white dark:bg-slate-800 rounded-lg shadow-sm">
+          <h2 className="text-2xl font-semibold text-slate-700 dark:text-slate-200">Quiz Complete!</h2>
+          <p className="mt-2 text-4xl font-bold text-indigo-500">Your score: {score} / {questions.length}</p>
+          <button onClick={() => setQuizState('ready')} className="mt-6 px-6 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 bg-slate-200 dark:bg-slate-700 rounded-lg hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors">
+            Back
           </button>
-        </form>
+        </div>
+     );
+  }
+
+  return (
+    <div className="max-w-3xl mx-auto flex flex-col p-6 bg-white dark:bg-slate-800 rounded-lg shadow-md">
+      <div className="mb-4">
+        <p className="text-sm text-slate-500 dark:text-slate-400">Question {currentIndex + 1} of {questions.length}</p>
+        <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2.5 mt-1">
+          <div className="bg-indigo-600 h-2.5 rounded-full" style={{ width: `${((currentIndex + 1) / questions.length) * 100}%` }}></div>
+        </div>
       </div>
+      <div className="text-center my-8">
+        <p className="text-lg text-slate-600 dark:text-slate-300">What is the Persian translation of:</p>
+        <h2 className="text-4xl font-bold my-2 text-slate-800 dark:text-slate-100">{currentQuestion.card.front}</h2>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {currentQuestion.options.map(option => {
+          const isCorrect = option === currentQuestion.correctAnswer;
+          const isSelected = option === selectedAnswer;
+          let buttonClass = 'p-4 rounded-lg text-lg font-medium transition-colors border-2 ';
+          if (isAnswered) {
+             if(isCorrect) {
+                 buttonClass += 'bg-green-100 dark:bg-green-900/50 border-green-500 text-green-800 dark:text-green-300';
+             } else if (isSelected) {
+                 buttonClass += 'bg-red-100 dark:bg-red-900/50 border-red-500 text-red-800 dark:text-red-300';
+             } else {
+                 buttonClass += 'bg-slate-100 dark:bg-slate-700 border-transparent opacity-60';
+             }
+          } else {
+              buttonClass += 'bg-white dark:bg-slate-700/50 border-slate-300 dark:border-slate-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30';
+          }
+
+          return (
+            <button key={option} onClick={() => handleAnswer(option)} disabled={isAnswered} className={buttonClass}>
+              {option}
+            </button>
+          )
+        })}
+      </div>
+      {isAnswered && (
+        <div className="text-center mt-6">
+            <button onClick={handleNext} className="px-10 py-3 text-white bg-indigo-600 rounded-lg shadow hover:bg-indigo-700">
+                {currentIndex < questions.length - 1 ? 'Next' : 'Finish'}
+            </button>
+        </div>
+      )}
     </div>
   );
 };
+// Fix: Removed the redundant export statement that was causing a redeclaration error.
+// The component is already exported on line 25.
+// export { QuizView };

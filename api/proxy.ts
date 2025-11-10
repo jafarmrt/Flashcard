@@ -184,6 +184,9 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
   try {
     switch (action) {
+      case 'ping':
+        return response.status(200).json({ message: 'pong' });
+        
       case 'gemini-generate':
         const apiKey = process.env.API_KEY;
         if (!apiKey) {

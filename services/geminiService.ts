@@ -222,3 +222,32 @@ export const getPronunciationFeedback = async (word: string, audioBase64: string
         return "Sorry, I couldn't analyze the pronunciation at this time.";
     }
 };
+
+export const generateQuizOptions = async (cardFront: string, cardBack: string): Promise<string[]> => {
+    try {
+        const prompt = `You are a quiz generator for a Persian speaker learning English.
+        The English word is "${cardFront}". The correct Persian translation is "${cardBack}".
+        Your task is to create 3 other plausible but incorrect Persian translations for "${cardFront}".
+        These incorrect options should be common mistakes or similar-sounding words.
+        Return ONLY a JSON array of 3 strings. Do not include the correct answer in the array.
+        Example output for the word "happy": ["سریع", "کتاب", "آبی"]`;
+        
+        const response = await callProxy({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: 'ARRAY',
+                    items: { type: 'STRING' }
+                }
+            }
+        });
+        const jsonText = response.text.trim();
+        const options = JSON.parse(jsonText);
+        return Array.isArray(options) ? options.slice(0, 3) : [];
+    } catch (error) {
+        console.error("Error generating quiz options:", error);
+        return [];
+    }
+};

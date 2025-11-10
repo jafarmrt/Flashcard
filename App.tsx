@@ -6,17 +6,18 @@ import FlashcardList from './components/FlashcardList';
 import FlashcardForm from './components/FlashcardForm';
 import { StudyView } from './components/StudyView';
 import { StatsView } from './components/StatsView';
-import { ConversationView } from './components/ConversationView';
+import { QuizView } from './components/ConversationView';
 import Toast from './components/Toast';
 import DeckList from './components/DeckList';
 import { ChangelogView } from './components/ChangelogView';
 
 type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SYNC' | 'DECKS' | 'CHANGELOG';
 type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
+type HealthStatus = 'ok' | 'error' | 'checking';
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted'>;
 
 // --- API Helper ---
-const callProxy = async (action: 'sync-save' | 'sync-load' | 'sync-merge', payload: object) => {
+const callProxy = async (action: 'sync-save' | 'sync-load' | 'sync-merge' | 'ping' | 'gemini-generate', payload: object) => {
     const response = await fetch('/api/proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -24,7 +25,7 @@ const callProxy = async (action: 'sync-save' | 'sync-load' | 'sync-merge', paylo
     });
     if (!response.ok) {
       const errorData = await response.json();
-      throw new Error(errorData.error || 'Sync request failed');
+      throw new Error(errorData.error || 'Request failed');
     }
     return response.json();
 };
@@ -163,6 +164,29 @@ const convertToCSV = (cards: Flashcard[], decks: Deck[]): string => {
   return [headers.join(','), ...rows].join('\n');
 };
 
+const parseCSV = (csvText: string): Record<string, string>[] => {
+    const rows: Record<string, string>[] = [];
+    const regex = /(".*?"|[^",\r\n]+)(?=\s*,|\s*$)/g;
+    const lines = csvText.trim().split('\n');
+    if (lines.length < 1) return [];
+
+    const headers = (lines.shift()?.match(regex) || []).map(h => h.replace(/"/g, '').trim());
+
+    for (const line of lines) {
+        if (!line.trim()) continue;
+        const values = (line.match(regex) || []).map(v => v.replace(/"/g, '').trim());
+        if (values.length === headers.length) {
+            const entry = headers.reduce((obj, header, index) => {
+                obj[header] = values[index];
+                return obj;
+            }, {} as Record<string, string>);
+            rows.push(entry);
+        }
+    }
+    return rows;
+};
+
+
 const FloatingActionButton: React.FC<{ onClick: () => void }> = ({ onClick }) => (
   <button
     onClick={onClick}
@@ -221,6 +245,9 @@ const App: React.FC = () => {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const [lastSyncDate, setLastSyncDate] = useState<string | null>(null);
   const [studyDeckId, setStudyDeckId] = useState<string | null>(null);
+  const [dbStatus, setDbStatus] = useState<HealthStatus>('checking');
+  const [apiStatus, setApiStatus] = useState<HealthStatus>('checking');
+
   
   const isInitialMount = useRef(true);
 
@@ -261,7 +288,7 @@ const App: React.FC = () => {
     }
   };
   
-  // Effect for initial load
+  // Effect for initial load and health checks
   useEffect(() => {
     const savedKey = localStorage.getItem('syncKey') || '';
     setSyncKey(savedKey);
@@ -272,10 +299,22 @@ const App: React.FC = () => {
     
     const initialLoad = async () => {
         await fetchData();
+        setDbStatus(db.isOpen() ? 'ok' : 'error');
     };
     initialLoad().then(() => {
         isInitialMount.current = false;
     });
+
+    const checkApi = async () => {
+      try {
+        await callProxy('ping', {});
+        setApiStatus('ok');
+      } catch (e) {
+        setApiStatus('error');
+      }
+    };
+    checkApi();
+
   }, []);
 
   // Effect for debounced auto-syncing with MERGE strategy
@@ -298,18 +337,13 @@ const App: React.FC = () => {
             const localDataString = JSON.stringify({ decks, cards: flashcards });
             const remoteDataString = JSON.stringify({ decks: mergedData.decks, cards: mergedData.cards });
 
-            // Only update local state if the authoritative data from the server is different.
-            // This is the key to breaking the sync loop that caused the continuous spinner and study view jumps.
             if (localDataString !== remoteDataString) {
                 await db.transaction('rw', db.decks, db.flashcards, async () => {
-                    // Overwrite local data with the authoritative merged version from the cloud
                     await db.decks.clear();
                     await db.flashcards.clear();
                     await db.decks.bulkPut(mergedData.decks);
                     await db.flashcards.bulkPut(mergedData.cards);
                 });
-                // Update React state. This will cause one final, safe re-run of the effect.
-                // On the next run, the string comparison will match, and the loop will terminate.
                 setFlashcards(mergedData.cards);
                 setDecks(mergedData.decks);
             }
@@ -352,9 +386,8 @@ const App: React.FC = () => {
   };
 
   const handleDeleteCard = async (id: string) => {
-    // Soft delete: mark as deleted instead of removing
     await db.flashcards.update(id, { isDeleted: true });
-    await fetchData(); // Re-fetch to trigger sync
+    await fetchData();
     showToast('Card deleted successfully!');
   };
 
@@ -369,7 +402,7 @@ const App: React.FC = () => {
     let deck = allDecks.find(d => d.name.toLowerCase() === trimmedDeckName.toLowerCase() && !d.isDeleted);
 
     if (!deck) {
-      const newDeck: Deck = { id: Date.now().toString(), name: trimmedDeckName };
+      const newDeck: Deck = { id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, name: trimmedDeckName };
       await db.decks.add(newDeck);
       deck = newDeck;
     }
@@ -391,7 +424,7 @@ const App: React.FC = () => {
       await db.flashcards.add(newCard);
       showToast('Card added successfully!');
     }
-    await fetchData(); // Re-fetch to trigger sync
+    await fetchData();
     setEditingCard(null);
     setView('DECKS');
   };
@@ -400,7 +433,7 @@ const App: React.FC = () => {
     if (updatedCardsFromSession.length > 0) {
       await db.flashcards.bulkPut(updatedCardsFromSession);
     }
-    await fetchData(); // Re-fetch to trigger sync
+    await fetchData();
     setView('DECKS');
     showToast('Study session complete. Progress saved!');
   };
@@ -431,6 +464,73 @@ const App: React.FC = () => {
         showToast('Export failed.');
     }
   };
+
+  const handleImportCSV = async (csvText: string) => {
+    if (!csvText) {
+        showToast('Import file is empty.');
+        return;
+    }
+
+    try {
+        const parsedData = parseCSV(csvText);
+        if (parsedData.length === 0) {
+            showToast('No valid card data found in the file.');
+            return;
+        }
+
+        const allDecks = await db.decks.toArray();
+        const deckNameMap = new Map(allDecks.map(d => [d.name.toLowerCase(), d]));
+        const newDecks: Deck[] = [];
+        const newCards: Flashcard[] = [];
+        let rowCount = 0;
+
+        for (const row of parsedData) {
+            rowCount++;
+            if (!row.front || !row.back) {
+                console.warn(`Skipping row ${rowCount}: missing 'front' or 'back' value.`);
+                continue;
+            }
+
+            const deckName = row.deckName?.trim() || 'Imported Deck';
+            const lowerDeckName = deckName.toLowerCase();
+            let deck = deckNameMap.get(lowerDeckName);
+
+            if (!deck) {
+                const newDeck = { id: `${Date.now()}-${rowCount}`, name: deckName };
+                deckNameMap.set(lowerDeckName, newDeck);
+                newDecks.push(newDeck);
+                deck = newDeck;
+            }
+
+            const newCard: Flashcard = {
+                id: `${Date.now()}-${rowCount}`,
+                deckId: deck.id,
+                front: row.front,
+                back: row.back,
+                pronunciation: row.pronunciation || '',
+                partOfSpeech: row.partOfSpeech || '',
+                definition: row.definition || '',
+                exampleSentenceTarget: row.exampleSentenceTarget || '',
+                notes: row.notes || '',
+                repetition: 0,
+                easinessFactor: 2.5,
+                interval: 0,
+                dueDate: new Date().toISOString(),
+            };
+            newCards.push(newCard);
+        }
+
+        if (newDecks.length > 0) await db.decks.bulkAdd(newDecks);
+        if (newCards.length > 0) await db.flashcards.bulkAdd(newCards);
+        
+        await fetchData();
+        showToast(`${newCards.length} cards imported successfully!`);
+
+    } catch (error) {
+        console.error("CSV Import failed:", error);
+        showToast("Failed to import CSV. Please check file format.");
+    }
+  };
   
   const handleStudyDeck = (deckId: string) => {
     setStudyDeckId(deckId);
@@ -450,7 +550,8 @@ const App: React.FC = () => {
   }
 
   const handleRenameDeck = async (deckId: string, newName: string) => {
-    const existingDeck = decks.find(d => d.name.toLowerCase() === newName.toLowerCase() && !d.isDeleted);
+    // Fix: Add explicit type annotation to resolve potential type inference ambiguity.
+    const existingDeck: Deck | undefined = decks.find(d => d.name.toLowerCase() === newName.toLowerCase() && !d.isDeleted);
     if (existingDeck && existingDeck.id !== deckId) {
         showToast('A deck with this name already exists.');
         return;
@@ -487,7 +588,7 @@ const App: React.FC = () => {
         const allCardsForStudy = studyDeckId ? visibleFlashcards.filter(card => card.deckId === studyDeckId) : visibleFlashcards;
         return <StudyView cards={allCardsForStudy} onExit={handleSessionEnd} />;
       case 'PRACTICE':
-        return <ConversationView cards={visibleFlashcards} />;
+        return <QuizView cards={visibleFlashcards} />;
       case 'SYNC':
         return <SyncView 
                     syncKey={syncKey} 
@@ -515,9 +616,15 @@ const App: React.FC = () => {
         return <ChangelogView onBack={() => setView('DECKS')} />;
       case 'LIST':
       default:
-        return <FlashcardList cards={visibleFlashcards} decks={visibleDecks} onEdit={handleEditCard} onDelete={handleDeleteCard} onExportCSV={handleExportCSV} onBackToDecks={() => setView('DECKS')} />;
+        return <FlashcardList cards={visibleFlashcards} decks={visibleDecks} onEdit={handleEditCard} onDelete={handleDeleteCard} onExportCSV={handleExportCSV} onImportCSV={handleImportCSV} onBackToDecks={() => setView('DECKS')} />;
     }
   };
+  
+  const StatusIndicator: React.FC<{ status: HealthStatus, label: string }> = ({ status, label }) => {
+    const color = status === 'ok' ? 'bg-green-500' : status === 'error' ? 'bg-red-500' : 'bg-yellow-500';
+    const pulse = status === 'checking' ? 'animate-pulse' : '';
+    return <div className="flex items-center gap-1.5" title={`${label}: ${status}`}><div className={`w-2 h-2 rounded-full ${color} ${pulse}`}></div><span>{label}</span></div>
+  }
 
   return (
     <div className="min-h-screen font-sans flex flex-col">
@@ -537,8 +644,12 @@ const App: React.FC = () => {
       
       {toastMessage && <Toast message={toastMessage} />}
       <footer className="text-center py-4 pb-20 md:pb-4 text-xs text-slate-400 dark:text-slate-500">
+         <div className="flex justify-center items-center gap-4 mb-2">
+            <StatusIndicator status={dbStatus} label="DB"/>
+            <StatusIndicator status={apiStatus} label="API"/>
+         </div>
          <button onClick={() => handleNavigate('CHANGELOG')} className="hover:underline">
-            Version 1.8.0 - View Changelog
+            Version 2.0.0 - View Changelog
         </button>
       </footer>
     </div>

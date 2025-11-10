@@ -7,11 +7,13 @@ interface FlashcardListProps {
   onEdit: (card: Flashcard) => void;
   onDelete: (id: string) => void;
   onExportCSV: (cards: Flashcard[]) => void;
+  onImportCSV: (csvText: string) => void;
   onBackToDecks: () => void;
 }
 
 const EditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>;
 const DeleteIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>;
+const SpeakerIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>;
 
 const formatDate = (isoString: string) => {
     const date = new Date(isoString);
@@ -26,9 +28,10 @@ const formatDate = (isoString: string) => {
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 };
 
-const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onDelete, onExportCSV, onBackToDecks }) => {
+const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onDelete, onExportCSV, onImportCSV, onBackToDecks }) => {
   const [sortConfig, setSortConfig] = useState<{ key: keyof Flashcard | 'deckName'; direction: 'ascending' | 'descending' }>({ key: 'dueDate', direction: 'ascending' });
   const [selectedDeckId, setSelectedDeckId] = useState<string>('all');
+  const importFileRef = useRef<HTMLInputElement>(null);
  
   const decksById = useMemo(() => new Map(decks.map(deck => [deck.id, deck.name])), [decks]);
 
@@ -59,11 +62,41 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
     return sortableCards;
   }, [filteredCards, sortConfig, decksById]);
 
+  const handleImportClick = () => {
+    importFileRef.current?.click();
+  };
+
+  const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      onImportCSV(text);
+    };
+    reader.readAsText(file);
+    event.target.value = ''; // Reset file input
+  };
+  
+  const playAudio = (audioSrc: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const audio = new Audio(audioSrc);
+      audio.play();
+    } catch (error) {
+      console.error("Failed to play audio:", error);
+    }
+  };
+
+
   if (cards.length === 0) {
     return (
       <div className="text-center py-20 bg-white dark:bg-slate-800 rounded-lg shadow-sm">
         <h2 className="text-2xl font-semibold text-slate-700 dark:text-slate-200">No flashcards yet!</h2>
         <p className="mt-2 text-slate-500 dark:text-slate-400">Tap the '+' button to create your first one or use the "Sync" page to load cards from the cloud.</p>
+        <button onClick={handleImportClick} className="mt-4 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors">Import from CSV</button>
+        <input type="file" ref={importFileRef} onChange={handleFileImport} accept=".csv" className="hidden" />
       </div>
     );
   }
@@ -75,12 +108,14 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
                 Back to Decks
             </button>
-            <div className="flex items-center gap-4 w-full md:w-auto">
+            <div className="flex items-center gap-2 w-full md:w-auto">
                 <select id="deck-filter" value={selectedDeckId} onChange={e => setSelectedDeckId(e.target.value)} className="block w-full max-w-xs pl-3 pr-10 py-2 text-base border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md">
                     <option value="all">All Cards</option>
                     {decks.map(deck => <option key={deck.id} value={deck.id}>{deck.name}</option>)}
                 </select>
-                <button onClick={() => onExportCSV(sortedCards)} className="hidden sm:block px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">Export</button>
+                <input type="file" ref={importFileRef} onChange={handleFileImport} accept=".csv" className="hidden" />
+                <button onClick={handleImportClick} title="Import from CSV" className="px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">Import</button>
+                <button onClick={() => onExportCSV(sortedCards)} title="Export to CSV" className="px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">Export</button>
             </div>
         </div>
 
@@ -96,7 +131,10 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                              <span>{formatDate(card.dueDate)}</span>
                         </div>
                     </div>
-                    <div className="flex gap-2 sm:gap-4 pl-2">
+                    <div className="flex gap-1 sm:gap-2 pl-2 items-center">
+                        {card.audioSrc && (
+                             <button onClick={(e) => playAudio(card.audioSrc!, e)} aria-label={`Play audio for ${card.front}`} className="p-2 text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-300 transition-colors rounded-full hover:bg-slate-200 dark:hover:bg-slate-600"><SpeakerIcon /></button>
+                        )}
                         <button onClick={() => onEdit(card)} aria-label={`Edit ${card.front}`} className="p-2 text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 transition-colors rounded-full hover:bg-slate-200 dark:hover:bg-slate-600"><EditIcon /></button>
                         <button onClick={() => onDelete(card.id)} aria-label={`Delete ${card.front}`} className="p-2 text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 transition-colors rounded-full hover:bg-slate-200 dark:hover:bg-slate-600"><DeleteIcon /></button>
                     </div>

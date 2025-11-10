@@ -4,6 +4,50 @@ interface ChangelogViewProps {
   onBack: () => void;
 }
 
+const renderChangelog = (text: string) => {
+  const lines = text.split('\n');
+  const elements = [];
+  let listItems: React.ReactNode[] = [];
+
+  const flushList = () => {
+    if (listItems.length > 0) {
+      elements.push(<ul key={`ul-${elements.length}`} className="list-disc pl-6 space-y-1 my-4">{listItems}</ul>);
+      listItems = [];
+    }
+  };
+
+  lines.forEach((line, index) => {
+    if (line.startsWith('## [')) {
+      flushList();
+      elements.push(<h2 key={index} className="text-xl font-bold mt-6 mb-2 border-b border-slate-200 dark:border-slate-700 pb-2">{line.substring(3).trim()}</h2>);
+    } else if (line.match(/^-\s+\*\*/)) {
+      const content = line.substring(line.indexOf('**') + 2).replace(/\*\*:/, ':');
+      const parts = content.split(':');
+      const label = parts[0];
+      const description = parts.slice(1).join(':');
+      listItems.push(
+        <li key={index}>
+          <strong className="font-semibold text-slate-800 dark:text-slate-100">{label}:</strong>
+          <span className="text-slate-600 dark:text-slate-300">{description}</span>
+        </li>
+      );
+    } else if (line.trim() === '') {
+      flushList();
+    } else {
+        if (line.startsWith('# ')) {
+            flushList();
+            elements.push(<h1 key={index} className="text-3xl font-bold mb-4">{line.substring(2)}</h1>);
+        } else if (listItems.length === 0) { // Don't treat blank lines within lists as paragraphs
+             elements.push(<p key={index} className="text-slate-600 dark:text-slate-400">{line}</p>);
+        }
+    }
+  });
+
+  flushList(); // Add any remaining list items
+  return elements;
+};
+
+
 export const ChangelogView: React.FC<ChangelogViewProps> = ({ onBack }) => {
   const [changelog, setChangelog] = useState('');
   const [loading, setLoading] = useState(true);
@@ -33,10 +77,8 @@ export const ChangelogView: React.FC<ChangelogViewProps> = ({ onBack }) => {
       {loading ? (
         <p className="text-slate-500 dark:text-slate-400">Loading...</p>
       ) : (
-        <div className="prose prose-sm sm:prose-base dark:prose-invert max-w-none bg-slate-50 dark:bg-slate-900/50 p-4 rounded-md overflow-x-auto h-96">
-            <pre className="whitespace-pre-wrap font-sans text-sm">
-                {changelog}
-            </pre>
+        <div className="prose dark:prose-invert max-w-none bg-slate-50 dark:bg-slate-900/50 p-4 rounded-md h-96 overflow-y-auto">
+            {renderChangelog(changelog)}
         </div>
       )}
       <div className="text-center mt-6">
