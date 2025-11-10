@@ -105,25 +105,29 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, onExit }) => {
   }, []);
   
   useEffect(() => {
-    // This effect runs when the `cards` prop is updated from the parent,
-    // which is crucial for initializing the session after cards are loaded asynchronously.
+    // This effect now correctly handles all cases, including when the initial card set is empty.
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayISOString = today.toISOString();
     
-    // We only proceed if cards have been loaded.
-    if (cards.length > 0) {
-      const dueCards = cards.filter(c => c.dueDate <= todayISOString);
-      setDueCardCount(dueCards.length);
-
-      if (dueCards.length > 0) {
-        setupSession(dueCards);
-      } else {
+    // An empty array of cards is a valid state (e.g., studying an empty deck).
+    // The previous logic failed to handle this, causing the view to get stuck.
+    if (cards.length === 0) {
+        setDueCardCount(0);
         setSessionComplete(true);
-      }
+        return; // Exit early, session is complete.
     }
-    // setupSession is wrapped in useCallback, so it's a stable dependency.
+    
+    const dueCards = cards.filter(c => c.dueDate <= todayISOString);
+    setDueCardCount(dueCards.length);
+
+    if (dueCards.length > 0) {
+      setupSession(dueCards);
+    } else {
+      setSessionComplete(true);
+    }
   }, [cards, setupSession]);
+
 
   useEffect(() => {
     if (studyMode === 'type' && !isFlipped) {

@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.1] - Study View Hang Fix
+
+-   **Fix:** Resolved a critical bug where the "Study" view would get stuck on the "Loading..." screen indefinitely if the user attempted to study an empty deck or if no cards were currently due. The logic now correctly handles this scenario and shows the "You're all caught up!" message.
+
 ## [2.2.0] - Centralized Settings & Customization
 
 -   **Feature:** Added a comprehensive "Settings" page to centralize application configuration and data management.
