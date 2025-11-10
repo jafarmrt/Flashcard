@@ -27,12 +27,10 @@ async function handleGeminiGenerate(payload: any, response: VercelResponse, apiK
 
   // Separate top-level parameters from those that belong in generationConfig
   const {
-    responseMimeType,
-    responseSchema,
+    systemInstruction,
     responseModalities,
     speechConfig,
-    systemInstruction,
-    ...generationConfigParams // The rest go into generationConfig
+    ...generationConfig // All other config properties are for generationConfig
   } = config || {};
 
   const googleApiBody: Record<string, any> = {
@@ -44,15 +42,13 @@ async function handleGeminiGenerate(payload: any, response: VercelResponse, apiK
   };
   
   // Add top-level parameters if they exist
-  if (responseMimeType) googleApiBody.responseMimeType = responseMimeType;
-  if (responseSchema) googleApiBody.responseSchema = responseSchema;
+  if (systemInstruction) googleApiBody.systemInstruction = systemInstruction;
   if (responseModalities) googleApiBody.responseModalities = responseModalities;
   if (speechConfig) googleApiBody.speechConfig = speechConfig;
-  if (systemInstruction) googleApiBody.systemInstruction = systemInstruction;
 
   // Add generationConfig only if it contains properties
-  if (generationConfigParams && Object.keys(generationConfigParams).length > 0) {
-    googleApiBody.generationConfig = generationConfigParams;
+  if (generationConfig && Object.keys(generationConfig).length > 0) {
+    googleApiBody.generationConfig = generationConfig;
   }
 
   const geminiResponse = await fetch(`${endpoint}?key=${apiKey}`, {
