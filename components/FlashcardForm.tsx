@@ -3,11 +3,9 @@ import { Flashcard, Deck } from '../types';
 import { 
   generateFlashcardDetails, 
   generateAudio, 
-  getGrammarExplanation,
   getPronunciationFeedback,
   blobToBase64 
 } from '../services/geminiService';
-import Modal from './Modal';
 
 
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId'>;
@@ -49,11 +47,6 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
   const [isCheckingPronunciation, setIsCheckingPronunciation] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-
-  // Grammar explanation state
-  const [grammarExplanation, setGrammarExplanation] = useState('');
-  const [isExplainingGrammar, setIsExplainingGrammar] = useState(false);
-  const [showGrammarModal, setShowGrammarModal] = useState(false);
 
   useEffect(() => {
     if (card) {
@@ -164,22 +157,8 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
       }
     }
   };
-  
-  const handleExplainGrammar = async () => {
-    if (!formData.exampleSentenceTarget) return;
-    setIsExplainingGrammar(true);
-    setShowGrammarModal(true);
-    setGrammarExplanation('Analyzing grammar...');
-    const explanation = await getGrammarExplanation(formData.exampleSentenceTarget);
-    setGrammarExplanation(explanation);
-    setIsExplainingGrammar(false);
-  };
 
   return (
-    <>
-    <Modal show={showGrammarModal} onClose={() => setShowGrammarModal(false)} title="Grammar Explanation">
-      {isExplainingGrammar ? <p>Loading...</p> : <p>{grammarExplanation}</p>}
-    </Modal>
     <div className="max-w-3xl mx-auto bg-white dark:bg-slate-800 p-8 rounded-lg shadow-md">
       <h2 className="text-2xl font-bold mb-6 text-slate-800 dark:text-slate-100">{card ? 'Edit Card' : 'Create New Card'}</h2>
       <form onSubmit={handleSubmit} className="space-y-6">
@@ -303,12 +282,7 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
         </div>
         
         <div>
-           <div className="flex justify-between items-center">
-             <label htmlFor="exampleSentenceTarget" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Example Sentence (English)</label>
-             <button type="button" onClick={handleExplainGrammar} disabled={isExplainingGrammar || !formData.exampleSentenceTarget} className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline disabled:opacity-50">
-                {isExplainingGrammar ? 'Analyzing...' : 'Explain Grammar'}
-              </button>
-           </div>
+           <label htmlFor="exampleSentenceTarget" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Example Sentence (English)</label>
           <textarea id="exampleSentenceTarget" name="exampleSentenceTarget" rows={2} value={formData.exampleSentenceTarget || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
         </div>
 
@@ -327,7 +301,6 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
         </div>
       </form>
     </div>
-    </>
   );
 };
 

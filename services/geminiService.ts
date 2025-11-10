@@ -97,39 +97,57 @@ export const generateAudio = async (text: string): Promise<string | undefined> =
         }
         const data = await response.json();
 
-        // Find the first phonetic entry that has an audio URL
-        // The type is `any` because the API response is not strictly typed here.
-        const audioUrl = data[0]?.phonetics?.find((p: any) => p.audio)?.audio;
-        
-        // The API sometimes returns protocol-relative URLs (e.g., //ssl.gstatic.com/...)
-        // We prepend https: to ensure they are always valid.
-        if (audioUrl && audioUrl.startsWith('//')) {
-            return `https:${audioUrl}`;
+        if (!Array.isArray(data) || data.length === 0) {
+            console.warn(`No dictionary entries found for "${text}".`);
+            return undefined;
         }
-        
-        return audioUrl; // This will be the direct .mp3 URL or undefined
+
+        let audioUrl: string | undefined = undefined;
+
+        // Search through all entries and their phonetics for a valid audio link.
+        // The API can return multiple entries for a word, and each entry can have multiple phonetic objects.
+        // We need to find the first one that has a valid, non-empty audio URL.
+        for (const entry of data) {
+            if (entry.phonetics && Array.isArray(entry.phonetics)) {
+                // Prioritize phonetics that have a non-empty audio string ending in .mp3
+                for (const phonetic of entry.phonetics) {
+                    if (phonetic.audio && typeof phonetic.audio === 'string' && phonetic.audio.endsWith('.mp3')) {
+                        audioUrl = phonetic.audio;
+                        break; // Found a high-quality URL, stop searching in this entry
+                    }
+                }
+            }
+            if (audioUrl) break; // Exit the main loop if we found an mp3
+        }
+
+        // If no .mp3 was found, do a less strict search for any non-empty audio string.
+        if (!audioUrl) {
+            for (const entry of data) {
+                if (entry.phonetics && Array.isArray(entry.phonetics)) {
+                    // Find the first phonetic object that has any truthy audio property.
+                    const foundPhonetic = entry.phonetics.find((p: any) => p.audio && typeof p.audio === 'string');
+                    if (foundPhonetic) {
+                        audioUrl = foundPhonetic.audio;
+                        break; // Found a usable URL, stop searching
+                    }
+                }
+            }
+        }
+
+        if (audioUrl) {
+            // The API sometimes returns protocol-relative URLs (e.g., //ssl.gstatic.com/...)
+            // We prepend https: to ensure they are always valid.
+            if (audioUrl.startsWith('//')) {
+                return `https:${audioUrl}`;
+            }
+            return audioUrl;
+        }
+
+        console.warn(`No valid audio URL found for "${text}" in the dictionary API response.`);
+        return undefined; // No audio found after thorough search
     } catch (error) {
         console.error("Error fetching pronunciation audio from Dictionary API:", error);
         return undefined;
-    }
-};
-
-
-export const getGrammarExplanation = async (sentence: string): Promise<string> => {
-    try {
-        const prompt = `You are an expert English grammar teacher for a native Persian speaker.
-        Explain the grammar of the following English sentence in simple, clear terms.
-        Provide the explanation in Persian. Be concise and focus on the main grammatical points.
-        Sentence: "${sentence}"`;
-        
-        const response = await callProxy({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-        });
-        return response.text;
-    } catch (error) {
-        console.error("Error generating grammar explanation:", error);
-        return "Sorry, I couldn't generate a grammar explanation at this time.";
     }
 };
 
