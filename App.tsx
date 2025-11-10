@@ -11,8 +11,9 @@ import Toast from './components/Toast';
 import DeckList from './components/DeckList';
 import { ChangelogView } from './components/ChangelogView';
 import SettingsView from './components/SettingsView';
+import { BulkAddView } from './components/BulkAddView';
 
-type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG';
+type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD';
 type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 type HealthStatus = 'ok' | 'error' | 'checking';
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted'>;
@@ -215,7 +216,7 @@ const BottomNav: React.FC<{
   ];
   
   const isActive = (view: View) => {
-      if (view === 'DECKS' && (currentView === 'LIST' || currentView === 'DECKS')) return true;
+      if (view === 'DECKS' && ['LIST', 'DECKS', 'FORM', 'BULK_ADD'].includes(currentView)) return true;
       if (view === 'SETTINGS' && (currentView === 'SETTINGS' || currentView === 'CHANGELOG')) return true;
       return currentView === view;
   }
@@ -484,6 +485,41 @@ const App: React.FC = () => {
     setView('DECKS');
   };
   
+  const handleBulkSaveCards = async (cardsToSave: FlashcardFormData[], deckName: string) => {
+    const trimmedDeckName = deckName.trim();
+    if (!trimmedDeckName) {
+        showToast('Deck name cannot be empty.');
+        return;
+    }
+
+    const allDecks = await db.decks.toArray();
+    let deck = allDecks.find(d => d.name.toLowerCase() === trimmedDeckName.toLowerCase() && !d.isDeleted);
+
+    if (!deck) {
+        const newDeck: Deck = { id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, name: trimmedDeckName };
+        await db.decks.add(newDeck);
+        deck = newDeck;
+    }
+
+    const newCards: Flashcard[] = cardsToSave.map((cardData, index) => ({
+        ...cardData,
+        id: `${Date.now()}-${index}`,
+        deckId: deck!.id,
+        repetition: 0,
+        easinessFactor: 2.5,
+        interval: 0,
+        dueDate: new Date().toISOString(),
+    }));
+
+    if (newCards.length > 0) {
+        await db.flashcards.bulkAdd(newCards);
+    }
+    
+    await fetchData();
+    showToast(`${newCards.length} cards added to "${trimmedDeckName}"!`);
+    setView('DECKS');
+};
+
   const handleSessionEnd = async (updatedCardsFromSession: Flashcard[]) => {
     if (updatedCardsFromSession.length > 0) {
       await db.flashcards.bulkPut(updatedCardsFromSession);
@@ -619,8 +655,8 @@ const App: React.FC = () => {
   }
 
   const handleRenameDeck = async (deckId: string, newName: string) => {
-    // Fix: Add explicit type annotation to resolve potential type inference ambiguity.
-    const existingDeck: Deck | undefined = decks.find(d => d.name.toLowerCase() === newName.toLowerCase() && !d.isDeleted);
+    // Fix: Add explicit type annotation to the callback parameter to prevent type degradation to 'any' or 'unknown'.
+    const existingDeck = decks.find((d: Deck) => d.name.toLowerCase() === newName.toLowerCase() && !d.isDeleted);
     if (existingDeck && existingDeck.id !== deckId) {
         showToast('A deck with this name already exists.');
         return;
@@ -685,6 +721,7 @@ const App: React.FC = () => {
             onRenameDeck={handleRenameDeck}
             onDeleteDeck={handleDeleteDeck}
             onViewAllCards={() => setView('LIST')}
+            onBulkAdd={() => setView('BULK_ADD')}
         />;
       case 'FORM':
         const editingCardDeckName = visibleDecks.find(d => d.id === editingCard?.deckId)?.name || '';
@@ -701,6 +738,13 @@ const App: React.FC = () => {
         return <StatsView onBack={() => setView('DECKS')} />;
       case 'CHANGELOG':
         return <ChangelogView onBack={() => setView('SETTINGS')} />;
+      case 'BULK_ADD':
+        return <BulkAddView 
+            onSave={handleBulkSaveCards}
+            onCancel={() => setView('DECKS')} 
+            showToast={showToast}
+            defaultApiSource={settings.defaultApiSource}
+        />;
       case 'LIST':
       default:
         return <FlashcardList cards={visibleFlashcards} decks={visibleDecks} onEdit={handleEditCard} onDelete={handleDeleteCard} onBackToDecks={() => setView('DECKS')} />;

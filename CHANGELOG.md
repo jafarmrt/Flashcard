@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.0] - Bulk Word Import
+- **Feature:** Added a new "Bulk Add" feature accessible from the Decks screen.
+- **UI/UX:** Users can now paste a list of words to automatically create multiple flashcards at once.
+- **AI:** The bulk add process automatically fetches Persian translations, definitions, pronunciation, and audio for each word, with a progress indicator and review step.
+
 ## [2.2.3] - Critical Crash Fix
 
 -   **Fix:** Resolved a critical crash (`.map is not a function` or `.join is not a function`) that occurred in the "Study" view and the "Edit Card" form. The app now correctly handles legacy flashcard data where `exampleSentenceTarget` or `definition` fields were saved as a string instead of an array. This ensures backward compatibility and prevents the app from crashing when viewing or editing older cards.

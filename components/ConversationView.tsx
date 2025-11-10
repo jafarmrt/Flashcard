@@ -22,7 +22,8 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards }) => {
 
   const startPractice = async () => {
     // A "new" word is one that has never been reviewed correctly.
-    const newCards = cards.filter(c => c.repetition === 0);
+    // Fix: Add explicit type annotation to the filter callback to prevent type degradation to 'any' or 'unknown'.
+    const newCards = cards.filter((c: Flashcard) => c.repetition === 0);
     
     if (newCards.length < 4) {
       alert("You need at least 4 new cards (cards you haven't studied yet) to start a practice session.");

@@ -1,4 +1,4 @@
-// Fix: Changed the import to use the default export for Dexie, which is the correct way to import the main class.
+// Fix: Changed the import to use a default import for Dexie, which resolves type inheritance issues.
 import Dexie, { type Table } from 'dexie';
 import { Flashcard, Deck, StudyLog } from '../types';
 
