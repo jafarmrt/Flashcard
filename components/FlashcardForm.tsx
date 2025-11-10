@@ -23,6 +23,7 @@ interface FlashcardFormProps {
   onCancel: () => void;
   initialDeckName?: string;
   showToast: (message: string) => void;
+  defaultApiSource: DictionarySource;
 }
 
 const MicIcon = ({ recording }: { recording: boolean }) => (
@@ -34,7 +35,7 @@ const MicIcon = ({ recording }: { recording: boolean }) => (
 );
 
 
-const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCancel, initialDeckName, showToast }) => {
+const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCancel, initialDeckName, showToast, defaultApiSource }) => {
   const [formData, setFormData] = useState<FlashcardFormData>({
     front: '',
     back: '',
@@ -46,7 +47,7 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
     audioSrc: undefined,
   });
   const [deckName, setDeckName] = useState('Default Deck');
-  const [dictionarySource, setDictionarySource] = useState<DictionarySource>('free');
+  const [dictionarySource, setDictionarySource] = useState<DictionarySource>(defaultApiSource);
   
   // Loading states
   const [isFetchingDetails, setIsFetchingDetails] = useState(false);
@@ -74,6 +75,7 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
         setDeckName(initialDeckName);
       }
     } else {
+      // Reset for new card
       setFormData({
         front: '',
         back: '',
@@ -85,8 +87,10 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
         audioSrc: undefined,
       });
       setDeckName('Default Deck');
+      // Set API source to user's default for new cards
+      setDictionarySource(defaultApiSource);
     }
-  }, [card, initialDeckName]);
+  }, [card, initialDeckName, defaultApiSource]);
 
   const handleTextChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;

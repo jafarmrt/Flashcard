@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Flashcard, Deck } from './types';
+import { Flashcard, Deck, Settings } from './types';
 import { db } from './services/localDBService';
 import Header from './components/Header';
 import FlashcardList from './components/FlashcardList';
@@ -10,8 +10,9 @@ import { QuizView } from './components/ConversationView';
 import Toast from './components/Toast';
 import DeckList from './components/DeckList';
 import { ChangelogView } from './components/ChangelogView';
+import SettingsView from './components/SettingsView';
 
-type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SYNC' | 'DECKS' | 'CHANGELOG';
+type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG';
 type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 type HealthStatus = 'ok' | 'error' | 'checking';
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted'>;
@@ -31,8 +32,8 @@ const callProxy = async (action: 'sync-save' | 'sync-load' | 'sync-merge' | 'pin
 };
 
 
-// --- SyncView Component ---
-const SyncView: React.FC<{ 
+// --- SyncView Component (Now nested inside Settings) ---
+export const SyncView: React.FC<{ 
     syncKey: string;
     setSyncKey: (key: string) => void;
     syncStatus: SyncStatus;
@@ -83,10 +84,10 @@ const SyncView: React.FC<{
   const {text, icon, color} = getStatusText();
 
   return (
-    <div className="max-w-3xl mx-auto bg-white dark:bg-slate-800 p-8 rounded-lg shadow-md space-y-6">
-        <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Automatic Cloud Sync</h2>
-        <p className="text-slate-600 dark:text-slate-400">
-            Your data is now saved automatically to the cloud whenever you make changes. Use the Sync Key below to access your data on other devices.
+    <div className="bg-slate-100 dark:bg-slate-900/50 p-6 rounded-lg space-y-6 border border-slate-200 dark:border-slate-700">
+        <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100">Automatic Cloud Sync</h3>
+        <p className="text-slate-600 dark:text-slate-400 text-sm">
+            Your data is saved automatically to the cloud. Use the Sync Key below to access your data on other devices.
             <strong className="block mt-2">Important: Save your key! It's the only way to access your data.</strong>
         </p>
         
@@ -111,7 +112,7 @@ const SyncView: React.FC<{
         </div>
         
         <div className="border-t border-slate-200 dark:border-slate-700 pt-6 space-y-4">
-            <h3 className="text-lg font-medium text-slate-800 dark:text-slate-100">New Device Setup</h3>
+            <h4 className="text-md font-medium text-slate-800 dark:text-slate-100">New Device Setup</h4>
             <p className="text-sm text-slate-600 dark:text-slate-400">
                 If you're on a new device, enter your key above and click here to load your data. This will replace any data currently on this device.
             </p>
@@ -210,11 +211,12 @@ const BottomNav: React.FC<{
     { view: 'DECKS' as View, label: 'Decks', icon: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg> },
     { view: 'STUDY' as View, label: 'Study', icon: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>, disabled: isStudyDisabled },
     { view: 'PRACTICE' as View, label: 'Practice', icon: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>, disabled: isStudyDisabled },
-    { view: 'SYNC' as View, label: 'Sync', icon: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 1-9 9m9-9a9 9 0 0 0-9-9m9 9H3m9 9a9 9 0 0 1-9-9m9 9V3M3 12a9 9 0 0 1 9-9"/></svg> },
+    { view: 'SETTINGS' as View, label: 'Settings', icon: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg> },
   ];
   
   const isActive = (view: View) => {
       if (view === 'DECKS' && (currentView === 'LIST' || currentView === 'DECKS')) return true;
+      if (view === 'SETTINGS' && (currentView === 'SETTINGS' || currentView === 'CHANGELOG')) return true;
       return currentView === view;
   }
 
@@ -236,6 +238,11 @@ const BottomNav: React.FC<{
 };
 
 
+const defaultSettings: Settings = {
+    theme: 'system',
+    defaultApiSource: 'free',
+};
+
 const App: React.FC = () => {
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
   const [decks, setDecks] = useState<Deck[]>([]);
@@ -250,6 +257,7 @@ const App: React.FC = () => {
   const [apiStatus, setApiStatus] = useState<HealthStatus>('checking');
   const [freeDictApiStatus, setFreeDictApiStatus] = useState<HealthStatus>('checking');
   const [mwDictApiStatus, setMwDictApiStatus] = useState<HealthStatus>('checking');
+  const [settings, setSettings] = useState<Settings>(defaultSettings);
 
   
   const isInitialMount = useRef(true);
@@ -300,6 +308,12 @@ const App: React.FC = () => {
       setLastSyncDate(new Date(lastSync).toLocaleString());
     }
     
+    // Load settings
+    const savedSettings = localStorage.getItem('appSettings');
+    if (savedSettings) {
+        setSettings(JSON.parse(savedSettings));
+    }
+
     const initialLoad = async () => {
         await fetchData();
         setDbStatus(db.isOpen() ? 'ok' : 'error');
@@ -339,6 +353,16 @@ const App: React.FC = () => {
     checkMwDictApi();
 
   }, []);
+
+  // Effect for applying theme
+  useEffect(() => {
+    const root = window.document.documentElement;
+    const isDark =
+      settings.theme === 'dark' ||
+      (settings.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    root.classList.toggle('dark', isDark);
+  }, [settings.theme]);
+
 
   // Effect for debounced auto-syncing with MERGE strategy
   useEffect(() => {
@@ -396,6 +420,14 @@ const App: React.FC = () => {
   const updateSyncKey = (newKey: string) => {
       setSyncKey(newKey);
       localStorage.setItem('syncKey', newKey);
+  }
+  
+  const updateSettings = (newSettings: Partial<Settings>) => {
+      setSettings(prev => {
+          const updated = { ...prev, ...newSettings };
+          localStorage.setItem('appSettings', JSON.stringify(updated));
+          return updated;
+      })
   }
 
   const handleAddCard = () => {
@@ -461,15 +493,17 @@ const App: React.FC = () => {
     showToast('Study session complete. Progress saved!');
   };
 
-  const handleExportCSV = (cardsToExport: Flashcard[]) => {
+  const handleExportCSV = () => {
     try {
       const date = new Date().toISOString().split('T')[0];
       const a = document.createElement('a');
       document.body.appendChild(a);
       a.style.display = 'none';
+      
+      const cardsToExport = flashcards.filter(c => !c.isDeleted);
 
       if (cardsToExport.length === 0) {
-        showToast('No cards in the current view to export.');
+        showToast('No cards to export.');
         return;
       }
       const csvData = convertToCSV(cardsToExport, decks);
@@ -479,7 +513,7 @@ const App: React.FC = () => {
       a.download = `lingua-cards-export-${date}.csv`;
       a.click();
       URL.revokeObjectURL(url);
-      showToast('Current view exported as CSV!');
+      showToast('All cards exported as CSV!');
 
       document.body.removeChild(a);
     } catch (error) {
@@ -548,6 +582,7 @@ const App: React.FC = () => {
         
         await fetchData();
         showToast(`${newCards.length} cards imported successfully!`);
+        setView('DECKS');
 
     } catch (error) {
         console.error("CSV Import failed:", error);
@@ -555,6 +590,17 @@ const App: React.FC = () => {
     }
   };
   
+  const handleResetApp = async () => {
+      if(confirm("Are you sure you want to reset the application? All local decks and cards will be permanently deleted. This action cannot be undone.")) {
+          await db.delete();
+          // Also clear sync key from local storage
+          localStorage.removeItem('syncKey');
+          localStorage.removeItem('lastSyncDate');
+          localStorage.removeItem('appSettings');
+          window.location.reload();
+      }
+  }
+
   const handleStudyDeck = (deckId: string) => {
     setStudyDeckId(deckId);
     setView('STUDY');
@@ -612,15 +658,25 @@ const App: React.FC = () => {
         return <StudyView cards={allCardsForStudy} onExit={handleSessionEnd} />;
       case 'PRACTICE':
         return <QuizView cards={visibleFlashcards} />;
-      case 'SYNC':
-        return <SyncView 
+      case 'SETTINGS':
+        return <SettingsView 
+            settings={settings}
+            onUpdateSettings={updateSettings}
+            onExportCSV={handleExportCSV}
+            onImportCSV={handleImportCSV}
+            onResetApp={handleResetApp}
+            onNavigateToChangelog={() => setView('CHANGELOG')}
+            syncView={
+                <SyncView 
                     syncKey={syncKey} 
                     setSyncKey={updateSyncKey} 
                     syncStatus={syncStatus} 
                     lastSyncDate={lastSyncDate}
                     onLoadFromCloud={handleLoadFromCloud}
                     showToast={showToast}
-                />;
+                />
+            }
+          />
        case 'DECKS':
         return <DeckList 
             decks={visibleDecks} 
@@ -632,14 +688,22 @@ const App: React.FC = () => {
         />;
       case 'FORM':
         const editingCardDeckName = visibleDecks.find(d => d.id === editingCard?.deckId)?.name || '';
-        return <FlashcardForm card={editingCard} decks={visibleDecks} onSave={handleSaveCard} onCancel={() => setView('DECKS')} initialDeckName={editingCardDeckName} showToast={showToast} />;
+        return <FlashcardForm 
+            card={editingCard} 
+            decks={visibleDecks} 
+            onSave={handleSaveCard} 
+            onCancel={() => setView('DECKS')} 
+            initialDeckName={editingCardDeckName} 
+            showToast={showToast}
+            defaultApiSource={settings.defaultApiSource}
+        />;
       case 'STATS':
         return <StatsView onBack={() => setView('DECKS')} />;
       case 'CHANGELOG':
-        return <ChangelogView onBack={() => setView('DECKS')} />;
+        return <ChangelogView onBack={() => setView('SETTINGS')} />;
       case 'LIST':
       default:
-        return <FlashcardList cards={visibleFlashcards} decks={visibleDecks} onEdit={handleEditCard} onDelete={handleDeleteCard} onExportCSV={handleExportCSV} onImportCSV={handleImportCSV} onBackToDecks={() => setView('DECKS')} />;
+        return <FlashcardList cards={visibleFlashcards} decks={visibleDecks} onEdit={handleEditCard} onDelete={handleDeleteCard} onBackToDecks={() => setView('DECKS')} />;
     }
   };
   
@@ -656,7 +720,6 @@ const App: React.FC = () => {
         onAddCard={handleAddCard}
         isStudyDisabled={visibleFlashcards.length === 0}
         currentView={view}
-        syncStatus={syncStatus}
       />
       <main className="flex-grow max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full pb-24 md:pb-8">
         {renderContent()}
@@ -673,9 +736,7 @@ const App: React.FC = () => {
             <StatusIndicator status={freeDictApiStatus} label="Free Dict."/>
             <StatusIndicator status={mwDictApiStatus} label="MW Dict."/>
          </div>
-         <button onClick={() => handleNavigate('CHANGELOG')} className="hover:underline">
-            Version 2.1.3 - View Changelog
-        </button>
+          <p>&copy; {new Date().getFullYear()} Lingua Cards. All Rights Reserved.</p>
       </footer>
     </div>
   );

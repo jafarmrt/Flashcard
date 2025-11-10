@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.0] - Centralized Settings & Customization
+
+-   **Feature:** Added a comprehensive "Settings" page to centralize application configuration and data management.
+-   **Feature:** Added theme customization. Users can now choose between Light, Dark, and System themes.
+-   **Feature:** Users can now set a default dictionary API source (Free Dictionary or Merriam-Webster) for new cards.
+-   **UI/UX:** Consolidated Import/Export and Cloud Sync functionality into the Settings page to declutter the main interface.
+-   **UI/UX:** Updated main navigation on both desktop and mobile to link to the new Settings page.
+-   **Feature:** Added a "Danger Zone" to the settings for resetting all local application data.
+
 ## [2.1.3] - Study View Reliability Fix
 
 -   **Fix:** Resolved a critical race condition that caused the "Study" view to fail or hang on startup. The component now waits for the flashcard data to be fully loaded before initializing the study session, ensuring it starts reliably every time.

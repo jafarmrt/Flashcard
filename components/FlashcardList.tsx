@@ -6,8 +6,6 @@ interface FlashcardListProps {
   decks: Deck[];
   onEdit: (card: Flashcard) => void;
   onDelete: (id: string) => void;
-  onExportCSV: (cards: Flashcard[]) => void;
-  onImportCSV: (csvText: string) => void;
   onBackToDecks: () => void;
 }
 
@@ -28,10 +26,9 @@ const formatDate = (isoString: string) => {
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 };
 
-const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onDelete, onExportCSV, onImportCSV, onBackToDecks }) => {
+const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onDelete, onBackToDecks }) => {
   const [sortConfig, setSortConfig] = useState<{ key: keyof Flashcard | 'deckName'; direction: 'ascending' | 'descending' }>({ key: 'dueDate', direction: 'ascending' });
   const [selectedDeckId, setSelectedDeckId] = useState<string>('all');
-  const importFileRef = useRef<HTMLInputElement>(null);
  
   const decksById = useMemo(() => new Map(decks.map(deck => [deck.id, deck.name])), [decks]);
 
@@ -61,23 +58,6 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
       });
     return sortableCards;
   }, [filteredCards, sortConfig, decksById]);
-
-  const handleImportClick = () => {
-    importFileRef.current?.click();
-  };
-
-  const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const text = e.target?.result as string;
-      onImportCSV(text);
-    };
-    reader.readAsText(file);
-    event.target.value = ''; // Reset file input
-  };
   
   const playAudio = (audioSrc: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -94,9 +74,7 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
     return (
       <div className="text-center py-20 bg-white dark:bg-slate-800 rounded-lg shadow-sm">
         <h2 className="text-2xl font-semibold text-slate-700 dark:text-slate-200">No flashcards yet!</h2>
-        <p className="mt-2 text-slate-500 dark:text-slate-400">Tap the '+' button to create your first one or use the "Sync" page to load cards from the cloud.</p>
-        <button onClick={handleImportClick} className="mt-4 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors">Import from CSV</button>
-        <input type="file" ref={importFileRef} onChange={handleFileImport} accept=".csv" className="hidden" />
+        <p className="mt-2 text-slate-500 dark:text-slate-400">Tap the '+' button to create your first one or visit the Settings page to import cards or sync from the cloud.</p>
       </div>
     );
   }
@@ -110,12 +88,9 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
             </button>
             <div className="flex items-center gap-2 w-full md:w-auto">
                 <select id="deck-filter" value={selectedDeckId} onChange={e => setSelectedDeckId(e.target.value)} className="block w-full max-w-xs pl-3 pr-10 py-2 text-base border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md">
-                    <option value="all">All Cards</option>
+                    <option value="all">All Cards ({cards.length})</option>
                     {decks.map(deck => <option key={deck.id} value={deck.id}>{deck.name}</option>)}
                 </select>
-                <input type="file" ref={importFileRef} onChange={handleFileImport} accept=".csv" className="hidden" />
-                <button onClick={handleImportClick} title="Import from CSV" className="px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">Import</button>
-                <button onClick={() => onExportCSV(sortedCards)} title="Export to CSV" className="px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">Export</button>
             </div>
         </div>
 

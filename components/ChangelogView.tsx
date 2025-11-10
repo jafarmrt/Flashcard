@@ -83,7 +83,7 @@ export const ChangelogView: React.FC<ChangelogViewProps> = ({ onBack }) => {
       )}
       <div className="text-center mt-6">
         <button onClick={onBack} className="px-6 py-2 rounded-lg bg-indigo-600 text-white font-semibold shadow-md hover:bg-indigo-700 transition-colors">
-          Back
+          Back to Settings
         </button>
       </div>
     </div>

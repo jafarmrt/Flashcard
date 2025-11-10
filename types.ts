@@ -35,3 +35,8 @@ export interface Flashcard {
   interval: number;
   dueDate: string; // ISO string
 }
+
+export interface Settings {
+    theme: 'light' | 'dark' | 'system';
+    defaultApiSource: 'free' | 'mw';
+}

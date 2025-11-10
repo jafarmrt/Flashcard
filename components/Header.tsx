@@ -1,40 +1,22 @@
 import React from 'react';
 
-// Fix: Add 'CHANGELOG' to the View type to match the definition in App.tsx.
-// This resolves a TypeScript error where the `currentView` prop, which could be 'CHANGELOG',
-// was not assignable to Header's more restrictive View type.
-type View = 'LIST' | 'STUDY' | 'STATS' | 'FORM' | 'PRACTICE' | 'SYNC' | 'DECKS' | 'CHANGELOG';
-type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
+// Fix: Add 'CHANGELOG' and 'SETTINGS' to the View type to match App.tsx.
+type View = 'LIST' | 'STUDY' | 'STATS' | 'FORM' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG';
 
 interface HeaderProps {
   onNavigate: (view: View) => void;
   onAddCard: () => void;
   isStudyDisabled: boolean;
   currentView: View;
-  syncStatus: SyncStatus;
 }
 
-const SyncStatusIcon: React.FC<{ status: SyncStatus }> = ({ status }) => {
-    switch (status) {
-        case 'syncing':
-            return <svg className="animate-spin h-4 w-4 text-slate-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>;
-        case 'synced':
-            return <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-green-500"><path d="M20 6 9 17l-5-5"/></svg>;
-        case 'error':
-            return <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red-500"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>;
-        default:
-            return null;
-    }
-}
-
-
-const Header: React.FC<HeaderProps> = ({ onNavigate, onAddCard, isStudyDisabled, currentView, syncStatus }) => {
+const Header: React.FC<HeaderProps> = ({ onNavigate, onAddCard, isStudyDisabled, currentView }) => {
   const navButtonStyle = "px-3 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2";
   const activeStyle = "bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100";
   const inactiveStyle = "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700";
 
   return (
-    <header className="bg-white dark:bg-slate-800/50 backdrop-blur-sm shadow-sm sticky top-0 z-10">
+    <header className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm shadow-sm sticky top-0 z-10">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           <div className="flex-shrink-0 flex items-center gap-3 cursor-pointer" onClick={() => onNavigate('DECKS')}>
@@ -80,11 +62,10 @@ const Header: React.FC<HeaderProps> = ({ onNavigate, onAddCard, isStudyDisabled,
               Stats
             </button>
             <button
-              onClick={() => onNavigate('SYNC')}
-              className={`${navButtonStyle} ${currentView === 'SYNC' ? activeStyle : inactiveStyle}`}
+              onClick={() => onNavigate('SETTINGS')}
+              className={`${navButtonStyle} ${currentView === 'SETTINGS' || currentView === 'CHANGELOG' ? activeStyle : inactiveStyle}`}
             >
-              <span>Sync</span>
-              <SyncStatusIcon status={syncStatus} />
+              Settings
             </button>
             <button
               onClick={onAddCard}
