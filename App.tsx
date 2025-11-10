@@ -649,7 +649,7 @@ const App: React.FC = () => {
             <StatusIndicator status={apiStatus} label="API"/>
          </div>
          <button onClick={() => handleNavigate('CHANGELOG')} className="hover:underline">
-            Version 2.0.8 - View Changelog
+            Version 2.0.7 - View Changelog
         </button>
       </footer>
     </div>
