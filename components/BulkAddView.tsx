@@ -90,10 +90,10 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                 };
             };
             
-            // Overall 7-second timeout for the entire word processing, providing a safety buffer.
+            // Overall 1-minute timeout for the entire word processing.
             const newCard = await Promise.race([
                 processWithTimeout(),
-                timeoutPromise(7000, 'Processing timed out after 7 seconds.')
+                timeoutPromise(60000, 'Processing timed out after 1 minute.')
             ]) as FlashcardFormData;
 
             if (isCancelledRef.current) return;

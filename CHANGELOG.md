@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.1] - Bulk Add Reliability
+- **Improvement:** Increased the processing timeout for each word in the "Bulk Add" feature from 7 seconds to 1 minute. This significantly improves the success rate for creating cards, especially on slower network connections or with more complex words.
+
 ## [3.0.0] - Gamification & Enhanced Study Experience
 - **Feature:** Added **Customizable Study Sessions**. Before starting a study session, users can now access a setup screen with the following options:
     - **Filter Cards:** Choose to study only "New Cards", only "Review Cards", or all cards that are "All Due Today".
