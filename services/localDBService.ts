@@ -53,6 +53,18 @@ export class LinguaCardsDB extends Dexie {
             profile.bio = '';
         });
     });
+
+    // Version 6: Add profileLastUpdated timestamp for smarter syncing
+    this.version(6).stores({
+        userProfile: 'id, firstName, lastName, bio' // Schema indexes are the same
+    }).upgrade(tx => {
+        console.log("Upgrading database to version 6, adding profileLastUpdated to userProfile.");
+        return tx.table('userProfile').toCollection().modify(profile => {
+            if (!profile.profileLastUpdated) {
+                profile.profileLastUpdated = new Date(0).toISOString(); // Set to epoch if it doesn't exist
+            }
+        });
+    });
   }
 }
 
@@ -61,5 +73,5 @@ export const db = new LinguaCardsDB();
 // Pre-populate with a default deck and user profile if none exist
 db.on('populate', async () => {
   await db.decks.add({ id: 'default', name: 'Default Deck' });
-  await db.userProfile.add({ id: 1, xp: 0, level: 1, lastStreakCheck: '', firstName: '', lastName: '', bio: '' });
+  await db.userProfile.add({ id: 1, xp: 0, level: 1, lastStreakCheck: '', firstName: '', lastName: '', bio: '', profileLastUpdated: new Date().toISOString() });
 });

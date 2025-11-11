@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.5.2] - Critical Profile Sync Fix
+- **Fix:** Resolved a critical data loss bug where user profile information (name, bio) would disappear after being saved. The issue was caused by an incorrect cloud sync logic that discarded text changes if the user's XP hadn't increased. The sync mechanism has been rebuilt to use a timestamp, ensuring that the most recently edited profile data is always preserved across all devices.
+
 ## [3.5.1] - Profile Editor Fix
 - **Fix:** Resolved a critical bug in the user profile editor where input fields would clear unexpectedly while typing. This was caused by the auto-sync feature refreshing data in the background. The form now correctly preserves user input during an edit session.
 

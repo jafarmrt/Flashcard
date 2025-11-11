@@ -21,6 +21,7 @@ export interface UserProfile {
   xp: number;
   level: number;
   lastStreakCheck: string; // ISO date string YYYY-MM-DD
+  profileLastUpdated?: string; // ISO string for timestamp
 }
 
 export interface Achievement {

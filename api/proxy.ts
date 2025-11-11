@@ -26,6 +26,10 @@ interface UserProfile {
   xp: number;
   level: number;
   lastStreakCheck: string;
+  firstName?: string;
+  lastName?: string;
+  bio?: string;
+  profileLastUpdated?: string;
 }
 interface UserAchievement {
   achievementId: string;
@@ -225,16 +229,31 @@ async function handleSyncMerge(payload: any, response: VercelResponse) {
   (clientData.studyHistory || []).forEach(log => studyHistoryMap.set(`${log.cardId}-${log.date}-${log.rating}`, log));
   const mergedStudyHistory = Array.from(studyHistoryMap.values());
 
-  // Merge User Profile: take the one with higher XP to prevent progress loss.
-  let mergedUserProfile: UserProfile | null = cloudData.userProfile;
-  if (clientData.userProfile) {
-    if (!mergedUserProfile || clientData.userProfile.xp > mergedUserProfile.xp) {
-      mergedUserProfile = clientData.userProfile;
-    } else if (clientData.userProfile.xp === mergedUserProfile.xp) {
-      if (new Date(clientData.userProfile.lastStreakCheck) > new Date(mergedUserProfile.lastStreakCheck || 0)) {
-        mergedUserProfile = clientData.userProfile;
-      }
-    }
+  // Merge User Profile: Use a timestamp to find the definitive source for name/bio.
+  let mergedUserProfile: UserProfile | null = null;
+  const cloudP = cloudData.userProfile;
+  const clientP = clientData.userProfile;
+
+  if (clientP && cloudP) {
+      const clientTimestamp = new Date(clientP.profileLastUpdated || 0);
+      const cloudTimestamp = new Date(cloudP.profileLastUpdated || 0);
+
+      const newerProfile = clientTimestamp >= cloudTimestamp ? clientP : cloudP;
+
+      mergedUserProfile = {
+          id: clientP.id,
+          // Always take the highest progress
+          xp: Math.max(clientP.xp, cloudP.xp),
+          level: Math.max(clientP.level, cloudP.level),
+          lastStreakCheck: (new Date(clientP.lastStreakCheck || 0) > new Date(cloudP.lastStreakCheck || 0)) ? clientP.lastStreakCheck : cloudP.lastStreakCheck,
+          // Take text fields from the profile that was updated more recently
+          firstName: newerProfile.firstName,
+          lastName: newerProfile.lastName,
+          bio: newerProfile.bio,
+          profileLastUpdated: newerProfile.profileLastUpdated
+      };
+  } else {
+      mergedUserProfile = clientP || cloudP;
   }
 
   // Merge User Achievements by creating a set to remove duplicates

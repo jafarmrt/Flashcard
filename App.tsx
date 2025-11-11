@@ -303,7 +303,7 @@ const App: React.FC = () => {
 
     let profile = await db.userProfile.get(1);
     if (!profile) {
-      profile = { id: 1, xp: 0, level: 1, lastStreakCheck: '', firstName: '', lastName: '', bio: '' };
+      profile = { id: 1, xp: 0, level: 1, lastStreakCheck: '', firstName: '', lastName: '', bio: '', profileLastUpdated: new Date().toISOString() };
       await db.userProfile.add(profile);
     }
     setUserProfile(profile);
@@ -637,7 +637,11 @@ const App: React.FC = () => {
 
   const handleSaveProfile = async (profileData: Partial<UserProfile>) => {
     if (!userProfile) return;
-    const updatedProfile = { ...userProfile, ...profileData };
+    const updatedProfile = { 
+      ...userProfile, 
+      ...profileData,
+      profileLastUpdated: new Date().toISOString() // Add/update the timestamp on every save
+    };
     await db.userProfile.put(updatedProfile);
     setUserProfile(updatedProfile);
     showToast("Profile updated successfully!");
