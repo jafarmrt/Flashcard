@@ -674,7 +674,8 @@ const App: React.FC = () => {
       // Get the most up-to-date list of cards for this deck directly from the database
       // to avoid race conditions with React state.
       const cardsInDeck = await db.flashcards.where('deckId').equals(deckId).toArray();
-      const cardIdsToSoftDelete = cardsInDeck.map(card => card.id);
+      // Fix: Explicitly cast the card variable to Flashcard to resolve the 'Property 'id' does not exist on type 'unknown'' error.
+      const cardIdsToSoftDelete = cardsInDeck.map(card => (card as Flashcard).id);
 
       // Use a transaction to ensure either all or none of the operations complete.
       await db.transaction('rw', db.flashcards, db.decks, async () => {

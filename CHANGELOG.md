@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.6] - Bulk Add Performance Diagnostics
+- **Feature:** Transformed the "Bulk Add" feature into a performance diagnostic tool to identify the root cause of timeout errors.
+- **Improvement:** The timeout for each word has been extended to 3 minutes to prevent premature failures and allow for complete data collection.
+- **UI/UX:** The "Review" screen is now a "Performance Report" dashboard. It displays a detailed breakdown of how long each API call (Dictionary, AI, Audio) took for every word, in milliseconds.
+- **Goal:** This tool will provide real-world data on API response times, enabling us to set an optimal, data-driven timeout value in a future release and permanently solve the timeout issue.
+
 ## [2.3.5] - Bulk Add Timeout & Parallelism Fix
 - **Fix:** Resolved a critical bug in the "Bulk Add" feature where all words would fail with a timeout error. The root cause was that API calls were being made sequentially (one after another), which took too long. The logic has been re-engineered to run the dictionary and AI API calls in parallel (at the same time), which drastically speeds up the process for each word.
 - **Improvement:** The overall timeout for each word has been increased from 5 to 7 seconds as a safety buffer, making the feature more resilient to slow network conditions.

@@ -1,5 +1,5 @@
-// Fix: Use a named import for Dexie to resolve type inheritance issues.
-import { Dexie, type Table } from 'dexie';
+// Fix: Use a default import for Dexie to resolve type inheritance issues, as the named import did not correctly establish the class prototype chain.
+import Dexie, { type Table } from 'dexie';
 import { Flashcard, Deck, StudyLog } from '../types';
 
 export class LinguaCardsDB extends Dexie {

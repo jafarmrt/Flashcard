@@ -5,11 +5,20 @@ import { fetchFromFreeDictionary, fetchFromMerriamWebster, fetchAudioData, Dicti
 
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted'>;
 type ProcessingStatus = 'pending' | 'loading' | 'done' | 'error' | 'timeout';
+
+interface PerformanceTimings {
+    dictionary?: number;
+    ai?: number;
+    audio?: number;
+    total?: number;
+}
+
 interface ProcessedWord {
     word: string;
     status: ProcessingStatus;
     card?: FlashcardFormData;
     error?: string;
+    timings: PerformanceTimings;
 }
 type DictionarySource = 'free' | 'mw';
 
@@ -28,8 +37,16 @@ const statusIcons = {
     timeout: <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-yellow-500"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
 };
 
-const timeoutPromise = (ms: number, message: string) => 
+// Fix: Explicitly type the return value as Promise<never> to aid TypeScript's inference for Promise.race. This resolves an issue where the race result was incorrectly typed as '{}'.
+const timeoutPromise = (ms: number, message: string): Promise<never> => 
     new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms));
+
+const measurePromise = async <T,>(promise: Promise<T>): Promise<{ result: T; duration: number }> => {
+    const startTime = performance.now();
+    const result = await promise;
+    const duration = performance.now() - startTime;
+    return { result, duration };
+};
 
 export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, showToast, defaultApiSource }) => {
     const [step, setStep] = useState<'input' | 'processing' | 'review'>('input');
@@ -42,38 +59,38 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
 
     const processSingleWord = useCallback(async (word: string, index: number) => {
         setProcessedWords(prev => prev.map((item, i) => i === index ? { ...item, status: 'loading' } : item));
+        
+        const overallStartTime = performance.now();
+        const timings: PerformanceTimings = {};
 
         try {
             const processWithTimeout = async () => {
-                // --- PARALLEL API CALLS ---
-                // Start both dictionary and AI fetches at the same time.
-
-                // Fix: Add an explicit return type to prevent `dictDetails` from being inferred as `unknown`.
                 const getDictionaryDetails = async (): Promise<DictionaryResult> => {
                     const primaryFetcher = defaultApiSource === 'free' ? fetchFromFreeDictionary : fetchFromMerriamWebster;
                     const secondaryFetcher = defaultApiSource === 'free' ? fetchFromMerriamWebster : fetchFromFreeDictionary;
                     try {
-                        // Race primary dictionary against a 2.5s timeout
                         return await Promise.race([
                             primaryFetcher(word),
                             timeoutPromise(2500, 'Primary dictionary API timed out.')
                         ]);
                     } catch (e) {
-                        // If it times out or fails, try the secondary
                         return await secondaryFetcher(word);
                     }
                 };
 
-                const dictionaryPromise = getDictionaryDetails();
-                const aiPromise = generatePersianDetails(word);
+                const { result: dictDetails, duration: dictDuration } = await measurePromise(getDictionaryDetails());
+                timings.dictionary = dictDuration;
 
-                // Wait for both parallel operations to complete
-                const [dictDetails, aiDetails] = await Promise.all([dictionaryPromise, aiPromise]);
-
-                // --- SEQUENTIAL AUDIO CALL (depends on dictionary results) ---
+                const { result: aiDetails, duration: aiDuration } = await measurePromise(generatePersianDetails(word));
+                timings.ai = aiDuration;
+                
                 let audioDataUrl: string | undefined = undefined;
                 if (dictDetails.audioUrl) {
-                    try { audioDataUrl = await fetchAudioData(dictDetails.audioUrl); } catch (audioError) { console.warn(`Could not fetch audio for ${word}`, audioError); }
+                    try { 
+                        const { result: audioResult, duration: audioDuration } = await measurePromise(fetchAudioData(dictDetails.audioUrl));
+                        audioDataUrl = audioResult;
+                        timings.audio = audioDuration;
+                    } catch (audioError) { console.warn(`Could not fetch audio for ${word}`, audioError); }
                 }
                 
                 return {
@@ -88,27 +105,28 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                 };
             };
             
-            // Overall 7-second timeout for the entire word processing, providing a safety buffer.
             const newCard = await Promise.race([
                 processWithTimeout(),
-                timeoutPromise(7000, 'Processing timed out after 7 seconds.')
+                timeoutPromise(180000, 'Processing timed out after 3 minutes.') // 3 minute timeout
             ]) as FlashcardFormData;
-
+            
+            timings.total = performance.now() - overallStartTime;
             if (isCancelledRef.current) return;
-            setProcessedWords(prev => prev.map((item, i) => i === index ? { ...item, status: 'done', card: newCard } : item));
+            setProcessedWords(prev => prev.map((item, i) => i === index ? { ...item, status: 'done', card: newCard, timings } : item));
 
         } catch (error) {
             if (isCancelledRef.current) return;
+            timings.total = performance.now() - overallStartTime;
             const errorMessage = (error instanceof Error) ? error.message : "An unknown error occurred.";
             const status: ProcessingStatus = errorMessage.toLowerCase().includes('timeout') ? 'timeout' : 'error';
-            setProcessedWords(prev => prev.map((item, i) => i === index ? { ...item, status, error: errorMessage } : item));
+            setProcessedWords(prev => prev.map((item, i) => i === index ? { ...item, status, error: errorMessage, timings } : item));
         }
     }, [defaultApiSource]);
 
 
     const handleProcessWords = async () => {
-        // Fix: Explicitly type `words` as `string[]` to ensure correct type inference downstream.
-        const words: string[] = [...new Set(wordsInput.split('\n').map(word => word.trim()).filter(Boolean))]; // Remove duplicates
+        // Fix: Rewrote Set creation to use Array.from() for more robust type inference, resolving an error where the result was incorrectly typed as 'unknown[]'.
+        const words: string[] = Array.from(new Set(wordsInput.split('\n').map(word => word.trim()).filter(Boolean)));
         if (words.length === 0) {
             showToast("Please enter at least one word.");
             return;
@@ -121,7 +139,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
         isCancelledRef.current = false;
         setIsProcessing(true);
         setStep('processing');
-        const initialProcessedWords: ProcessedWord[] = words.map(word => ({ word, status: 'pending' }));
+        const initialProcessedWords: ProcessedWord[] = words.map(word => ({ word, status: 'pending', timings: {} }));
         setProcessedWords(initialProcessedWords);
         
         const CONCURRENCY_LIMIT = 3;
@@ -177,7 +195,6 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
             onCancel();
         }
     };
-
 
     const renderInputStep = () => (
         <div className="max-w-3xl mx-auto bg-white dark:bg-slate-800 p-8 rounded-lg shadow-md">
@@ -249,44 +266,41 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
 
     const renderReviewStep = () => {
         const successCount = processedWords.filter(p => p.status === 'done').length;
-        const errorCount = processedWords.filter(p => p.status === 'error' || p.status === 'timeout').length;
         return (
             <div className="max-w-3xl mx-auto bg-white dark:bg-slate-800 p-8 rounded-lg shadow-md">
-                <h2 className="text-2xl font-bold mb-1 text-slate-800 dark:text-slate-100">Review & Save</h2>
+                <h2 className="text-2xl font-bold mb-1 text-slate-800 dark:text-slate-100">Performance Report</h2>
                 <p className="text-slate-600 dark:text-slate-400 mb-6">
-                    <span className="text-green-600 dark:text-green-400 font-semibold">{successCount} cards</span> ready to be saved. <span className="text-red-600 dark:text-red-400 font-semibold">{errorCount} words</span> failed.
+                    Analysis complete. Review the time taken for each word below to identify bottlenecks.
                 </p>
 
                 <div className="space-y-4 h-96 overflow-y-auto p-4 bg-slate-50 dark:bg-slate-900/50 rounded-lg">
-                    {successCount > 0 && (
-                        <div>
-                            <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-2">Ready to Save</h3>
-                            <ul className="space-y-2">
-                                {processedWords.filter(p => p.status === 'done').map((item, i) => (
-                                    <li key={i} className="flex justify-between items-center p-3 bg-white dark:bg-slate-800 rounded-md shadow-sm">
-                                        <span className="font-semibold">{item.word}</span>
-                                        <span className="text-slate-500 dark:text-slate-400">{item.card?.back}</span>
-                                    </li>
-                                ))}
-                            </ul>
-                        </div>
-                    )}
-                     {errorCount > 0 && (
-                        <div>
-                            <h3 className="text-lg font-semibold text-red-700 dark:text-red-400 mt-6 mb-2">Failed Words</h3>
-                             <ul className="space-y-2">
-                                {processedWords.filter(p => p.status === 'error' || p.status === 'timeout').map((item, i) => (
-                                    <li key={i} className="flex justify-between items-center p-3 bg-red-50 dark:bg-red-900/30 rounded-md">
-                                        <div>
-                                            <span className="font-semibold text-red-800 dark:text-red-200">{item.word}</span>
-                                            <span className="block text-xs text-red-600 dark:text-red-300 truncate">Reason: {item.error}</span>
-                                        </div>
-                                        <span className="text-xs font-mono px-2 py-1 bg-red-100 text-red-700 dark:bg-red-800 dark:text-red-200 rounded">{item.status}</span>
-                                    </li>
-                                ))}
-                            </ul>
-                        </div>
-                    )}
+                    {processedWords.map((item, i) => {
+                       const bgColor = item.status === 'done' 
+                           ? 'bg-white dark:bg-slate-800'
+                           : 'bg-red-50 dark:bg-red-900/30';
+                       const textColor = item.status === 'done' ? '' : 'text-red-800 dark:text-red-200';
+
+                       return (
+                        <details key={i} className={`p-3 rounded-md shadow-sm ${bgColor}`}>
+                            <summary className="flex justify-between items-center cursor-pointer">
+                                <div className="flex items-center gap-3">
+                                    {statusIcons[item.status]}
+                                    <span className={`font-semibold ${textColor}`}>{item.word}</span>
+                                </div>
+                                <div className="flex items-center gap-4">
+                                     <span className="text-xs font-mono px-2 py-1 bg-slate-200 dark:bg-slate-700 rounded">{item.status}</span>
+                                     <span className="text-sm font-semibold">{item.timings.total ? `${(item.timings.total / 1000).toFixed(2)}s` : 'N/A'}</span>
+                                </div>
+                            </summary>
+                            <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-700 text-sm text-slate-600 dark:text-slate-400 space-y-1">
+                                <p><strong>Dictionary:</strong> {item.timings.dictionary ? `${item.timings.dictionary.toFixed(0)}ms` : 'N/A'}</p>
+                                <p><strong>AI Generation:</strong> {item.timings.ai ? `${item.timings.ai.toFixed(0)}ms` : 'N/A'}</p>
+                                <p><strong>Audio Fetch:</strong> {item.timings.audio ? `${item.timings.audio.toFixed(0)}ms` : 'Not Available'}</p>
+                                {item.status !== 'done' && <p className="text-red-500 pt-2"><strong>Error:</strong> {item.error}</p>}
+                            </div>
+                        </details>
+                       )
+                    })}
                 </div>
                 
                 <div className="flex justify-end gap-4 pt-6">
