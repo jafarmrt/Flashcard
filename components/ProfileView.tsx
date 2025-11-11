@@ -22,7 +22,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, streak, o
   const [recentActivity, setRecentActivity] = useState<StudyLog[]>([]);
 
   useEffect(() => {
-    if (userProfile) {
+    // Only reset form data from props when NOT in edit mode.
+    // This prevents background syncs from overwriting user input.
+    if (userProfile && !isEditing) {
       setFormData({
         firstName: userProfile.firstName || '',
         lastName: userProfile.lastName || '',
@@ -36,12 +38,24 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, streak, o
     };
     fetchActivity();
 
-  }, [userProfile]);
+  }, [userProfile, isEditing]);
   
   const handleSave = () => {
       onSave(formData);
       setIsEditing(false);
   }
+
+  const handleCancel = () => {
+    // Revert form to its original state from props when cancelling
+    if (userProfile) {
+        setFormData({
+            firstName: userProfile.firstName || '',
+            lastName: userProfile.lastName || '',
+            bio: userProfile.bio || '',
+        });
+    }
+    setIsEditing(false);
+  };
 
   if (!userProfile) {
     return <div className="text-center p-10">Loading profile...</div>;
@@ -86,7 +100,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, streak, o
                     <textarea id="bio" rows={3} value={formData.bio} onChange={e => setFormData({...formData, bio: e.target.value})} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm" placeholder="Tell us a bit about your language learning goals..."></textarea>
                 </div>
                 <div className="flex justify-end gap-2">
-                    <button onClick={() => setIsEditing(false)} className="px-4 py-2 text-sm font-medium rounded-md">Cancel</button>
+                    <button onClick={handleCancel} className="px-4 py-2 text-sm font-medium rounded-md">Cancel</button>
                     <button onClick={handleSave} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md">Save Changes</button>
                 </div>
             </div>

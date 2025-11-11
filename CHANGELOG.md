@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.5.1] - Profile Editor Fix
+- **Fix:** Resolved a critical bug in the user profile editor where input fields would clear unexpectedly while typing. This was caused by the auto-sync feature refreshing data in the background. The form now correctly preserves user input during an edit session.
+
 ## [3.5.0] - User Profiles
 - **Feature:** Introduced User Profiles. Users can now add their first name, last name, and a short biography.
 - **Feature:** Each sync key now represents a unique user profile. This allows multiple users to use the same application on different devices by simply changing their Profile Key.
