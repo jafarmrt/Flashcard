@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.4] - Bulk Add Reliability & Speed
+- **Feature:** Overhauled the "Bulk Add" feature to be significantly faster and more reliable.
+- **Performance:** Implemented concurrent processing to fetch data for up to 3 words simultaneously, dramatically reducing the total time for large lists.
+- **Reliability:** Added a 5-second timeout for each word. If processing for a word gets stuck, it is automatically cancelled and the process moves to the next word.
+- **Reliability:** Implemented a smart dictionary fallback. If the primary dictionary API doesn't respond within 2.5 seconds, the system automatically tries the secondary API.
+- **UI/UX:** The UI now provides much clearer feedback during processing, showing the status of each word (e.g., loading, done, timeout, error).
+- **UI/UX:** At the end of the process, a summary report is shown, informing the user of how many cards were created successfully and how many failed.
+
 ## [2.3.3] - Cloud Sync Data Integrity Fix
 - **Fix:** Resolved a critical data integrity bug in the cloud sync feature where deleted cards and decks could reappear. The server-side merge logic was flawed, allowing devices with old data to "undelete" items. The logic is now "deletion-aware," ensuring that once an item is deleted, it stays deleted across all synced devices. This prevents "ghost" cards from appearing in the Study view and ensures data consistency.
 
