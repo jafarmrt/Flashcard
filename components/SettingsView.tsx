@@ -21,7 +21,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
     syncView
 }) => {
     const importFileRef = useRef<HTMLInputElement>(null);
-    const APP_VERSION = '2.3.1';
+    const APP_VERSION = '2.3.2';
 
     const handleImportClick = () => {
         importFileRef.current?.click();

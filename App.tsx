@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Flashcard, Deck, Settings } from './types';
 import { db } from './services/localDBService';
@@ -655,8 +656,8 @@ const App: React.FC = () => {
   }
 
   const handleRenameDeck = async (deckId: string, newName: string) => {
-    // Fix: The type of `d` is correctly inferred from `decks`, which is `Deck[]`. The explicit annotation was removed to prevent a type inference issue.
-    const existingDeck = decks.find(d => d.name.toLowerCase() === newName.toLowerCase() && !d.isDeleted);
+    // Fix: Explicitly type the parameter 'd' to resolve a potential type inference issue.
+    const existingDeck = decks.find((d: Deck) => d.name.toLowerCase() === newName.toLowerCase() && !d.isDeleted);
     if (existingDeck && existingDeck.id !== deckId) {
         showToast('A deck with this name already exists.');
         return;
@@ -668,20 +669,28 @@ const App: React.FC = () => {
   };
 
   const handleDeleteDeck = async (deckId: string) => {
-    // Soft delete the deck and all its cards
-    const cardIdsToSoftDelete = flashcards
-      .filter(card => card.deckId === deckId)
-      .map(card => card.id);
-    
-    const cardUpdates = cardIdsToSoftDelete.map(id => db.flashcards.update(id, { isDeleted: true }));
+    try {
+      // Get the most up-to-date list of cards for this deck directly from the database
+      // to avoid race conditions with React state.
+      const cardsInDeck = await db.flashcards.where('deckId').equals(deckId).toArray();
+      const cardIdsToSoftDelete = cardsInDeck.map(card => card.id);
 
-    await Promise.all([
-        ...cardUpdates,
-        db.decks.update(deckId, { isDeleted: true })
-    ]);
+      // Use a transaction to ensure either all or none of the operations complete.
+      await db.transaction('rw', db.flashcards, db.decks, async () => {
+          // Soft delete all cards in the deck
+          if (cardIdsToSoftDelete.length > 0) {
+              await db.flashcards.where('id').anyOf(cardIdsToSoftDelete).modify({ isDeleted: true });
+          }
+          // Soft delete the deck itself
+          await db.decks.update(deckId, { isDeleted: true });
+      });
 
-    await fetchData(); // Re-fetch to update state and trigger sync
-    showToast('Deck and its cards deleted successfully!');
+      await fetchData(); // Re-fetch to update state and trigger sync
+      showToast('Deck and its cards deleted successfully!');
+    } catch (error) {
+        console.error("Failed to delete deck:", error);
+        showToast("Error: Could not delete the deck.");
+    }
   };
 
   const visibleFlashcards = flashcards.filter(c => !c.isDeleted);
