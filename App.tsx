@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Flashcard, Deck, Settings, StudySessionOptions } from './types';
+import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile } from './types';
 import { db } from './services/localDBService';
+import { calculateLevel, calculateStreak } from './services/gamificationService';
 import Header from './components/Header';
 import FlashcardList from './components/FlashcardList';
 import FlashcardForm from './components/FlashcardForm';
@@ -262,6 +263,8 @@ const App: React.FC = () => {
   const [freeDictApiStatus, setFreeDictApiStatus] = useState<HealthStatus>('checking');
   const [mwDictApiStatus, setMwDictApiStatus] = useState<HealthStatus>('checking');
   const [settings, setSettings] = useState<Settings>(defaultSettings);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [streak, setStreak] = useState(0);
 
   
   const isInitialMount = useRef(true);
@@ -271,8 +274,59 @@ const App: React.FC = () => {
     const allDecks = await db.decks.toArray();
     setFlashcards(allCards);
     setDecks(allDecks);
+
+    let profile = await db.userProfile.get(1);
+    if (!profile) {
+      profile = { id: 1, xp: 0, level: 1, lastStreakCheck: '' };
+      await db.userProfile.add(profile);
+    }
+    setUserProfile(profile);
+
+    const allLogs = await db.studyHistory.toArray();
+    setStreak(calculateStreak(allLogs));
+    
     return { cards: allCards, decks: allDecks };
   };
+
+  const showToast = (message: string) => {
+    setToastMessage(message);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  const awardXP = async (points: number, message?: string) => {
+    if (!userProfile) return;
+    const newXp = userProfile.xp + points;
+    const { level } = calculateLevel(newXp);
+    
+    const updatedProfile: UserProfile = { ...userProfile, xp: newXp, level };
+    
+    if (level > userProfile.level) {
+        showToast(`Level Up! You reached Level ${level}! 🎉`);
+    } else {
+        showToast(message || `+${points} XP ✨`);
+    }
+    
+    await db.userProfile.put(updatedProfile);
+    setUserProfile(updatedProfile);
+  };
+
+  const checkStreakBonus = async () => {
+      if (!userProfile) return;
+      const today = new Date().toISOString().split('T')[0];
+      if (userProfile.lastStreakCheck === today) return; // Already checked today
+
+      const logs = await db.studyHistory.toArray();
+      const newStreak = calculateStreak(logs);
+
+      if (newStreak > streak) {
+          await awardXP(newStreak * 10, `Streak Bonus: ${newStreak} days! 🔥`);
+      }
+      
+      const updatedProfile = { ...userProfile, lastStreakCheck: today };
+      await db.userProfile.put(updatedProfile);
+      setUserProfile(updatedProfile);
+  };
+
 
   const handleLoadFromCloud = async () => {
     const key = localStorage.getItem('syncKey');
@@ -428,11 +482,6 @@ const App: React.FC = () => {
   }, [flashcards, decks, syncKey]);
 
 
-  const showToast = (message: string) => {
-    setToastMessage(message);
-    setTimeout(() => setToastMessage(null), 3000);
-  };
-  
   const updateSyncKey = (newKey: string) => {
       setSyncKey(newKey);
       localStorage.setItem('syncKey', newKey);
@@ -497,6 +546,7 @@ const App: React.FC = () => {
         dueDate: new Date().toISOString(),
       };
       await db.flashcards.add(newCard);
+      await awardXP(2, 'New Card Added!');
       showToast('Card added successfully!');
     }
     await fetchData();
@@ -532,6 +582,7 @@ const App: React.FC = () => {
 
     if (newCards.length > 0) {
         await db.flashcards.bulkAdd(newCards);
+        await awardXP(newCards.length * 2);
     }
     
     await fetchData();
@@ -662,6 +713,7 @@ const App: React.FC = () => {
   };
   
   const handleStartStudySession = (options: StudySessionOptions) => {
+    checkStreakBonus();
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayISOString = today.toISOString();
@@ -760,9 +812,9 @@ const App: React.FC = () => {
   const renderContent = () => {
     switch (view) {
       case 'STUDY':
-        return <StudyView cards={studyCards} onExit={handleSessionEnd} />;
+        return <StudyView cards={studyCards} onExit={handleSessionEnd} awardXP={awardXP} />;
       case 'PRACTICE':
-        return <PracticeView cards={visibleFlashcards} />;
+        return <PracticeView cards={visibleFlashcards} awardXP={awardXP} />;
       case 'SETTINGS':
         return <SettingsView 
             settings={settings}
@@ -791,6 +843,8 @@ const App: React.FC = () => {
             onDeleteDeck={handleDeleteDeck}
             onViewAllCards={() => setView('LIST')}
             onBulkAdd={() => setView('BULK_ADD')}
+            userProfile={userProfile}
+            streak={streak}
         />;
       case 'FORM':
         const editingCardDeckName = visibleDecks.find(d => d.id === editingCard?.deckId)?.name || '';

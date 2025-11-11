@@ -6,6 +6,7 @@ import { generateInstructionalQuiz, InstructionalQuizQuestion } from '../service
 
 interface PracticeViewProps {
   cards: Flashcard[];
+  awardXP: (points: number) => void;
 }
 
 // Fix: Make the shuffle function specific to Flashcard[] to avoid generic type inference issues.
@@ -13,7 +14,7 @@ const shuffleArray = (array: Flashcard[]): Flashcard[] => {
   return [...array].sort(() => Math.random() - 0.5);
 };
 
-export const PracticeView: React.FC<PracticeViewProps> = ({ cards }) => {
+export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP }) => {
   type PracticeState = 'idle' | 'generating' | 'active' | 'finished';
 
   const [practiceState, setPracticeState] = useState<PracticeState>('idle');
@@ -67,6 +68,7 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards }) => {
       setIsAnswered(false);
     } else {
       setPracticeState('finished');
+      awardXP(score * 5); // Award 5 XP per correct answer
     }
   };
   

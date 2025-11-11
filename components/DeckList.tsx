@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Deck, Flashcard } from '../types';
+import { Deck, Flashcard, UserProfile } from '../types';
+import { StreakCounter, LevelProgressBar } from './GamificationWidgets';
 
 interface DeckListProps {
     decks: Deck[];
@@ -9,6 +10,8 @@ interface DeckListProps {
     onDeleteDeck: (deckId: string) => Promise<void>;
     onViewAllCards: () => void;
     onBulkAdd: () => void;
+    userProfile: UserProfile | null;
+    streak: number;
 }
 
 const StudyIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>;
@@ -87,7 +90,7 @@ const DeckCard: React.FC<{
 };
 
 
-const DeckList: React.FC<DeckListProps> = ({ decks, cards, onStudyDeck, onRenameDeck, onDeleteDeck, onViewAllCards, onBulkAdd }) => {
+const DeckList: React.FC<DeckListProps> = ({ decks, cards, onStudyDeck, onRenameDeck, onDeleteDeck, onViewAllCards, onBulkAdd, userProfile, streak }) => {
     
     if (decks.length === 0) {
         return (
@@ -115,6 +118,12 @@ const DeckList: React.FC<DeckListProps> = ({ decks, cards, onStudyDeck, onRename
 
     return (
         <div>
+            {userProfile && (
+                <div className="mb-8 p-4 bg-white dark:bg-slate-800 rounded-lg shadow-sm flex flex-col md:flex-row items-center gap-4 md:gap-6">
+                    <StreakCounter streak={streak} />
+                    <LevelProgressBar userProfile={userProfile} />
+                </div>
+            )}
             <div className="flex flex-col sm:flex-row justify-between sm:items-center mb-6 gap-4">
                  <h2 className="text-3xl font-bold text-slate-800 dark:text-slate-100">Your Decks</h2>
                  <div className="flex items-center gap-2">

@@ -13,6 +13,13 @@ export interface StudyLog {
   rating: PerformanceRating;
 }
 
+export interface UserProfile {
+  id: number; // primary key, always 1 for the single user
+  xp: number;
+  level: number;
+  lastStreakCheck: string; // ISO date string YYYY-MM-DD
+}
+
 
 export interface Flashcard {
   id: string;

@@ -1,47 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../services/localDBService';
 import { Flashcard, StudyLog } from '../types';
+import { calculateStreak } from '../services/gamificationService';
 
 interface Stats {
   streak: number;
   activity: { date: string; count: number }[];
   difficultCards: Flashcard[];
 }
-
-const calculateStreak = (logs: StudyLog[]): number => {
-  if (logs.length === 0) return 0;
-
-  const uniqueDates = [...new Set(logs.map(log => log.date))].sort().reverse();
-  const today = new Date();
-  const yesterday = new Date();
-  yesterday.setDate(today.getDate() - 1);
-
-  const todayStr = today.toISOString().split('T')[0];
-  const yesterdayStr = yesterday.toISOString().split('T')[0];
-
-  let streak = 0;
-  let currentDate = new Date();
-
-  // Check if today or yesterday is the last study day
-  if (uniqueDates[0] === todayStr || uniqueDates[0] === yesterdayStr) {
-    currentDate = new Date(uniqueDates[0]);
-    streak = 1;
-  } else {
-    return 0; // Streak is broken
-  }
-  
-  for (let i = 1; i < uniqueDates.length; i++) {
-    const prevDate = new Date(currentDate);
-    prevDate.setDate(prevDate.getDate() - 1);
-    if (uniqueDates[i] === prevDate.toISOString().split('T')[0]) {
-      streak++;
-      currentDate = prevDate;
-    } else {
-      break;
-    }
-  }
-  return streak;
-};
 
 const calculateActivity = (logs: StudyLog[]): { date: string; count: number }[] => {
   const last7Days: { date: string; count: number }[] = [];

@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.2.0] - Gamification: XP, Levels & Streaks
+- **Feature:** Introduced the first phase of gamification to make learning more engaging.
+- **XP & Levels:** Users now earn Experience Points (XP) for completing activities like studying cards, creating new cards, and finishing practice quizzes. Gaining XP increases your user level.
+- **UI/UX:** Added a new progress bar and level indicator on the main "Decks" screen to visualize your learning journey.
+- **Streak Display:** The daily study streak is now prominently displayed with a flame icon on the main screen to provide daily motivation.
+- **Database:** Added a new `userProfile` table to the local database to store gamification progress.
+
 ## [3.1.1] - Theme Switching Fix
 - **Fix:** Resolved a critical bug where the theme switcher (Light/Dark/System) in the Settings page was not working. The application's Tailwind CSS configuration was missing the necessary `darkMode: 'class'` setting, which prevented the theme from being applied correctly.
 - **Improvement:** The 'System' theme option is now more responsive. It will now automatically update the app's theme in real-time if the user changes their operating system's theme, without requiring a page refresh.
