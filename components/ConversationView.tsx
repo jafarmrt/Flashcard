@@ -134,11 +134,6 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards }) => {
           <div className="bg-indigo-600 h-2.5 rounded-full" style={{ width: `${((currentIndex + 1) / questions.length) * 100}%` }}></div>
         </div>
       </div>
-      
-      <div className="bg-slate-50 dark:bg-slate-700/50 p-4 rounded-lg my-6">
-          <p className="text-sm text-slate-600 dark:text-slate-400 font-semibold mb-1">Context:</p>
-          <p className="text-md italic text-slate-800 dark:text-slate-200">"{currentQuestion.sourceSentence}"</p>
-      </div>
 
       <div className="text-center my-4">
         <h2 className="text-xl font-bold my-2 text-slate-800 dark:text-slate-100">{currentQuestion.questionText}</h2>
@@ -169,11 +164,17 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards }) => {
         })}
       </div>
       {isAnswered && (
-        <div className="text-center mt-6">
-            <button onClick={handleNext} className="px-10 py-3 text-white bg-indigo-600 rounded-lg shadow hover:bg-indigo-700">
-                {currentIndex < questions.length - 1 ? 'Next' : 'Finish'}
-            </button>
-        </div>
+        <>
+            <div className="bg-slate-50 dark:bg-slate-700/50 p-4 rounded-lg my-6 animate-flip-in">
+                <p className="text-sm text-slate-600 dark:text-slate-400 font-semibold mb-1">Context:</p>
+                <p className="text-md italic text-slate-800 dark:text-slate-200">"{currentQuestion.sourceSentence}"</p>
+            </div>
+            <div className="text-center mt-6">
+                <button onClick={handleNext} className="px-10 py-3 text-white bg-indigo-600 rounded-lg shadow hover:bg-indigo-700">
+                    {currentIndex < questions.length - 1 ? 'Next' : 'Finish'}
+                </button>
+            </div>
+        </>
       )}
     </div>
   );

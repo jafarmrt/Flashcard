@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.7] - Practice Quiz Gameplay Fix
+- **Fix:** Corrected an issue in the "Practice" quiz where the context sentence, which often contained the answer, was shown before the user selected an option. The context is now revealed only after an answer is submitted, improving the quality of the quiz.
+
 ## [2.3.6] - Practice Quiz Timeout Fix
 - **Fix:** Resolved a persistent timeout error in the "Practice" feature. The AI prompt for generating quiz questions was overly complex, causing delays.
 - **Improvement:** The AI prompt has been simplified to be more direct, reducing processing time.

@@ -1,5 +1,6 @@
 // Fix: Use a default import for Dexie to resolve type inheritance issues.
-import Dexie, { type Table } from 'dexie';
+import Dexie from 'dexie';
+import type { Table } from 'dexie';
 import { Flashcard, Deck, StudyLog } from '../types';
 
 export class LinguaCardsDB extends Dexie {

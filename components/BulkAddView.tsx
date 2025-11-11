@@ -28,8 +28,10 @@ const statusIcons = {
     timeout: <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-yellow-500"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
 };
 
+// Fix: Explicitly type the Promise to return `never` on success, as it only ever rejects.
+// This ensures that when used in `Promise.race`, it doesn't widen the result type.
 const timeoutPromise = (ms: number, message: string) => 
-    new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms));
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(message)), ms));
 
 export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, showToast, defaultApiSource }) => {
     const [step, setStep] = useState<'input' | 'processing' | 'review'>('input');
@@ -107,8 +109,8 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
 
 
     const handleProcessWords = async () => {
-        // Fix: Explicitly type `words` as `string[]` to ensure correct type inference downstream.
-        const words: string[] = [...new Set(wordsInput.split('\n').map(word => word.trim()).filter(Boolean))]; // Remove duplicates
+        // Fix: Explicitly type `words` as `string[]` and use `Array.from` to ensure correct type inference.
+        const words: string[] = Array.from(new Set(wordsInput.split('\n').map(word => word.trim()).filter(Boolean))); // Remove duplicates
         if (words.length === 0) {
             showToast("Please enter at least one word.");
             return;
