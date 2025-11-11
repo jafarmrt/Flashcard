@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.5.0] - User Profiles
+- **Feature:** Introduced User Profiles. Users can now add their first name, last name, and a short biography.
+- **Feature:** Each sync key now represents a unique user profile. This allows multiple users to use the same application on different devices by simply changing their Profile Key.
+- **UI/UX:** Added a new "Profile" page, accessible from Settings, to view and edit user details, see progress statistics (Level, XP, Streak), and review recent activity.
+- **Improvement:** The "Cloud Sync" feature has been rebranded as "Profile Sync". The UI now makes it clear that loading a new key will switch the active user profile, replacing all local data. This creates a robust multi-user experience.
+
 ## [3.4.0] - Comprehensive Cloud Sync Fix
 - **Fix:** Resolved a critical data synchronization bug where user progress (study streak, XP, level, and achievements) was not synced between devices. The sync logic has been completely overhauled to include `studyHistory`, `userProfile`, and `userAchievements` data in addition to cards and decks.
 - **Improvement:** The server-side merge logic is now more intelligent, combining study logs from all devices and ensuring the user profile with the most progress (highest XP) is kept, preventing data loss.

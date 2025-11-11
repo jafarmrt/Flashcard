@@ -15,6 +15,9 @@ export interface StudyLog {
 
 export interface UserProfile {
   id: number; // primary key, always 1 for the single user
+  firstName?: string;
+  lastName?: string;
+  bio?: string;
   xp: number;
   level: number;
   lastStreakCheck: string; // ISO date string YYYY-MM-DD

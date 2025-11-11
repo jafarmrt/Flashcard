@@ -9,6 +9,7 @@ interface SettingsViewProps {
     onResetApp: () => void;
     onNavigateToChangelog: () => void;
     onNavigateToAchievements: () => void;
+    onNavigateToProfile: () => void;
     syncView: React.ReactNode;
 }
 
@@ -20,10 +21,11 @@ const SettingsView: React.FC<SettingsViewProps> = ({
     onResetApp,
     onNavigateToChangelog,
     onNavigateToAchievements,
+    onNavigateToProfile,
     syncView
 }) => {
     const importFileRef = useRef<HTMLInputElement>(null);
-    const APP_VERSION = '3.4.0';
+    const APP_VERSION = '3.5.0';
 
     const handleImportClick = () => {
         importFileRef.current?.click();
@@ -59,6 +61,11 @@ const SettingsView: React.FC<SettingsViewProps> = ({
             {/* General Settings */}
             <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm overflow-hidden">
                 <h3 className="text-lg font-bold p-4 bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-700">General</h3>
+                <SettingRow title="Profile" description="Manage your personal information and view your progress.">
+                     <button onClick={onNavigateToProfile} className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">
+                        View Profile
+                    </button>
+                </SettingRow>
                 <SettingRow title="App Version" description="Current version of the application.">
                     <div className="flex items-center gap-2">
                          <span className="px-3 py-1 bg-slate-200 dark:bg-slate-700 text-sm font-medium rounded-full">{APP_VERSION}</span>

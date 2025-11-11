@@ -41,6 +41,18 @@ export class LinguaCardsDB extends Dexie {
       console.log("Upgrading database to version 4, adding userAchievements table.");
       return;
     });
+
+    // Version 5 Schema (Adds profile fields to userProfile)
+    this.version(5).stores({
+        userProfile: 'id, firstName, lastName, bio'
+    }).upgrade(tx => {
+        console.log("Upgrading database to version 5, adding profile fields to userProfile table.");
+        return tx.table('userProfile').toCollection().modify(profile => {
+            profile.firstName = '';
+            profile.lastName = '';
+            profile.bio = '';
+        });
+    });
   }
 }
 
@@ -49,5 +61,5 @@ export const db = new LinguaCardsDB();
 // Pre-populate with a default deck and user profile if none exist
 db.on('populate', async () => {
   await db.decks.add({ id: 'default', name: 'Default Deck' });
-  await db.userProfile.add({ id: 1, xp: 0, level: 1, lastStreakCheck: '' });
+  await db.userProfile.add({ id: 1, xp: 0, level: 1, lastStreakCheck: '', firstName: '', lastName: '', bio: '' });
 });

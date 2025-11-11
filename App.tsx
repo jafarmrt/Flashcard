@@ -16,8 +16,9 @@ import SettingsView from './components/SettingsView';
 import { BulkAddView } from './components/BulkAddView';
 import { StudySetupModal } from './components/StudySetupModal';
 import { AchievementsView } from './components/AchievementsView';
+import { ProfileView } from './components/ProfileView';
 
-type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS';
+type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS' | 'PROFILE';
 type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 type HealthStatus = 'ok' | 'error' | 'checking';
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted'>;
@@ -40,13 +41,16 @@ const callProxy = async (action: 'sync-save' | 'sync-load' | 'sync-merge' | 'pin
 // --- SyncView Component (Now nested inside Settings) ---
 export const SyncView: React.FC<{ 
     syncKey: string;
-    setSyncKey: (key: string) => void;
+    onSwitchProfile: (newKey: string) => void;
     syncStatus: SyncStatus;
     lastSyncDate: string | null;
-    onLoadFromCloud: () => Promise<void>;
     showToast: (message: string) => void;
-}> = ({ syncKey, setSyncKey, syncStatus, lastSyncDate, onLoadFromCloud, showToast }) => {
-  const [isLoading, setIsLoading] = useState(false);
+}> = ({ syncKey, onSwitchProfile, syncStatus, lastSyncDate, showToast }) => {
+  const [pendingKey, setPendingKey] = useState(syncKey);
+
+  useEffect(() => {
+    setPendingKey(syncKey);
+  }, [syncKey]);
 
   const generateNewKey = () => {
     const adjectives = ['happy', 'blue', 'green', 'brave', 'calm', 'bright', 'clever', 'eager', 'gentle', 'gold', 'silver', 'red'];
@@ -55,32 +59,33 @@ export const SyncView: React.FC<{
     const noun = nouns[Math.floor(Math.random() * nouns.length)];
     const num = Math.floor(Math.random() * 100);
     const newKey = `${adj}-${noun}-${num}`;
-    setSyncKey(newKey);
-    showToast('New Sync Key generated and saved!');
+    setPendingKey(newKey);
+    showToast('New Profile Key generated!');
   };
 
-  const handleLoad = async () => {
-    if (!syncKey) {
-      showToast('Please enter your Sync Key first.');
+  const handleSwitch = () => {
+    if (!pendingKey) {
+      showToast('Please enter or generate a Profile Key.');
       return;
     }
-    if (!confirm('This will overwrite all local data with the data from the cloud. This is intended for setting up a new device. Are you sure?')) {
-      return;
+    if (pendingKey === syncKey) {
+        showToast('This is your current profile key.');
+        return;
     }
-    setIsLoading(true);
-    await onLoadFromCloud();
-    setIsLoading(false);
+    if (confirm('Switching profiles will ERASE all data on this device and replace it with data from the new profile. Are you sure?')) {
+      onSwitchProfile(pendingKey);
+    }
   };
   
   const handleKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const newKey = e.target.value.toLowerCase().replace(/\s+/g, '-');
-      setSyncKey(newKey);
+      setPendingKey(newKey);
   }
 
   const getStatusText = () => {
     switch(syncStatus) {
-        case 'syncing': return { text: 'Syncing changes...', icon: '🔄', color: 'text-slate-500 dark:text-slate-400 animate-pulse' };
-        case 'synced': return { text: `Synced`, icon: '✅', color: 'text-green-600 dark:text-green-400' };
+        case 'syncing': return { text: 'Syncing profile...', icon: '🔄', color: 'text-slate-500 dark:text-slate-400 animate-pulse' };
+        case 'synced': return { text: `Profile synced`, icon: '✅', color: 'text-green-600 dark:text-green-400' };
         case 'error': return { text: 'Sync failed. Check connection.', icon: '⚠️', color: 'text-red-600 dark:text-red-400' };
         default: return { text: 'Changes are saved locally.', icon: '🏠', color: 'text-slate-500 dark:text-slate-400' };
     }
@@ -90,26 +95,26 @@ export const SyncView: React.FC<{
 
   return (
     <div className="bg-slate-100 dark:bg-slate-900/50 p-6 rounded-lg space-y-6 border border-slate-200 dark:border-slate-700">
-        <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100">Automatic Cloud Sync</h3>
+        <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100">Profile Sync</h3>
         <p className="text-slate-600 dark:text-slate-400 text-sm">
-            Your data is saved automatically to the cloud. Use the Sync Key below to access your data on other devices.
-            <strong className="block mt-2">Important: Save your key! It's the only way to access your data.</strong>
+            Your profile is automatically saved to the cloud. Use your key to access your profile on other devices.
+            <strong className="block mt-2">Important: Save your key! It's the only way to access your profile.</strong>
         </p>
         
         <div>
-            <label htmlFor="sync-key" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Your Sync Key</label>
+            <label htmlFor="sync-key" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Your Profile Key</label>
             <div className="mt-1 flex gap-2">
                 <input 
                     type="text" 
                     id="sync-key"
-                    value={syncKey}
+                    value={pendingKey}
                     onChange={handleKeyChange}
                     className="flex-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                    placeholder="enter-your-key-here"
+                    placeholder="enter-your-profile-key"
                 />
-                <button onClick={() => navigator.clipboard.writeText(syncKey)} className="px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-200 dark:hover:bg-slate-600">Copy</button>
+                <button onClick={() => navigator.clipboard.writeText(pendingKey)} className="px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-200 dark:hover:bg-slate-600">Copy</button>
             </div>
-             {!syncKey && (
+             {!pendingKey && (
                 <button onClick={generateNewKey} className="mt-2 text-sm text-indigo-600 dark:text-indigo-400 hover:underline">
                     Don't have a key? Generate one.
                 </button>
@@ -117,13 +122,13 @@ export const SyncView: React.FC<{
         </div>
         
         <div className="border-t border-slate-200 dark:border-slate-700 pt-6 space-y-4">
-            <h4 className="text-md font-medium text-slate-800 dark:text-slate-100">New Device Setup</h4>
+            <h4 className="text-md font-medium text-slate-800 dark:text-slate-100">Switch Profile</h4>
             <p className="text-sm text-slate-600 dark:text-slate-400">
-                If you're on a new device, enter your key above and click here to load your data. This will replace any data currently on this device.
+                To load a different profile, enter its key above and click the button below. Warning: This will replace all data on this device.
             </p>
-            <button onClick={handleLoad} disabled={isLoading || !syncKey} className="w-full flex justify-center items-center gap-2 px-4 py-3 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors disabled:opacity-50 disabled:cursor-wait">
+            <button onClick={handleSwitch} disabled={!pendingKey} className="w-full flex justify-center items-center gap-2 px-4 py-3 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 border border-transparent rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                Load & Overwrite Local Data
+                Load Profile & Overwrite Local Data
             </button>
         </div>
 
@@ -221,7 +226,7 @@ const BottomNav: React.FC<{
   
   const isActive = (view: View) => {
       if (view === 'DECKS' && ['LIST', 'DECKS', 'FORM', 'BULK_ADD'].includes(currentView)) return true;
-      if (view === 'SETTINGS' && ['SETTINGS', 'CHANGELOG', 'ACHIEVEMENTS'].includes(currentView)) return true;
+      if (view === 'SETTINGS' && ['SETTINGS', 'CHANGELOG', 'ACHIEVEMENTS', 'PROFILE'].includes(currentView)) return true;
       return currentView === view;
   }
 
@@ -282,7 +287,7 @@ const App: React.FC = () => {
 
     let profile = await db.userProfile.get(1);
     if (!profile) {
-      profile = { id: 1, xp: 0, level: 1, lastStreakCheck: '' };
+      profile = { id: 1, xp: 0, level: 1, lastStreakCheck: '', firstName: '', lastName: '', bio: '' };
       await db.userProfile.add(profile);
     }
     setUserProfile(profile);
@@ -360,8 +365,7 @@ const App: React.FC = () => {
   };
 
 
-  const handleLoadFromCloud = async () => {
-    const key = localStorage.getItem('syncKey');
+  const handleLoadFromCloud = async (key: string) => {
     if (!key) return;
 
     setSyncStatus('syncing');
@@ -369,7 +373,8 @@ const App: React.FC = () => {
       const response = await callProxy('sync-load', { syncKey: key });
       if (response.data) {
         const { decks, cards, studyHistory, userProfile, userAchievements } = response.data;
-        await db.transaction('rw', db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements, async () => {
+        // Fix: Pass tables as an array to db.transaction to avoid exceeding argument limits.
+        await db.transaction('rw', [db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements], async () => {
             await db.decks.clear();
             await db.flashcards.clear();
             await db.studyHistory.clear();
@@ -383,15 +388,15 @@ const App: React.FC = () => {
             if (userAchievements) await db.userAchievements.bulkPut(userAchievements);
         });
         await fetchData(); // Refresh state from DB
-        showToast('Data loaded successfully from cloud!');
+        showToast('Profile loaded successfully from cloud!');
         setSyncStatus('synced');
       } else {
-        showToast('No data found in the cloud for this key.');
+        showToast('No cloud data found for this profile. Starting fresh.');
         setSyncStatus('idle');
       }
     } catch (error) {
       console.error("Failed to load from cloud", error);
-      showToast('Failed to load data from cloud. Using local data.');
+      showToast('Failed to load profile from cloud. Using local data.');
       setSyncStatus('error');
     }
   };
@@ -412,7 +417,11 @@ const App: React.FC = () => {
     }
 
     const initialLoad = async () => {
+        await db.open(); // Ensure DB is open
         await fetchData();
+        if (savedKey) {
+          await handleLoadFromCloud(savedKey);
+        }
         setDbStatus(db.isOpen() ? 'ok' : 'error');
     };
     initialLoad().then(() => {
@@ -497,7 +506,8 @@ const App: React.FC = () => {
         const { data: mergedData } = response;
 
         if (mergedData) {
-            await db.transaction('rw', db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements, async () => {
+            // Fix: Pass tables as an array to db.transaction to avoid exceeding argument limits.
+            await db.transaction('rw', [db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements], async () => {
                 await db.decks.clear();
                 await db.flashcards.clear();
                 await db.studyHistory.clear();
@@ -528,11 +538,12 @@ const App: React.FC = () => {
     };
   }, [flashcards, decks, syncKey, userProfile, earnedAchievements]);
 
-
-  const updateSyncKey = (newKey: string) => {
-      setSyncKey(newKey);
-      localStorage.setItem('syncKey', newKey);
-  }
+  const handleSwitchProfile = async (newKey: string) => {
+    await db.delete();
+    localStorage.clear();
+    localStorage.setItem('syncKey', newKey);
+    window.location.reload();
+  };
   
   const updateSettings = (newSettings: Partial<Settings>) => {
       setSettings(prev => {
@@ -596,6 +607,14 @@ const App: React.FC = () => {
     handleCheckAchievements();
     setEditingCard(null);
     setView('DECKS');
+  };
+
+  const handleSaveProfile = async (profileData: Partial<UserProfile>) => {
+    if (!userProfile) return;
+    const updatedProfile = { ...userProfile, ...profileData };
+    await db.userProfile.put(updatedProfile);
+    setUserProfile(updatedProfile);
+    showToast("Profile updated successfully!");
   };
   
   const handleBulkSaveCards = async (cardsToSave: FlashcardFormData[], deckName: string) => {
@@ -871,13 +890,13 @@ const App: React.FC = () => {
             onResetApp={handleResetApp}
             onNavigateToChangelog={() => setView('CHANGELOG')}
             onNavigateToAchievements={() => setView('ACHIEVEMENTS')}
+            onNavigateToProfile={() => setView('PROFILE')}
             syncView={
                 <SyncView 
                     syncKey={syncKey} 
-                    setSyncKey={updateSyncKey} 
+                    onSwitchProfile={handleSwitchProfile}
                     syncStatus={syncStatus} 
                     lastSyncDate={lastSyncDate}
-                    onLoadFromCloud={handleLoadFromCloud}
                     showToast={showToast}
                 />
             }
@@ -911,6 +930,8 @@ const App: React.FC = () => {
         return <ChangelogView onBack={() => setView('SETTINGS')} />;
       case 'ACHIEVEMENTS':
         return <AchievementsView earnedAchievements={earnedAchievements} onBack={() => setView('SETTINGS')} />;
+      case 'PROFILE':
+        return <ProfileView userProfile={userProfile} streak={streak} onSave={handleSaveProfile} onBack={() => setView('SETTINGS')} />;
       case 'BULK_ADD':
         return <BulkAddView 
             onSave={handleBulkSaveCards}
