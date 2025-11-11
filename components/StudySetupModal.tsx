@@ -22,6 +22,8 @@ export const StudySetupModal: React.FC<StudySetupModalProps> = ({ isOpen, onClos
         return cards.filter(c => c.repetition === 0);
       case 'review':
         return cards.filter(c => c.repetition > 0 && c.dueDate <= todayISOString);
+      case 'all-cards':
+        return cards; // No filter, return all cards
       case 'all-due':
       default:
         return cards.filter(c => c.dueDate <= todayISOString);
@@ -39,6 +41,13 @@ export const StudySetupModal: React.FC<StudySetupModalProps> = ({ isOpen, onClos
 
   const cardCount = filteredCards.length;
   const sessionSize = limit > 0 ? Math.min(cardCount, limit) : cardCount;
+  
+  const filterOptions: { id: StudySessionOptions['filter']; label: string }[] = [
+    { id: 'all-due', label: 'All Due Cards' },
+    { id: 'new', label: 'New Cards Only' },
+    { id: 'review', label: 'Review Cards Only' },
+    { id: 'all-cards', label: 'Study All Cards (Cram)' },
+  ];
 
   return (
     <div 
@@ -63,18 +72,18 @@ export const StudySetupModal: React.FC<StudySetupModalProps> = ({ isOpen, onClos
                 <div>
                     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Show Me</label>
                     <div className="space-y-2">
-                        {(['all-due', 'new', 'review'] as const).map(f => (
-                            <label key={f} className="flex items-center p-3 rounded-lg bg-slate-50 dark:bg-slate-700/50 has-[:checked]:bg-indigo-50 dark:has-[:checked]:bg-indigo-900/30 has-[:checked]:ring-2 has-[:checked]:ring-indigo-500 transition-all">
+                        {filterOptions.map(({ id, label }) => (
+                            <label key={id} className="flex items-center p-3 rounded-lg bg-slate-50 dark:bg-slate-700/50 has-[:checked]:bg-indigo-50 dark:has-[:checked]:bg-indigo-900/30 has-[:checked]:ring-2 has-[:checked]:ring-indigo-500 transition-all">
                                 <input 
                                     type="radio"
                                     name="filter"
-                                    value={f}
-                                    checked={filter === f}
-                                    onChange={() => setFilter(f)}
+                                    value={id}
+                                    checked={filter === id}
+                                    onChange={() => setFilter(id)}
                                     className="h-4 w-4 text-indigo-600 border-slate-300 dark:border-slate-600 focus:ring-indigo-500 bg-transparent"
                                 />
                                 <span className="ml-3 block text-sm font-medium text-slate-800 dark:text-slate-200">
-                                    {f === 'all-due' ? 'All Due Cards' : f === 'new' ? 'New Cards Only' : 'Review Cards Only'}
+                                    {label}
                                 </span>
                             </label>
                         ))}

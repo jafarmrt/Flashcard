@@ -666,6 +666,9 @@ const App: React.FC = () => {
       case 'review':
         cardsToStudy = cardsToStudy.filter(c => c.repetition > 0 && c.dueDate <= todayISOString);
         break;
+      case 'all-cards':
+        // No filter applied, study all cards in the selected scope
+        break;
       case 'all-due':
       default:
         cardsToStudy = cardsToStudy.filter(c => c.dueDate <= todayISOString);

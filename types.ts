@@ -42,6 +42,6 @@ export interface Settings {
 }
 
 export interface StudySessionOptions {
-  filter: 'all-due' | 'new' | 'review';
+  filter: 'all-due' | 'new' | 'review' | 'all-cards';
   limit: number;
 }
