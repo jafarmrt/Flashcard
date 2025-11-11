@@ -25,15 +25,16 @@ async function handleGeminiGenerate(payload: any, response: VercelResponse, apiK
   const { model, contents, config } = payload;
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
-  // Separate top-level parameters from those that belong in generationConfig
+  // Fix: Correctly structure the request body.
+  // `responseMimeType` and `responseSchema` belong INSIDE generationConfig for the REST API.
+  // Only extract top-level parameters that are NOT part of generationConfig.
   const {
     systemInstruction,
     responseModalities,
     speechConfig,
-    responseMimeType, // Fix: Destructure from config
-    responseSchema,   // Fix: Destructure from config
-    ...generationConfig // All other config properties are for generationConfig
+    ...generationConfig // The rest of the client's 'config' object is the generationConfig.
   } = config || {};
+
 
   // Normalize the `contents` to the `Content[]` format required by the API
   const finalContents = Array.isArray(contents)
@@ -48,8 +49,6 @@ async function handleGeminiGenerate(payload: any, response: VercelResponse, apiK
     ...(systemInstruction && { systemInstruction }),
     ...(responseModalities && { responseModalities }),
     ...(speechConfig && { speechConfig }),
-    ...(responseMimeType && { responseMimeType }), // Fix: Add to top level
-    ...(responseSchema && { responseSchema }),     // Fix: Add to top level
     ...(Object.keys(generationConfig).length > 0 && { generationConfig }),
   };
 

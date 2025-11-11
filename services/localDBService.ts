@@ -1,6 +1,6 @@
-// Fix: Import Dexie as a default export to resolve inheritance issues with TypeScript.
-// Fix: Import `Table` as a value, not just a type, to ensure correct class extension and type inference for Dexie.
-import Dexie, { Table } from 'dexie';
+// Fix: Use a type-only import for `Table`. Importing it as a value was breaking
+// Dexie's class inheritance, causing type errors where its methods were not found.
+import Dexie, { type Table } from 'dexie';
 import { Flashcard, Deck, StudyLog } from '../types';
 
 export class LinguaCardsDB extends Dexie {
