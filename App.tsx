@@ -657,8 +657,8 @@ const App: React.FC = () => {
   }
 
   const handleRenameDeck = async (deckId: string, newName: string) => {
-    // Fix: Add an explicit type to `existingDeck` to prevent it from being inferred as `unknown`.
-    const existingDeck: Deck | undefined = decks.find((d: Deck) => d.name.toLowerCase() === newName.toLowerCase() && !d.isDeleted);
+    // Fix: With `db` correctly typed, `decks` is `Deck[]`, so `existingDeck` is correctly inferred.
+    const existingDeck = decks.find(d => d.name.toLowerCase() === newName.toLowerCase() && !d.isDeleted);
     if (existingDeck && existingDeck.id !== deckId) {
         showToast('A deck with this name already exists.');
         return;

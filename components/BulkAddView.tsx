@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { Flashcard } from '../types';
 import { generatePersianDetails } from '../services/geminiService';
-import { fetchFromFreeDictionary, fetchFromMerriamWebster, fetchAudioData } from '../services/dictionaryService';
+import { fetchFromFreeDictionary, fetchFromMerriamWebster, fetchAudioData, DictionaryResult } from '../services/dictionaryService';
 
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted'>;
 type ProcessingStatus = 'pending' | 'loading' | 'done' | 'error' | 'timeout';
@@ -45,25 +45,32 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
 
         try {
             const processWithTimeout = async () => {
-                // Dictionary API race with fallback
-                const primaryFetcher = defaultApiSource === 'free' ? fetchFromFreeDictionary : fetchFromMerriamWebster;
-                const secondaryFetcher = defaultApiSource === 'free' ? fetchFromMerriamWebster : fetchFromFreeDictionary;
-                
-                let dictDetails;
-                try {
-                    // Race primary dictionary against a 2.5s timeout
-                    dictDetails = await Promise.race([
-                        primaryFetcher(word),
-                        timeoutPromise(2500, 'Primary dictionary API timed out.')
-                    ]);
-                } catch (e) {
-                    // If it times out or fails, try the secondary
-                    dictDetails = await secondaryFetcher(word);
-                }
+                // --- PARALLEL API CALLS ---
+                // Start both dictionary and AI fetches at the same time.
 
-                // AI call
-                const aiDetails = await generatePersianDetails(word);
+                // Fix: Add an explicit return type to prevent `dictDetails` from being inferred as `unknown`.
+                const getDictionaryDetails = async (): Promise<DictionaryResult> => {
+                    const primaryFetcher = defaultApiSource === 'free' ? fetchFromFreeDictionary : fetchFromMerriamWebster;
+                    const secondaryFetcher = defaultApiSource === 'free' ? fetchFromMerriamWebster : fetchFromFreeDictionary;
+                    try {
+                        // Race primary dictionary against a 2.5s timeout
+                        return await Promise.race([
+                            primaryFetcher(word),
+                            timeoutPromise(2500, 'Primary dictionary API timed out.')
+                        ]);
+                    } catch (e) {
+                        // If it times out or fails, try the secondary
+                        return await secondaryFetcher(word);
+                    }
+                };
 
+                const dictionaryPromise = getDictionaryDetails();
+                const aiPromise = generatePersianDetails(word);
+
+                // Wait for both parallel operations to complete
+                const [dictDetails, aiDetails] = await Promise.all([dictionaryPromise, aiPromise]);
+
+                // --- SEQUENTIAL AUDIO CALL (depends on dictionary results) ---
                 let audioDataUrl: string | undefined = undefined;
                 if (dictDetails.audioUrl) {
                     try { audioDataUrl = await fetchAudioData(dictDetails.audioUrl); } catch (audioError) { console.warn(`Could not fetch audio for ${word}`, audioError); }
@@ -81,10 +88,10 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                 };
             };
             
-            // Overall 5-second timeout for the entire word processing
+            // Overall 7-second timeout for the entire word processing, providing a safety buffer.
             const newCard = await Promise.race([
                 processWithTimeout(),
-                timeoutPromise(5000, 'Processing timed out after 5 seconds.')
+                timeoutPromise(7000, 'Processing timed out after 7 seconds.')
             ]) as FlashcardFormData;
 
             if (isCancelledRef.current) return;
@@ -93,15 +100,15 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
         } catch (error) {
             if (isCancelledRef.current) return;
             const errorMessage = (error instanceof Error) ? error.message : "An unknown error occurred.";
-            const status: ProcessingStatus = errorMessage.includes('timed out') ? 'timeout' : 'error';
+            const status: ProcessingStatus = errorMessage.toLowerCase().includes('timeout') ? 'timeout' : 'error';
             setProcessedWords(prev => prev.map((item, i) => i === index ? { ...item, status, error: errorMessage } : item));
         }
     }, [defaultApiSource]);
 
 
     const handleProcessWords = async () => {
-        // Fix: Explicitly type `word` as a string to resolve type inference issue.
-        const words = [...new Set(wordsInput.split('\n').map((word: string) => word.trim()).filter(Boolean))]; // Remove duplicates
+        // Fix: Explicitly type `words` as `string[]` to ensure correct type inference downstream.
+        const words: string[] = [...new Set(wordsInput.split('\n').map(word => word.trim()).filter(Boolean))]; // Remove duplicates
         if (words.length === 0) {
             showToast("Please enter at least one word.");
             return;
@@ -140,6 +147,9 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
 
         if (!isCancelledRef.current) {
             setIsProcessing(false);
+            const successCount = processedWords.filter(p => p.status === 'done').length;
+            const failureCount = words.length - successCount;
+            showToast(`Processing complete. ${successCount} successful, ${failureCount} failed.`);
             setStep('review');
         }
     };
