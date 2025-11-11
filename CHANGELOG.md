@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.1] - Bulk Add Fix
+- **Fix:** Resolved a critical bug in the "Bulk Add" feature where the view would get stuck on the initial input screen after clicking "Process Words". The UI now correctly transitions through the processing and review steps.
+
 ## [2.3.0] - Bulk Word Import
 - **Feature:** Added a new "Bulk Add" feature accessible from the Decks screen.
 - **UI/UX:** Users can now paste a list of words to automatically create multiple flashcards at once.

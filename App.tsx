@@ -655,8 +655,8 @@ const App: React.FC = () => {
   }
 
   const handleRenameDeck = async (deckId: string, newName: string) => {
-    // Fix: Add explicit type annotation to the callback parameter to prevent type degradation to 'any' or 'unknown'.
-    const existingDeck = decks.find((d: Deck) => d.name.toLowerCase() === newName.toLowerCase() && !d.isDeleted);
+    // Fix: The type of `d` is correctly inferred from `decks`, which is `Deck[]`. The explicit annotation was removed to prevent a type inference issue.
+    const existingDeck = decks.find(d => d.name.toLowerCase() === newName.toLowerCase() && !d.isDeleted);
     if (existingDeck && existingDeck.id !== deckId) {
         showToast('A deck with this name already exists.');
         return;

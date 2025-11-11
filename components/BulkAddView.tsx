@@ -207,5 +207,17 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
         );
     };
 
-    return <div className="animate-flip-in">{renderInputStep()}</div>;
+    const renderContent = () => {
+        switch (step) {
+            case 'processing':
+                return renderProcessingStep();
+            case 'review':
+                return renderReviewStep();
+            case 'input':
+            default:
+                return renderInputStep();
+        }
+    };
+
+    return <div className="animate-flip-in">{renderContent()}</div>;
 };
