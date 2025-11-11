@@ -25,6 +25,22 @@ const callProxy = async (body: object) => {
     return response.json();
 };
 
+const parseJsonFromAiResponse = (text: string) => {
+    let cleanText = text.trim();
+    // Fix: The AI model sometimes wraps its JSON output in markdown.
+    // This removes the markdown wrapper before parsing.
+    if (cleanText.startsWith('```json')) {
+        cleanText = cleanText.substring(7);
+        if (cleanText.endsWith('```')) {
+            cleanText = cleanText.slice(0, -3);
+        }
+    }
+    if (!cleanText) {
+        throw new Error("Received empty response from AI proxy.");
+    }
+    return JSON.parse(cleanText);
+}
+
 
 export const generatePersianDetails = async (englishWord: string): Promise<PersianDetails> => {
   try {
@@ -54,8 +70,7 @@ Please provide the following:
       },
     });
 
-    const jsonText = response.text.trim();
-    const parsed = JSON.parse(jsonText);
+    const parsed = parseJsonFromAiResponse(response.text);
     
     return {
       back: parsed.translation || '',
@@ -155,8 +170,8 @@ Return the output as a single JSON object with a key "questions", which is an ar
                 }
             }
         });
-        const jsonText = response.text.trim();
-        const parsed = JSON.parse(jsonText);
+        
+        const parsed = parseJsonFromAiResponse(response.text);
         
         return parsed.questions || [];
 
