@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.1.0] - Settings & Reliability
+- **Fix:** Resolved a critical bug where the in-app changelog failed to load due to a network error. The changelog content is now embedded directly into the app for instant and reliable offline access.
+
 ## [3.0.2] - Cram Mode
 - **Feature:** Added a new **"Study All Cards"** option in the Study Setup screen. This allows users to review all cards in a deck, regardless of their due date. This is perfect for cramming before a test or when you want to review everything.
 
