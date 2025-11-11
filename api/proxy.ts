@@ -30,6 +30,8 @@ async function handleGeminiGenerate(payload: any, response: VercelResponse, apiK
     systemInstruction,
     responseModalities,
     speechConfig,
+    responseMimeType, // Fix: Destructure from config
+    responseSchema,   // Fix: Destructure from config
     ...generationConfig // All other config properties are for generationConfig
   } = config || {};
 
@@ -46,6 +48,8 @@ async function handleGeminiGenerate(payload: any, response: VercelResponse, apiK
     ...(systemInstruction && { systemInstruction }),
     ...(responseModalities && { responseModalities }),
     ...(speechConfig && { speechConfig }),
+    ...(responseMimeType && { responseMimeType }), // Fix: Add to top level
+    ...(responseSchema && { responseSchema }),     // Fix: Add to top level
     ...(Object.keys(generationConfig).length > 0 && { generationConfig }),
   };
 
