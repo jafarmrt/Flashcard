@@ -88,49 +88,25 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, onExit }) => {
   const [isFlipped, setIsFlipped] = useState(false);
   const [updatedCards, setUpdatedCards] = useState<Map<string, Flashcard>>(new Map());
   const [sessionComplete, setSessionComplete] = useState(false);
-  const [dueCardCount, setDueCardCount] = useState(0);
+  const [initialCardCount, setInitialCardCount] = useState(0);
   const [studyMode, setStudyMode] = useState<'flip' | 'type'>('flip');
   const [typedAnswer, setTypedAnswer] = useState('');
   const [answerState, setAnswerState] = useState<'correct' | 'incorrect' | null>(null);
   const answerInputRef = useRef<HTMLInputElement>(null);
-
-  const setupSession = useCallback((cardSet: Flashcard[]) => {
-    const shuffled = [...cardSet];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    setSessionQueue(shuffled);
-    setCurrentIndex(0);
-    setIsFlipped(false);
-    setSessionComplete(false);
-    setTypedAnswer('');
-    setAnswerState(null);
-  }, []);
   
   useEffect(() => {
-    // This effect now correctly handles all cases, including when the initial card set is empty.
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayISOString = today.toISOString();
-    
-    // An empty array of cards is a valid state (e.g., studying an empty deck).
-    // The previous logic failed to handle this, causing the view to get stuck.
-    if (cards.length === 0) {
-        setDueCardCount(0);
-        setSessionComplete(true);
-        return; // Exit early, session is complete.
-    }
-    
-    const dueCards = cards.filter(c => c.dueDate <= todayISOString);
-    setDueCardCount(dueCards.length);
-
-    if (dueCards.length > 0) {
-      setupSession(dueCards);
+    if (cards.length > 0) {
+        setSessionQueue(cards);
+        setInitialCardCount(cards.length);
+        setCurrentIndex(0);
+        setIsFlipped(false);
+        setSessionComplete(false);
+        setTypedAnswer('');
+        setAnswerState(null);
     } else {
-      setSessionComplete(true);
+        setSessionComplete(true);
     }
-  }, [cards, setupSession]);
+  }, [cards]);
 
 
   useEffect(() => {
@@ -152,9 +128,6 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, onExit }) => {
     const updatedCard = calculateSrs(currentCard, rating);
     setUpdatedCards(prev => new Map(prev).set(updatedCard.id, updatedCard));
     
-    // Fix: Use a new variable `finalQueue` to ensure the correct queue length is
-    // used in the timeout closure, preventing premature session completion
-    // when a card is marked 'Again'.
     let finalQueue = [...sessionQueue];
     if (rating === 'AGAIN') {
       const reAddIndex = Math.min(currentIndex + 5, finalQueue.length);
@@ -187,17 +160,14 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, onExit }) => {
      return (
       <div className="text-center py-20 bg-white dark:bg-slate-800 rounded-lg shadow-sm">
         <h2 className="text-2xl font-semibold text-slate-700 dark:text-slate-200">
-          {dueCardCount > 0 ? "Session Complete!" : "You're all caught up!"}
+            Session Complete!
         </h2>
         <p className="mt-2 text-slate-500 dark:text-slate-400">
-            {dueCardCount > 0 ? `You reviewed ${dueCardCount} card${dueCardCount > 1 ? 's' : ''}.` : "No cards are due for review today."}
+            {`You reviewed ${initialCardCount} card${initialCardCount > 1 ? 's' : ''}.`}
         </p>
         <div className="mt-6 flex justify-center gap-4">
             <button onClick={() => onExit(Array.from(updatedCards.values()))} className="px-6 py-2 rounded-lg bg-indigo-600 text-white font-semibold shadow-md hover:bg-indigo-700 transition-colors">
-              Back to List
-            </button>
-             <button onClick={() => setupSession(cards)} className="px-6 py-2 rounded-lg bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold shadow-md hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors">
-              Study All Cards
+              Finish Session
             </button>
         </div>
       </div>

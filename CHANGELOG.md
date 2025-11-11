@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.0] - Gamification & Enhanced Study Experience
+- **Feature:** Added **Customizable Study Sessions**. Before starting a study session, users can now access a setup screen with the following options:
+    - **Filter Cards:** Choose to study only "New Cards", only "Review Cards", or all cards that are "All Due Today".
+    - **Session Size:** Set a maximum number of cards to review in a single session.
+- **Improvement:** This feature gives users more control over their learning, allowing for shorter, more focused study sessions tailored to their needs.
+
 ## [2.3.7] - Practice Quiz Gameplay Fix
 - **Fix:** Corrected an issue in the "Practice" quiz where the context sentence, which often contained the answer, was shown before the user selected an option. The context is now revealed only after an answer is submitted, improving the quality of the quiz.
 

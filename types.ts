@@ -40,3 +40,8 @@ export interface Settings {
     theme: 'light' | 'dark' | 'system';
     defaultApiSource: 'free' | 'mw';
 }
+
+export interface StudySessionOptions {
+  filter: 'all-due' | 'new' | 'review';
+  limit: number;
+}

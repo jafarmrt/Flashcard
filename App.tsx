@@ -1,8 +1,5 @@
-
-
-
 import React, { useState, useEffect, useRef } from 'react';
-import { Flashcard, Deck, Settings } from './types';
+import { Flashcard, Deck, Settings, StudySessionOptions } from './types';
 import { db } from './services/localDBService';
 import Header from './components/Header';
 import FlashcardList from './components/FlashcardList';
@@ -15,6 +12,7 @@ import DeckList from './components/DeckList';
 import { ChangelogView } from './components/ChangelogView';
 import SettingsView from './components/SettingsView';
 import { BulkAddView } from './components/BulkAddView';
+import { StudySetupModal } from './components/StudySetupModal';
 
 type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD';
 type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
@@ -257,6 +255,8 @@ const App: React.FC = () => {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const [lastSyncDate, setLastSyncDate] = useState<string | null>(null);
   const [studyDeckId, setStudyDeckId] = useState<string | null>(null);
+  const [studyCards, setStudyCards] = useState<Flashcard[]>([]);
+  const [isStudySetupModalOpen, setIsStudySetupModalOpen] = useState(false);
   const [dbStatus, setDbStatus] = useState<HealthStatus>('checking');
   const [apiStatus, setApiStatus] = useState<HealthStatus>('checking');
   const [freeDictApiStatus, setFreeDictApiStatus] = useState<HealthStatus>('checking');
@@ -467,14 +467,18 @@ const App: React.FC = () => {
     }
     
     if (editingCard) {
-      const updatedCard: Flashcard = { ...editingCard, ...cardData, deckId: deck.id };
+      // Fix: Add non-null assertion `!`. TypeScript's control flow analysis
+      // struggles to confirm `deck` is defined here after conditional assignment.
+      const updatedCard: Flashcard = { ...editingCard, ...cardData, deckId: deck!.id };
       await db.flashcards.put(updatedCard);
       showToast('Card updated successfully!');
     } else {
       const newCard: Flashcard = {
         ...cardData,
         id: Date.now().toString(),
-        deckId: deck.id,
+        // Fix: Add non-null assertion `!`. TypeScript's control flow analysis
+        // struggles to confirm `deck` is defined here after conditional assignment.
+        deckId: deck!.id,
         repetition: 0,
         easinessFactor: 2.5,
         interval: 0,
@@ -642,24 +646,65 @@ const App: React.FC = () => {
 
   const handleStudyDeck = (deckId: string) => {
     setStudyDeckId(deckId);
-    setView('STUDY');
+    setIsStudySetupModalOpen(true);
   };
   
-  const handleNavigate = (newView: View) => {
-    if (newView === 'STUDY') {
-      setStudyDeckId(null); // Reset to study all decks when clicking header button
+  const handleStartStudySession = (options: StudySessionOptions) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayISOString = today.toISOString();
+
+    let cardsToStudy = studyDeckId
+      ? visibleFlashcards.filter(card => card.deckId === studyDeckId)
+      : visibleFlashcards;
+
+    // Apply filters from the modal
+    switch (options.filter) {
+      case 'new':
+        cardsToStudy = cardsToStudy.filter(c => c.repetition === 0);
+        break;
+      case 'review':
+        cardsToStudy = cardsToStudy.filter(c => c.repetition > 0 && c.dueDate <= todayISOString);
+        break;
+      case 'all-due':
+      default:
+        cardsToStudy = cardsToStudy.filter(c => c.dueDate <= todayISOString);
+        break;
     }
-    if (newView === 'LIST' && view !== 'LIST') {
-        // When navigating back to list, default to decks view for better mobile UX
-        setView('DECKS');
+    
+    // Shuffle the filtered cards
+    for (let i = cardsToStudy.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [cardsToStudy[i], cardsToStudy[j]] = [cardsToStudy[j], cardsToStudy[i]];
+    }
+    
+    // Apply card limit
+    if (options.limit > 0) {
+      cardsToStudy = cardsToStudy.slice(0, options.limit);
+    }
+    
+    if (cardsToStudy.length === 0) {
+        showToast("No cards match your selected criteria.");
         return;
     }
-    setView(newView);
+
+    setStudyCards(cardsToStudy);
+    setIsStudySetupModalOpen(false);
+    setView('STUDY');
+  };
+
+  const handleNavigate = (newView: View) => {
+    if (newView === 'STUDY') {
+        setStudyDeckId(null); // This means "Study All Decks"
+        setIsStudySetupModalOpen(true);
+    } else if (newView === 'LIST' && view !== 'LIST') {
+        setView('DECKS');
+    } else {
+        setView(newView);
+    }
   }
 
   const handleRenameDeck = async (deckId: string, newName: string) => {
-    // Fix: With `db` correctly typed, `decks` is `Deck[]`, so `existingDeck` is correctly inferred.
-    // Fix: Explicitly type `existingDeck` to resolve issue where its type was being inferred as `unknown`.
     const existingDeck: Deck | undefined = decks.find(d => d.name.toLowerCase() === newName.toLowerCase() && !d.isDeleted);
     if (existingDeck && existingDeck.id !== deckId) {
         showToast('A deck with this name already exists.');
@@ -673,22 +718,15 @@ const App: React.FC = () => {
 
   const handleDeleteDeck = async (deckId: string) => {
     try {
-      // Get the most up-to-date list of cards for this deck directly from the database
-      // to avoid race conditions with React state.
       const cardsInDeck = await db.flashcards.where('deckId').equals(deckId).toArray();
       const cardIdsToSoftDelete = cardsInDeck.map(card => card.id);
-
-      // Use a transaction to ensure either all or none of the operations complete.
       await db.transaction('rw', db.flashcards, db.decks, async () => {
-          // Soft delete all cards in the deck
           if (cardIdsToSoftDelete.length > 0) {
               await db.flashcards.where('id').anyOf(cardIdsToSoftDelete).modify({ isDeleted: true });
           }
-          // Soft delete the deck itself
           await db.decks.update(deckId, { isDeleted: true });
       });
-
-      await fetchData(); // Re-fetch to update state and trigger sync
+      await fetchData(); 
       showToast('Deck and its cards deleted successfully!');
     } catch (error) {
         console.error("Failed to delete deck:", error);
@@ -698,12 +736,16 @@ const App: React.FC = () => {
 
   const visibleFlashcards = flashcards.filter(c => !c.isDeleted);
   const visibleDecks = decks.filter(d => !d.isDeleted);
+  
+  const cardsForSetupModal = studyDeckId 
+    ? visibleFlashcards.filter(c => c.deckId === studyDeckId)
+    : visibleFlashcards;
+
 
   const renderContent = () => {
     switch (view) {
       case 'STUDY':
-        const allCardsForStudy = studyDeckId ? visibleFlashcards.filter(card => card.deckId === studyDeckId) : visibleFlashcards;
-        return <StudyView cards={allCardsForStudy} onExit={handleSessionEnd} />;
+        return <StudyView cards={studyCards} onExit={handleSessionEnd} />;
       case 'PRACTICE':
         return <PracticeView cards={visibleFlashcards} />;
       case 'SETTINGS':
@@ -781,6 +823,13 @@ const App: React.FC = () => {
         {renderContent()}
       </main>
       
+      <StudySetupModal 
+        isOpen={isStudySetupModalOpen}
+        onClose={() => setIsStudySetupModalOpen(false)}
+        onStart={handleStartStudySession}
+        cards={cardsForSetupModal}
+      />
+
       {['LIST', 'DECKS'].includes(view) && <FloatingActionButton onClick={handleAddCard} />}
       <BottomNav currentView={view} onNavigate={handleNavigate} isStudyDisabled={visibleFlashcards.length === 0} />
       
