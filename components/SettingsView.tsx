@@ -8,6 +8,7 @@ interface SettingsViewProps {
     onImportCSV: (csvText: string) => void;
     onResetApp: () => void;
     onNavigateToChangelog: () => void;
+    onNavigateToAchievements: () => void;
     syncView: React.ReactNode;
 }
 
@@ -18,10 +19,11 @@ const SettingsView: React.FC<SettingsViewProps> = ({
     onImportCSV,
     onResetApp,
     onNavigateToChangelog,
+    onNavigateToAchievements,
     syncView
 }) => {
     const importFileRef = useRef<HTMLInputElement>(null);
-    const APP_VERSION = '3.2.0';
+    const APP_VERSION = '3.4.0';
 
     const handleImportClick = () => {
         importFileRef.current?.click();
@@ -84,6 +86,11 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                         <option value="free">Free Dictionary</option>
                         <option value="mw">Merriam-Webster</option>
                     </select>
+                </SettingRow>
+                <SettingRow title="Achievements" description="View the medals and milestones you've unlocked.">
+                     <button onClick={onNavigateToAchievements} className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">
+                        View Achievements
+                    </button>
                 </SettingRow>
             </div>
 

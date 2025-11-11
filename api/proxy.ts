@@ -3,7 +3,7 @@
 // It handles requests for both the Google GenAI API and the new Cloud Sync feature.
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-// Define types for our data structure
+// --- TYPE DEFINITIONS (mirrored from client) ---
 interface Deck {
   id: string;
   name: string;
@@ -11,12 +11,32 @@ interface Deck {
 }
 interface Flashcard {
   id: string;
-  // ... other properties
+  deckId: string;
   isDeleted?: boolean;
+  // Other properties are not needed for merge logic
+}
+interface StudyLog {
+  id?: number;
+  cardId: string;
+  date: string;
+  rating: 'AGAIN' | 'GOOD' | 'EASY';
+}
+interface UserProfile {
+  id: number;
+  xp: number;
+  level: number;
+  lastStreakCheck: string;
+}
+interface UserAchievement {
+  achievementId: string;
+  dateEarned: string;
 }
 interface SyncData {
   decks: Deck[];
   cards: Flashcard[];
+  studyHistory: StudyLog[];
+  userProfile: UserProfile | null;
+  userAchievements: UserAchievement[];
 }
 
 
@@ -171,7 +191,7 @@ async function handleSyncMerge(payload: any, response: VercelResponse) {
     headers: { 'Authorization': `Bearer ${KV_TOKEN}` },
   });
 
-  let cloudData: SyncData = { decks: [], cards: [] };
+  let cloudData: SyncData = { decks: [], cards: [], studyHistory: [], userProfile: null, userAchievements: [] };
   if (getResponse.ok) {
     const { result } = await getResponse.json();
     if (result) {
@@ -179,40 +199,59 @@ async function handleSyncMerge(payload: any, response: VercelResponse) {
     }
   }
 
-  // 2. Perform a deletion-aware merge. This is the core fix.
+  // 2. Perform a deletion-aware merge for decks and cards
   const merge = <T extends { id: string; isDeleted?: boolean }>(cloudItems: T[], clientItems: T[]): T[] => {
     const mergedMap = new Map<string, T>();
-    
-    // Start with all items from the cloud
     (cloudItems || []).forEach(item => mergedMap.set(item.id, item));
-    
-    // Merge in items from the client
     (clientItems || []).forEach(clientItem => {
       const cloudItem = mergedMap.get(clientItem.id);
-      
       if (cloudItem) {
-        // Item exists on both. The merged item is deleted if EITHER version is deleted.
         const isDeleted = cloudItem.isDeleted || clientItem.isDeleted;
-        // We take the client's version of the data but enforce the final deletion status.
         mergedMap.set(clientItem.id, { ...clientItem, isDeleted });
       } else {
-        // Item is new from the client, just add it.
         mergedMap.set(clientItem.id, clientItem);
       }
     });
-
     return Array.from(mergedMap.values());
   };
 
+  // 3. Merge all data types
   const mergedDecks = merge<Deck>(cloudData.decks, clientData.decks);
   const mergedCards = merge<Flashcard>(cloudData.cards, clientData.cards);
+
+  // Merge Study History by creating a set to remove duplicates
+  const studyHistoryMap = new Map<string, StudyLog>();
+  (cloudData.studyHistory || []).forEach(log => studyHistoryMap.set(`${log.cardId}-${log.date}-${log.rating}`, log));
+  (clientData.studyHistory || []).forEach(log => studyHistoryMap.set(`${log.cardId}-${log.date}-${log.rating}`, log));
+  const mergedStudyHistory = Array.from(studyHistoryMap.values());
+
+  // Merge User Profile: take the one with higher XP to prevent progress loss.
+  let mergedUserProfile: UserProfile | null = cloudData.userProfile;
+  if (clientData.userProfile) {
+    if (!mergedUserProfile || clientData.userProfile.xp > mergedUserProfile.xp) {
+      mergedUserProfile = clientData.userProfile;
+    } else if (clientData.userProfile.xp === mergedUserProfile.xp) {
+      if (new Date(clientData.userProfile.lastStreakCheck) > new Date(mergedUserProfile.lastStreakCheck || 0)) {
+        mergedUserProfile = clientData.userProfile;
+      }
+    }
+  }
+
+  // Merge User Achievements by creating a set to remove duplicates
+  const achievementsMap = new Map<string, UserAchievement>();
+  (cloudData.userAchievements || []).forEach(ach => achievementsMap.set(ach.achievementId, ach));
+  (clientData.userAchievements || []).forEach(ach => achievementsMap.set(ach.achievementId, ach));
+  const mergedUserAchievements = Array.from(achievementsMap.values());
 
   const mergedData: SyncData = {
     decks: mergedDecks,
     cards: mergedCards,
+    studyHistory: mergedStudyHistory,
+    userProfile: mergedUserProfile,
+    userAchievements: mergedUserAchievements,
   };
 
-  // 3. Save the correctly merged data back to the cloud
+  // 4. Save the correctly merged data back to the cloud
   const setResponse = await fetch(`${KV_URL}/set/${syncKey}`, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${KV_TOKEN}` },
@@ -224,7 +263,7 @@ async function handleSyncMerge(payload: any, response: VercelResponse) {
     return response.status(500).json({ error: 'Failed to save merged data.', details: errorText });
   }
   
-  // 4. Return the authoritative merged data to the client
+  // 5. Return the authoritative merged data to the client
   return response.status(200).json({ data: mergedData });
 }
 

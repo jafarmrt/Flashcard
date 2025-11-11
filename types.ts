@@ -20,6 +20,19 @@ export interface UserProfile {
   lastStreakCheck: string; // ISO date string YYYY-MM-DD
 }
 
+export interface Achievement {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  isSecret?: boolean; // For hidden achievements
+}
+
+export interface UserAchievement {
+  achievementId: string;
+  dateEarned: string; // ISO string
+}
+
 
 export interface Flashcard {
   id: string;

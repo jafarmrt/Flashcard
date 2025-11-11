@@ -1,7 +1,7 @@
 import React from 'react';
 
-// Fix: Add 'CHANGELOG' and 'SETTINGS' to the View type to match App.tsx.
-type View = 'LIST' | 'STUDY' | 'STATS' | 'FORM' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD';
+// Fix: Add 'ACHIEVEMENTS' to the View type to match App.tsx.
+type View = 'LIST' | 'STUDY' | 'STATS' | 'FORM' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS';
 
 interface HeaderProps {
   onNavigate: (view: View) => void;
@@ -63,7 +63,7 @@ const Header: React.FC<HeaderProps> = ({ onNavigate, onAddCard, isStudyDisabled,
             </button>
             <button
               onClick={() => onNavigate('SETTINGS')}
-              className={`${navButtonStyle} ${currentView === 'SETTINGS' || currentView === 'CHANGELOG' ? activeStyle : inactiveStyle}`}
+              className={`${navButtonStyle} ${['SETTINGS', 'CHANGELOG', 'ACHIEVEMENTS'].includes(currentView) ? activeStyle : inactiveStyle}`}
             >
               Settings
             </button>

@@ -1,4 +1,6 @@
-import { StudyLog } from '../types';
+import { StudyLog, UserAchievement, Flashcard, Deck, UserProfile } from '../types';
+import { ALL_ACHIEVEMENTS } from './achievements';
+import { db } from './localDBService';
 
 const XP_PER_LEVEL_BASE = 150;
 
@@ -69,4 +71,77 @@ export const calculateStreak = (logs: StudyLog[]): number => {
     }
   }
   return streak;
+};
+
+
+interface AchievementContext {
+  allCards: Flashcard[];
+  allDecks: Deck[];
+  studyLogs: StudyLog[];
+  userProfile: UserProfile;
+  earnedAchievements: UserAchievement[];
+  quizScore?: { score: number; total: number };
+}
+/**
+ * Checks for and awards new achievements based on the user's progress.
+ * @param context An object containing all necessary data to evaluate achievements.
+ * @returns A list of newly awarded achievements.
+ */
+export const checkAndAwardAchievements = async (context: AchievementContext): Promise<UserAchievement[]> => {
+  const { allCards, allDecks, studyLogs, userProfile, earnedAchievements, quizScore } = context;
+  const earnedAchievementIds = new Set(earnedAchievements.map(a => a.achievementId));
+  const newlyEarned: UserAchievement[] = [];
+
+  const award = (id: string) => {
+    if (!earnedAchievementIds.has(id)) {
+      const newAchievement: UserAchievement = {
+        achievementId: id,
+        dateEarned: new Date().toISOString(),
+      };
+      newlyEarned.push(newAchievement);
+      earnedAchievementIds.add(id); // Prevent awarding twice in the same check
+    }
+  };
+
+  // --- Check all achievements ---
+
+  // 1. Card Creation
+  if (allCards.length >= 1) award('first-card');
+  if (allCards.length >= 10) award('card-creator-10');
+  if (allCards.length >= 50) award('card-creator-50');
+
+  // 2. Study Habits
+  if (studyLogs.length > 0) award('first-study');
+  const streak = calculateStreak(studyLogs);
+  if (streak >= 7) award('streak-7');
+  if (streak >= 30) award('streak-30');
+  
+  // 3. Leveling
+  if (userProfile.level >= 5) award('level-5');
+  if (userProfile.level >= 10) award('level-10');
+  
+  // 4. Quizzes
+  if (quizScore && quizScore.score === quizScore.total && quizScore.total > 0) {
+    award('quiz-hero');
+  }
+
+  // 5. Deck Mastery (expensive check, do last)
+  for (const deck of allDecks) {
+    if (deck.isDeleted) continue;
+    const cardsInDeck = allCards.filter(c => c.deckId === deck.id && !c.isDeleted);
+    if (cardsInDeck.length > 0) {
+      const allMastered = cardsInDeck.every(c => c.interval > 30);
+      if (allMastered) {
+        award('deck-master');
+        break; // Only award once
+      }
+    }
+  }
+
+  // --- Save newly earned achievements to DB ---
+  if (newlyEarned.length > 0) {
+    await db.userAchievements.bulkAdd(newlyEarned);
+  }
+
+  return newlyEarned;
 };

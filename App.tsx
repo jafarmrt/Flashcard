@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile } from './types';
+import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile, UserAchievement } from './types';
 import { db } from './services/localDBService';
-import { calculateLevel, calculateStreak } from './services/gamificationService';
+import { calculateLevel, calculateStreak, checkAndAwardAchievements } from './services/gamificationService';
+import { ALL_ACHIEVEMENTS } from './services/achievements';
 import Header from './components/Header';
 import FlashcardList from './components/FlashcardList';
 import FlashcardForm from './components/FlashcardForm';
@@ -14,8 +15,9 @@ import { ChangelogView } from './components/ChangelogView';
 import SettingsView from './components/SettingsView';
 import { BulkAddView } from './components/BulkAddView';
 import { StudySetupModal } from './components/StudySetupModal';
+import { AchievementsView } from './components/AchievementsView';
 
-type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD';
+type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS';
 type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 type HealthStatus = 'ok' | 'error' | 'checking';
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted'>;
@@ -219,7 +221,7 @@ const BottomNav: React.FC<{
   
   const isActive = (view: View) => {
       if (view === 'DECKS' && ['LIST', 'DECKS', 'FORM', 'BULK_ADD'].includes(currentView)) return true;
-      if (view === 'SETTINGS' && (currentView === 'SETTINGS' || currentView === 'CHANGELOG')) return true;
+      if (view === 'SETTINGS' && ['SETTINGS', 'CHANGELOG', 'ACHIEVEMENTS'].includes(currentView)) return true;
       return currentView === view;
   }
 
@@ -265,6 +267,7 @@ const App: React.FC = () => {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [streak, setStreak] = useState(0);
+  const [earnedAchievements, setEarnedAchievements] = useState<UserAchievement[]>([]);
 
   
   const isInitialMount = useRef(true);
@@ -272,8 +275,10 @@ const App: React.FC = () => {
   const fetchData = async () => {
     const allCards = await db.flashcards.toArray();
     const allDecks = await db.decks.toArray();
+    const allAchievements = await db.userAchievements.toArray();
     setFlashcards(allCards);
     setDecks(allDecks);
+    setEarnedAchievements(allAchievements);
 
     let profile = await db.userProfile.get(1);
     if (!profile) {
@@ -285,13 +290,39 @@ const App: React.FC = () => {
     const allLogs = await db.studyHistory.toArray();
     setStreak(calculateStreak(allLogs));
     
-    return { cards: allCards, decks: allDecks };
+    return { cards: allCards, decks: allDecks, logs: allLogs, profile, achievements: allAchievements };
   };
 
   const showToast = (message: string) => {
     setToastMessage(message);
     setTimeout(() => setToastMessage(null), 3000);
   };
+  
+  const handleCheckAchievements = async (quizScore?: { score: number, total: number }) => {
+    if (!userProfile) return;
+    const studyLogs = await db.studyHistory.toArray();
+    const newAchievements = await checkAndAwardAchievements({
+        allCards: flashcards,
+        allDecks: decks,
+        studyLogs,
+        userProfile,
+        earnedAchievements,
+        quizScore,
+    });
+
+    if (newAchievements.length > 0) {
+        setEarnedAchievements(prev => [...prev, ...newAchievements]);
+        newAchievements.forEach(ua => {
+            const achievementData = ALL_ACHIEVEMENTS.find(a => a.id === ua.achievementId);
+            if (achievementData) {
+                setTimeout(() => {
+                  showToast(`Achievement Unlocked: ${achievementData.name} ${achievementData.icon}`);
+                }, 500);
+            }
+        });
+    }
+  };
+
 
   const awardXP = async (points: number, message?: string) => {
     if (!userProfile) return;
@@ -308,6 +339,7 @@ const App: React.FC = () => {
     
     await db.userProfile.put(updatedProfile);
     setUserProfile(updatedProfile);
+    handleCheckAchievements(); // Check for level-based achievements
   };
 
   const checkStreakBonus = async () => {
@@ -336,12 +368,19 @@ const App: React.FC = () => {
     try {
       const response = await callProxy('sync-load', { syncKey: key });
       if (response.data) {
-        const { decks, cards } = response.data;
-        await db.transaction('rw', db.decks, db.flashcards, async () => {
-          await db.decks.clear();
-          await db.flashcards.clear();
-          await db.decks.bulkPut(decks);
-          await db.flashcards.bulkPut(cards);
+        const { decks, cards, studyHistory, userProfile, userAchievements } = response.data;
+        await db.transaction('rw', db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements, async () => {
+            await db.decks.clear();
+            await db.flashcards.clear();
+            await db.studyHistory.clear();
+            await db.userProfile.clear();
+            await db.userAchievements.clear();
+            
+            if (decks) await db.decks.bulkPut(decks);
+            if (cards) await db.flashcards.bulkPut(cards);
+            if (studyHistory) await db.studyHistory.bulkPut(studyHistory);
+            if (userProfile) await db.userProfile.put(userProfile);
+            if (userAchievements) await db.userAchievements.bulkPut(userAchievements);
         });
         await fetchData(); // Refresh state from DB
         showToast('Data loaded successfully from cloud!');
@@ -445,25 +484,33 @@ const App: React.FC = () => {
 
     const handler = setTimeout(async () => {
       try {
-        const localData = { decks, cards: flashcards };
+        const allStudyHistory = await db.studyHistory.toArray();
+        const localData = { 
+            decks, 
+            cards: flashcards,
+            studyHistory: allStudyHistory,
+            userProfile,
+            userAchievements: earnedAchievements,
+        };
         const response = await callProxy('sync-merge', { syncKey, data: localData });
         
         const { data: mergedData } = response;
 
-        if (mergedData && mergedData.cards && mergedData.decks) {
-            const localDataString = JSON.stringify({ decks, cards: flashcards });
-            const remoteDataString = JSON.stringify({ decks: mergedData.decks, cards: mergedData.cards });
-
-            if (localDataString !== remoteDataString) {
-                await db.transaction('rw', db.decks, db.flashcards, async () => {
-                    await db.decks.clear();
-                    await db.flashcards.clear();
-                    await db.decks.bulkPut(mergedData.decks);
-                    await db.flashcards.bulkPut(mergedData.cards);
-                });
-                setFlashcards(mergedData.cards);
-                setDecks(mergedData.decks);
-            }
+        if (mergedData) {
+            await db.transaction('rw', db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements, async () => {
+                await db.decks.clear();
+                await db.flashcards.clear();
+                await db.studyHistory.clear();
+                await db.userProfile.clear();
+                await db.userAchievements.clear();
+                
+                if (mergedData.decks) await db.decks.bulkPut(mergedData.decks);
+                if (mergedData.cards) await db.flashcards.bulkPut(mergedData.cards);
+                if (mergedData.studyHistory) await db.studyHistory.bulkPut(mergedData.studyHistory);
+                if (mergedData.userProfile) await db.userProfile.put(mergedData.userProfile);
+                if (mergedData.userAchievements) await db.userAchievements.bulkPut(mergedData.userAchievements);
+            });
+            await fetchData();
         }
 
         const now = new Date();
@@ -479,7 +526,7 @@ const App: React.FC = () => {
     return () => {
       clearTimeout(handler);
     };
-  }, [flashcards, decks, syncKey]);
+  }, [flashcards, decks, syncKey, userProfile, earnedAchievements]);
 
 
   const updateSyncKey = (newKey: string) => {
@@ -528,8 +575,6 @@ const App: React.FC = () => {
     }
     
     if (editingCard) {
-      // Fix: Add non-null assertion `!`. TypeScript's control flow analysis
-      // struggles to confirm `deck` is defined here after conditional assignment.
       const updatedCard: Flashcard = { ...editingCard, ...cardData, deckId: deck!.id };
       await db.flashcards.put(updatedCard);
       showToast('Card updated successfully!');
@@ -537,8 +582,6 @@ const App: React.FC = () => {
       const newCard: Flashcard = {
         ...cardData,
         id: Date.now().toString(),
-        // Fix: Add non-null assertion `!`. TypeScript's control flow analysis
-        // struggles to confirm `deck` is defined here after conditional assignment.
         deckId: deck!.id,
         repetition: 0,
         easinessFactor: 2.5,
@@ -550,6 +593,7 @@ const App: React.FC = () => {
       showToast('Card added successfully!');
     }
     await fetchData();
+    handleCheckAchievements();
     setEditingCard(null);
     setView('DECKS');
   };
@@ -586,6 +630,7 @@ const App: React.FC = () => {
     }
     
     await fetchData();
+    handleCheckAchievements();
     showToast(`${newCards.length} cards added to "${trimmedDeckName}"!`);
     setView('DECKS');
 };
@@ -595,6 +640,7 @@ const App: React.FC = () => {
       await db.flashcards.bulkPut(updatedCardsFromSession);
     }
     await fetchData();
+    handleCheckAchievements();
     setView('DECKS');
     showToast('Study session complete. Progress saved!');
   };
@@ -687,6 +733,7 @@ const App: React.FC = () => {
         if (newCards.length > 0) await db.flashcards.bulkAdd(newCards);
         
         await fetchData();
+        handleCheckAchievements();
         showToast(`${newCards.length} cards imported successfully!`);
         setView('DECKS');
 
@@ -814,7 +861,7 @@ const App: React.FC = () => {
       case 'STUDY':
         return <StudyView cards={studyCards} onExit={handleSessionEnd} awardXP={awardXP} />;
       case 'PRACTICE':
-        return <PracticeView cards={visibleFlashcards} awardXP={awardXP} />;
+        return <PracticeView cards={visibleFlashcards} awardXP={awardXP} onQuizComplete={handleCheckAchievements} />;
       case 'SETTINGS':
         return <SettingsView 
             settings={settings}
@@ -823,6 +870,7 @@ const App: React.FC = () => {
             onImportCSV={handleImportCSV}
             onResetApp={handleResetApp}
             onNavigateToChangelog={() => setView('CHANGELOG')}
+            onNavigateToAchievements={() => setView('ACHIEVEMENTS')}
             syncView={
                 <SyncView 
                     syncKey={syncKey} 
@@ -861,6 +909,8 @@ const App: React.FC = () => {
         return <StatsView onBack={() => setView('DECKS')} />;
       case 'CHANGELOG':
         return <ChangelogView onBack={() => setView('SETTINGS')} />;
+      case 'ACHIEVEMENTS':
+        return <AchievementsView earnedAchievements={earnedAchievements} onBack={() => setView('SETTINGS')} />;
       case 'BULK_ADD':
         return <BulkAddView 
             onSave={handleBulkSaveCards}

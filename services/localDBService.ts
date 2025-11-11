@@ -1,12 +1,13 @@
-// Fix: Use a default import for `Dexie`. A named import was causing type resolution issues, which prevented `LinguaCardsDB` from inheriting `Dexie`'s methods and properties correctly. This resolves typing errors throughout the application.
+// Fix: Use a default import for `Dexie` and a type-only import for `Table`. This is the correct approach for modern versions of Dexie (3.x+) and resolves type resolution issues that prevented `LinguaCardsDB` from inheriting `Dexie`'s methods and properties (like .transaction(), .version(), etc.) correctly.
 import Dexie, { type Table } from 'dexie';
-import { Flashcard, Deck, StudyLog, UserProfile } from '../types';
+import { Flashcard, Deck, StudyLog, UserProfile, UserAchievement } from '../types';
 
 export class LinguaCardsDB extends Dexie {
   flashcards!: Table<Flashcard>; 
   decks!: Table<Deck>;
   studyHistory!: Table<StudyLog>;
   userProfile!: Table<UserProfile>;
+  userAchievements!: Table<UserAchievement>;
 
   constructor() {
     super('LinguaCardsDB');
@@ -31,6 +32,14 @@ export class LinguaCardsDB extends Dexie {
     }).upgrade(tx => {
        console.log("Upgrading database to version 3, adding userProfile table.");
        return tx.table('userProfile').add({ id: 1, xp: 0, level: 1, lastStreakCheck: '' });
+    });
+    
+    // Version 4 Schema (Adds userAchievements for gamification)
+    this.version(4).stores({
+      userAchievements: '&achievementId'
+    }).upgrade(tx => {
+      console.log("Upgrading database to version 4, adding userAchievements table.");
+      return;
     });
   }
 }

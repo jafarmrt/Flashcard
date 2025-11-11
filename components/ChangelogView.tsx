@@ -8,6 +8,21 @@ const changelogText = `# Changelog
 
 All notable changes to this project will be documented in this file.
 
+## [3.4.0] - Comprehensive Cloud Sync Fix
+- **Fix:** Resolved a critical data synchronization bug where user progress (study streak, XP, level, and achievements) was not synced between devices. The sync logic has been completely overhauled to include \`studyHistory\`, \`userProfile\`, and \`userAchievements\` data in addition to cards and decks.
+- **Improvement:** The server-side merge logic is now more intelligent, combining study logs from all devices and ensuring the user profile with the most progress (highest XP) is kept, preventing data loss.
+- **Result:** A user's entire application state, including their vital study streak, is now consistent across all devices linked with the same sync key.
+
+## [3.3.1] - Localization Fix
+- **Fix:** Translated the names and descriptions of all achievements from Persian to English to match the application's primary language.
+
+## [3.3.0] - Gamification: Achievements & Badges
+- **Feature:** Introduced a comprehensive achievements system to reward user milestones.
+- **Achievements:** Added a variety of unlockable medals for goals like maintaining a study streak, creating cards, leveling up, mastering a deck, and getting a perfect quiz score.
+- **UI/UX:** Created a new "Achievements" page, accessible from Settings, to display all possible medals and show which ones have been earned.
+- **Notifications:** Users now receive a toast notification when they unlock a new achievement, providing immediate positive feedback.
+- **Database:** Added a new \`userAchievements\` table to the local database to store progress.
+
 ## [3.2.0] - Gamification: XP, Levels & Streaks
 - **Feature:** Introduced the first phase of gamification to make learning more engaging.
 - **XP & Levels:** Users now earn Experience Points (XP) for completing activities like studying cards, creating new cards, and finishing practice quizzes. Gaining XP increases your user level.
@@ -50,7 +65,7 @@ All notable changes to this project will be documented in this file.
 ## [2.3.4] - Bulk Add Reliability & Speed
 - **Feature:** Overhauled the "Bulk Add" feature to be significantly faster and more reliable.
 - **Performance:** Implemented concurrent processing to fetch data for up to 3 words simultaneously, dramatically reducing the total time for large lists.
-- **Reliability:** Added a 5-second timeout for each word. If processing for a word gets stuck, it is automatically cancelled and the process moves to the next word.
+- **Reliability:** Added a 5-second timeout for each word. If a word's processing gets stuck, it is automatically cancelled and the process moves to the next word.
 - **Reliability:** Implemented a smart dictionary fallback. If the primary dictionary API doesn't respond within 2.5 seconds, the system automatically tries the secondary API.
 - **UI/UX:** The UI now provides much clearer feedback during processing, showing the status of each word (e.g., loading, done, timeout, error).
 - **UI/UX:** At the end of the process, a summary report is shown, informing the user of how many cards were created successfully and how many failed.
