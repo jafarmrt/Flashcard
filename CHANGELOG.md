@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.1.1] - Theme Switching Fix
+- **Fix:** Resolved a critical bug where the theme switcher (Light/Dark/System) in the Settings page was not working. The application's Tailwind CSS configuration was missing the necessary `darkMode: 'class'` setting, which prevented the theme from being applied correctly.
+- **Improvement:** The 'System' theme option is now more responsive. It will now automatically update the app's theme in real-time if the user changes their operating system's theme, without requiring a page refresh.
+
 ## [3.1.0] - Settings & Reliability
 - **Fix:** Resolved a critical bug where the in-app changelog failed to load due to a network error. The changelog content is now embedded directly into the app for instant and reliable offline access.
 

@@ -1,5 +1,5 @@
-// Fix: Changed the import to use a default import for `Dexie`. The class is the default export from the 'dexie' package. Using a named import { Dexie } was incorrect and caused the LinguaCardsDB class to not properly inherit from Dexie.
-import Dexie, { type Table } from 'dexie';
+// Fix: Use a named import for `Dexie`. The default import seems to be causing type resolution issues, which prevents `LinguaCardsDB` from inheriting `Dexie`'s methods and properties correctly. This resolves typing errors throughout the application.
+import { Dexie, type Table } from 'dexie';
 import { Flashcard, Deck, StudyLog } from '../types';
 
 export class LinguaCardsDB extends Dexie {
