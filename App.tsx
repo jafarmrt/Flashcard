@@ -42,10 +42,11 @@ const callProxy = async (action: 'sync-save' | 'sync-load' | 'sync-merge' | 'pin
 export const SyncView: React.FC<{ 
     syncKey: string;
     onSwitchProfile: (newKey: string) => void;
+    onSyncNow: () => void;
     syncStatus: SyncStatus;
     lastSyncDate: string | null;
     showToast: (message: string) => void;
-}> = ({ syncKey, onSwitchProfile, syncStatus, lastSyncDate, showToast }) => {
+}> = ({ syncKey, onSwitchProfile, onSyncNow, syncStatus, lastSyncDate, showToast }) => {
   const [pendingKey, setPendingKey] = useState(syncKey);
 
   useEffect(() => {
@@ -69,7 +70,7 @@ export const SyncView: React.FC<{
       return;
     }
     if (pendingKey === syncKey) {
-        showToast('This is your current profile key.');
+        showToast('To switch, please enter a different profile key.');
         return;
     }
     if (confirm('Switching profiles will ERASE all data on this device and replace it with data from the new profile. Are you sure?')) {
@@ -98,43 +99,58 @@ export const SyncView: React.FC<{
         <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100">Profile Sync</h3>
         <p className="text-slate-600 dark:text-slate-400 text-sm">
             Your profile is automatically saved to the cloud. Use your key to access your profile on other devices.
-            <strong className="block mt-2">Important: Save your key! It's the only way to access your profile.</strong>
         </p>
-        
-        <div>
-            <label htmlFor="sync-key" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Your Profile Key</label>
-            <div className="mt-1 flex gap-2">
-                <input 
-                    type="text" 
-                    id="sync-key"
-                    value={pendingKey}
-                    onChange={handleKeyChange}
-                    className="flex-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                    placeholder="enter-your-profile-key"
-                />
-                <button onClick={() => navigator.clipboard.writeText(pendingKey)} className="px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-200 dark:hover:bg-slate-600">Copy</button>
-            </div>
-             {!pendingKey && (
-                <button onClick={generateNewKey} className="mt-2 text-sm text-indigo-600 dark:text-indigo-400 hover:underline">
-                    Don't have a key? Generate one.
-                </button>
-            )}
-        </div>
-        
-        <div className="border-t border-slate-200 dark:border-slate-700 pt-6 space-y-4">
-            <h4 className="text-md font-medium text-slate-800 dark:text-slate-100">Switch Profile</h4>
-            <p className="text-sm text-slate-600 dark:text-slate-400">
-                To load a different profile, enter its key above and click the button below. Warning: This will replace all data on this device.
-            </p>
-            <button onClick={handleSwitch} disabled={!pendingKey} className="w-full flex justify-center items-center gap-2 px-4 py-3 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 border border-transparent rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                Load Profile & Overwrite Local Data
-            </button>
-        </div>
 
-        <div className="text-center text-sm text-slate-500 dark:text-slate-400 pt-4">
-            <p className={`font-medium ${color}`}>{icon} {text}</p>
-            {syncStatus === 'synced' && lastSyncDate && <p className="text-xs mt-1">Last save: {lastSyncDate}</p>}
+        {/* Section 1: Current Profile */}
+        <div className="space-y-4">
+            <div>
+                <label htmlFor="sync-key" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Your Profile Key</label>
+                <div className="mt-1 flex gap-2">
+                    <input 
+                        type="text" 
+                        id="sync-key"
+                        value={pendingKey}
+                        onChange={handleKeyChange}
+                        className="flex-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm"
+                        placeholder="enter-or-generate-a-key"
+                    />
+                    <button onClick={() => navigator.clipboard.writeText(pendingKey)} className="px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-200 dark:hover:bg-slate-600">Copy</button>
+                </div>
+                 {!pendingKey && (
+                    <button onClick={generateNewKey} className="mt-2 text-sm text-indigo-600 dark:text-indigo-400 hover:underline">
+                        Don't have a key? Generate one.
+                    </button>
+                )}
+            </div>
+             <button 
+                onClick={onSyncNow} 
+                disabled={syncStatus === 'syncing' || !pendingKey} 
+                className="w-full flex justify-center items-center gap-2 px-4 py-3 text-sm font-medium text-white bg-green-600 hover:bg-green-700 border border-transparent rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Save Profile to Cloud
+            </button>
+            
+            <div className="text-center text-sm text-slate-500 dark:text-slate-400">
+                <p className={`font-medium ${color}`}>{icon} {text}</p>
+                {syncStatus === 'synced' && lastSyncDate && <p className="text-xs mt-1">Last save: {lastSyncDate}</p>}
+            </div>
+        </div>
+        
+        {/* Section 2: Switch Profile */}
+        <div className="border-t border-slate-200 dark:border-slate-700 pt-6 space-y-4">
+            <h4 className="text-md font-medium text-slate-800 dark:text-slate-100">Switch to a Different Profile</h4>
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+                To load a different profile, enter its key above and click the button below. <strong className="text-red-500">Warning: This will replace all local data.</strong>
+            </p>
+            <button 
+                onClick={handleSwitch} 
+                disabled={!pendingKey || pendingKey === syncKey} 
+                className="w-full flex justify-center items-center gap-2 px-4 py-3 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 border border-transparent rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Switch & Overwrite Data
+            </button>
         </div>
     </div>
   );
@@ -364,6 +380,55 @@ const App: React.FC = () => {
       setUserProfile(updatedProfile);
   };
 
+  const handleSync = async (isManual = false) => {
+    if (!syncKey) {
+        if (isManual) showToast("No profile key set. Cannot sync.");
+        return;
+    }
+    setSyncStatus('syncing');
+    try {
+        const allStudyHistory = await db.studyHistory.toArray();
+        const localData = { 
+            decks, 
+            cards: flashcards,
+            studyHistory: allStudyHistory,
+            userProfile,
+            userAchievements: earnedAchievements,
+        };
+        const response = await callProxy('sync-merge', { syncKey, data: localData });
+        
+        const { data: mergedData } = response;
+        if (mergedData) {
+            await db.transaction('rw', [db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements], async () => {
+                await db.decks.clear();
+                await db.flashcards.clear();
+                await db.studyHistory.clear();
+                await db.userProfile.clear();
+                await db.userAchievements.clear();
+                
+                if (mergedData.decks) await db.decks.bulkPut(mergedData.decks);
+                if (mergedData.cards) await db.flashcards.bulkPut(mergedData.cards);
+                if (mergedData.studyHistory) await db.studyHistory.bulkPut(mergedData.studyHistory);
+                if (mergedData.userProfile) await db.userProfile.put(mergedData.userProfile);
+                if (mergedData.userAchievements) await db.userAchievements.bulkPut(mergedData.userAchievements);
+            });
+            await fetchData();
+        }
+        const now = new Date();
+        localStorage.setItem('lastSyncDate', now.toISOString());
+        setLastSyncDate(now.toLocaleString());
+        setSyncStatus('synced');
+        if (isManual) {
+            showToast('Profile synced with cloud!');
+        }
+    } catch (error) {
+        console.error('Sync failed:', error);
+        setSyncStatus('error');
+        if (isManual) {
+            showToast('Sync failed. Check connection.');
+        }
+    }
+};
 
   const handleLoadFromCloud = async (key: string) => {
     if (!key) return;
@@ -489,49 +554,10 @@ const App: React.FC = () => {
         return;
     };
 
-    setSyncStatus('syncing');
+    // Immediately show that changes are waiting to be synced.
+    setSyncStatus('syncing'); 
 
-    const handler = setTimeout(async () => {
-      try {
-        const allStudyHistory = await db.studyHistory.toArray();
-        const localData = { 
-            decks, 
-            cards: flashcards,
-            studyHistory: allStudyHistory,
-            userProfile,
-            userAchievements: earnedAchievements,
-        };
-        const response = await callProxy('sync-merge', { syncKey, data: localData });
-        
-        const { data: mergedData } = response;
-
-        if (mergedData) {
-            // Fix: Pass tables as an array to db.transaction to avoid exceeding argument limits.
-            await db.transaction('rw', [db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements], async () => {
-                await db.decks.clear();
-                await db.flashcards.clear();
-                await db.studyHistory.clear();
-                await db.userProfile.clear();
-                await db.userAchievements.clear();
-                
-                if (mergedData.decks) await db.decks.bulkPut(mergedData.decks);
-                if (mergedData.cards) await db.flashcards.bulkPut(mergedData.cards);
-                if (mergedData.studyHistory) await db.studyHistory.bulkPut(mergedData.studyHistory);
-                if (mergedData.userProfile) await db.userProfile.put(mergedData.userProfile);
-                if (mergedData.userAchievements) await db.userAchievements.bulkPut(mergedData.userAchievements);
-            });
-            await fetchData();
-        }
-
-        const now = new Date();
-        localStorage.setItem('lastSyncDate', now.toISOString());
-        setLastSyncDate(now.toLocaleString());
-        setSyncStatus('synced');
-      } catch (error) {
-        console.error('Auto-sync failed:', error);
-        setSyncStatus('error');
-      }
-    }, 2000); // 2-second debounce delay
+    const handler = setTimeout(() => handleSync(false), 2000); // 2-second debounce delay
 
     return () => {
       clearTimeout(handler);
@@ -895,6 +921,7 @@ const App: React.FC = () => {
                 <SyncView 
                     syncKey={syncKey} 
                     onSwitchProfile={handleSwitchProfile}
+                    onSyncNow={() => handleSync(true)}
                     syncStatus={syncStatus} 
                     lastSyncDate={lastSyncDate}
                     showToast={showToast}
