@@ -117,50 +117,19 @@ export interface InstructionalQuizQuestion {
 export const generateInstructionalQuiz = async (cards: Flashcard[]): Promise<InstructionalQuizQuestion[]> => {
     try {
         const targetWords = cards.map(c => c.front);
-        const prompt = `You are an expert Instructional Designer and Applied Linguist specializing in English vocabulary acquisition. Your task is to create a set of high-quality, multiple-choice quiz questions based on a provided list of target words. For each target word, you must follow this two-phase process strictly:
+        const prompt = `You are an English teacher creating a multiple-choice quiz. For each word in the provided list, do the following:
+1.  Write a clear sentence that uses the word in context. This will be the "sourceSentence".
+2.  Create a fill-in-the-blank question by replacing the target word in the sentence with "__________". This will be the "questionText".
+3.  Provide four options: the correct target word and three other plausible but incorrect English words that fit grammatically. The options should be an array of strings.
+4.  Identify the correct answer.
 
-**Phase 1: Context Generation**
-1.  **Analyze the Word:** For the given English [Target Word], identify its most common meaning and part of speech.
-2.  **Create a Source Sentence:** Write a clear, concise, and educational English sentence that uses the [Target Word] in its most common context. This sentence should provide strong contextual clues to the word's meaning.
+Generate a quiz for these words: ${JSON.stringify(targetWords)}
 
-**Phase 2: Question Design**
-1.  **Use the Cloze Template:** Take the source sentence you just created and replace the [Target Word] with a blank (__________), forming the main question text.
-2.  **Engineer Distractors:** Create three plausible but incorrect English distractor options. These distractors, along with the correct [Target Word], must all be the same part of speech and grammatically fit the blank. The distractors must be a clever mix of:
-    *   **Antonym:** The opposite of the target word.
-    *   **Close Semantic Competitor:** A word with a similar but incorrect meaning in context.
-    *   **Phonetic/Orthographic Similarity:** A word that looks or sounds similar.
-    *   **Contextual Mismatch:** A word that is plausible in general but doesn't fit the specific sentence context.
-3.  **Finalize the Question:** Assemble the question, the four options (including the correct answer), and identify the correct option. Randomize the position of the correct answer among the four options.
-
-**Input:**
-You will be given a JSON array of English target words.
-
-**Output Format (MANDATORY):**
-You MUST return a single JSON object containing a key "questions" which is an array of JSON objects. Each object in the array must strictly adhere to the following structure:
-
-{
-  "targetWord": "string",
-  "sourceSentence": "string",
-  "questionText": "string",
-  "options": ["string", "string", "string", "string"],
-  "correctAnswer": "string"
-}
-
-Example for one question:
-{
-  "targetWord": "Ephemeral",
-  "sourceSentence": "The beauty of the cherry blossoms is ephemeral, lasting only for a week or two.",
-  "questionText": "The beauty of the cherry blossoms is __________, lasting only for a week or two.",
-  "options": ["Permanent", "Delicate", "Ephemeral", "Empirical"],
-  "correctAnswer": "Ephemeral"
-}
-
-Now, generate the questions for the following list of words:
-${JSON.stringify(targetWords)}
+Return the output as a single JSON object with a key "questions", which is an array of objects. Each object must have these keys: "targetWord", "sourceSentence", "questionText", "options", and "correctAnswer".
 `;
 
         const response = await callProxy({
-            model: "gemini-2.5-pro",
+            model: "gemini-2.5-flash", // Use the faster model
             contents: prompt,
             config: {
                 responseMimeType: "application/json",

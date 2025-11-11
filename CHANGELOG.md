@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.6] - Practice Quiz Timeout Fix
+- **Fix:** Resolved a persistent timeout error in the "Practice" feature. The AI prompt for generating quiz questions was overly complex, causing delays.
+- **Improvement:** The AI prompt has been simplified to be more direct, reducing processing time.
+- **Performance:** Switched to a faster AI model (`gemini-2.5-flash`) for quiz generation, making the feature significantly more responsive and reliable.
+
 ## [2.3.5] - Bulk Add Timeout & Parallelism Fix
 - **Fix:** Resolved a critical bug in the "Bulk Add" feature where all words would fail with a timeout error. The root cause was that API calls were being made sequentially (one after another), which took too long. The logic has been re-engineered to run the dictionary and AI API calls in parallel (at the same time), which drastically speeds up the process for each word.
 - **Improvement:** The overall timeout for each word has been increased from 5 to 7 seconds as a safety buffer, making the feature more resilient to slow network conditions.
