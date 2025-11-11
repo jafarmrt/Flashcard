@@ -20,94 +20,89 @@ const SettingsView: React.FC<SettingsViewProps> = ({
     onNavigateToChangelog,
     syncView
 }) => {
-    const importFileRef = useRef<HTMLInputElement>(null);
-    const APP_VERSION = '2.3.6';
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleImportClick = () => {
-        importFileRef.current?.click();
+        fileInputRef.current?.click();
     };
 
-    const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const text = e.target?.result as string;
-            onImportCSV(text);
-        };
-        reader.readAsText(file);
-        event.target.value = ''; // Reset file input
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const text = e.target?.result as string;
+                onImportCSV(text);
+            };
+            reader.readAsText(file);
+        }
+        // Reset file input to allow re-uploading the same file
+        event.target.value = '';
     };
-    
-    const SettingRow: React.FC<{ title: string; description: string; children: React.ReactNode }> = ({ title, description, children }) => (
-        <div className="flex flex-col sm:flex-row justify-between sm:items-center p-4 border-b border-slate-200 dark:border-slate-700 last:border-b-0">
-            <div>
-                <h4 className="font-semibold text-slate-800 dark:text-slate-100">{title}</h4>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{description}</p>
-            </div>
-            <div className="mt-4 sm:mt-0 flex-shrink-0">{children}</div>
-        </div>
-    );
 
     return (
         <div className="max-w-3xl mx-auto space-y-8">
             <h2 className="text-3xl font-bold text-slate-800 dark:text-slate-100">Settings</h2>
 
+            {/* Sync View */}
+            {syncView}
+            
             {/* General Settings */}
-            <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm overflow-hidden">
-                <h3 className="text-lg font-bold p-4 bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-700">General</h3>
-                <SettingRow title="App Version" description="Current version of the application.">
-                    <div className="flex items-center gap-2">
-                         <span className="px-3 py-1 bg-slate-200 dark:bg-slate-700 text-sm font-medium rounded-full">{APP_VERSION}</span>
-                         <button onClick={onNavigateToChangelog} className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline">View Changelog</button>
+            <div className="bg-slate-100 dark:bg-slate-900/50 p-6 rounded-lg border border-slate-200 dark:border-slate-700">
+                <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100 mb-4">General</h3>
+                <div className="space-y-4">
+                    {/* Theme */}
+                    <div>
+                        <label htmlFor="theme-select" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Theme</label>
+                        <select
+                            id="theme-select"
+                            value={settings.theme}
+                            onChange={(e) => onUpdateSettings({ theme: e.target.value as Settings['theme'] })}
+                            className="mt-1 block w-full max-w-xs pl-3 pr-10 py-2 text-base border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
+                        >
+                            <option value="light">Light</option>
+                            <option value="dark">Dark</option>
+                            <option value="system">System</option>
+                        </select>
                     </div>
-                </SettingRow>
-                <SettingRow title="Appearance" description="Choose a light or dark theme, or follow your system.">
-                    <div className="flex items-center gap-2 p-1 bg-slate-200 dark:bg-slate-700 rounded-lg text-sm">
-                        {(['Light', 'Dark', 'System'] as const).map(theme => (
-                            <button 
-                                key={theme} 
-                                onClick={() => onUpdateSettings({ theme: theme.toLowerCase() as Settings['theme'] })} 
-                                className={`px-3 py-1 rounded-md transition-colors ${settings.theme === theme.toLowerCase() ? 'bg-white dark:bg-slate-600 shadow' : 'hover:bg-white/50 dark:hover:bg-slate-600/50'}`}>
-                                {theme}
-                            </button>
-                        ))}
+                     {/* Default Dictionary API */}
+                    <div>
+                        <label htmlFor="api-select" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Default Dictionary Source</label>
+                        <select
+                            id="api-select"
+                            value={settings.defaultApiSource}
+                            onChange={(e) => onUpdateSettings({ defaultApiSource: e.target.value as Settings['defaultApiSource'] })}
+                            className="mt-1 block w-full max-w-xs pl-3 pr-10 py-2 text-base border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
+                        >
+                            <option value="free">Free Dictionary (Faster, less detail)</option>
+                            <option value="mw">Merriam-Webster (Slower, more detail)</option>
+                        </select>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Select the primary source for fetching word details.</p>
                     </div>
-                </SettingRow>
-                 <SettingRow title="Default Dictionary" description="Select the default source for fetching new card details.">
-                     <select 
-                        value={settings.defaultApiSource} 
-                        onChange={e => onUpdateSettings({ defaultApiSource: e.target.value as Settings['defaultApiSource'] })} 
-                        className="block w-full max-w-xs pl-3 pr-10 py-2 text-base border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
-                    >
-                        <option value="free">Free Dictionary</option>
-                        <option value="mw">Merriam-Webster</option>
-                    </select>
-                </SettingRow>
+                </div>
             </div>
 
             {/* Data Management */}
-            <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm overflow-hidden">
-                 <h3 className="text-lg font-bold p-4 bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-700">Data Management</h3>
-                 <SettingRow title="Import / Export" description="Save your data to a CSV file or load data from one.">
-                    <div className="flex gap-2">
-                        <input type="file" ref={importFileRef} onChange={handleFileImport} accept=".csv" className="hidden" />
-                        <button onClick={handleImportClick} className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">Import CSV</button>
-                        <button onClick={onExportCSV} className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">Export CSV</button>
-                    </div>
-                 </SettingRow>
-                 <div className="p-4">
-                    {syncView}
-                 </div>
+            <div className="bg-slate-100 dark:bg-slate-900/50 p-6 rounded-lg border border-slate-200 dark:border-slate-700">
+                <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100 mb-4">Data Management</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <button onClick={onExportCSV} className="w-full px-4 py-3 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">Export All Cards (CSV)</button>
+                    <button onClick={handleImportClick} className="w-full px-4 py-3 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">Import Cards (CSV)</button>
+                    <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".csv" className="hidden" />
+                </div>
             </div>
             
-            {/* Danger Zone */}
-            <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm overflow-hidden border border-red-500/30 dark:border-red-500/50">
-                <h3 className="text-lg font-bold p-4 bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 border-b border-red-200 dark:border-red-500/50">Danger Zone</h3>
-                <SettingRow title="Reset Application" description="Permanently delete all local decks and cards. This cannot be undone.">
-                    <button onClick={onResetApp} className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md transition-colors">Reset App</button>
-                </SettingRow>
+            {/* About & Danger Zone */}
+            <div className="space-y-8">
+                 <div className="bg-slate-100 dark:bg-slate-900/50 p-6 rounded-lg border border-slate-200 dark:border-slate-700">
+                     <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100 mb-4">About</h3>
+                     <button onClick={onNavigateToChangelog} className="text-indigo-600 dark:text-indigo-400 hover:underline">View Version History & Changelog</button>
+                </div>
+                <div className="bg-red-50 dark:bg-red-900/20 p-6 rounded-lg border border-red-200 dark:border-red-700/50">
+                    <h3 className="text-xl font-bold text-red-800 dark:text-red-200 mb-2">Danger Zone</h3>
+                    <p className="text-sm text-red-700 dark:text-red-300 mb-4">This action is irreversible. All your local flashcards and decks will be permanently deleted.</p>
+                    <button onClick={onResetApp} className="w-full sm:w-auto px-4 py-3 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md transition-colors">Reset Application</button>
+                </div>
             </div>
         </div>
     );
