@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Flashcard, Deck, Settings } from './types';
 import { db } from './services/localDBService';
@@ -656,8 +657,8 @@ const App: React.FC = () => {
   }
 
   const handleRenameDeck = async (deckId: string, newName: string) => {
-    // Fix: Explicitly type the parameter 'd' to resolve a potential type inference issue.
-    const existingDeck = decks.find((d: Deck) => d.name.toLowerCase() === newName.toLowerCase() && !d.isDeleted);
+    // Fix: Add an explicit type to `existingDeck` to prevent it from being inferred as `unknown`.
+    const existingDeck: Deck | undefined = decks.find((d: Deck) => d.name.toLowerCase() === newName.toLowerCase() && !d.isDeleted);
     if (existingDeck && existingDeck.id !== deckId) {
         showToast('A deck with this name already exists.');
         return;

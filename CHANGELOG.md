@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.3] - Cloud Sync Data Integrity Fix
+- **Fix:** Resolved a critical data integrity bug in the cloud sync feature where deleted cards and decks could reappear. The server-side merge logic was flawed, allowing devices with old data to "undelete" items. The logic is now "deletion-aware," ensuring that once an item is deleted, it stays deleted across all synced devices. This prevents "ghost" cards from appearing in the Study view and ensures data consistency.
+
 ## [2.3.2] - Data Consistency Fix
 - **Fix:** Resolved a critical data consistency bug where deleting a deck would not reliably delete all of its associated cards. This caused "ghost" cards to appear in the Study view even after they were supposed to be deleted. The deletion logic now correctly reads from the database within an atomic transaction to ensure all cards are removed, preventing this issue.
 

@@ -1,4 +1,5 @@
 
+
 import React, { useState } from 'react';
 import { Flashcard } from '../types';
 import { generateInstructionalQuiz, InstructionalQuizQuestion } from '../services/geminiService';
@@ -7,7 +8,8 @@ interface PracticeViewProps {
   cards: Flashcard[];
 }
 
-const shuffleArray = <T,>(array: T[]): T[] => {
+// Fix: Make the shuffle function specific to Flashcard[] to avoid generic type inference issues.
+const shuffleArray = (array: Flashcard[]): Flashcard[] => {
   return [...array].sort(() => Math.random() - 0.5);
 };
 

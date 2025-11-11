@@ -176,21 +176,40 @@ async function handleSyncMerge(payload: any, response: VercelResponse) {
     }
   }
 
-  // 2. Merge client data and cloud data
-  const mergedDecksMap = new Map<string, Deck>();
-  (cloudData.decks || []).forEach(deck => mergedDecksMap.set(deck.id, deck));
-  (clientData.decks || []).forEach(deck => mergedDecksMap.set(deck.id, deck));
+  // 2. Perform a deletion-aware merge. This is the core fix.
+  const merge = <T extends { id: string; isDeleted?: boolean }>(cloudItems: T[], clientItems: T[]): T[] => {
+    const mergedMap = new Map<string, T>();
+    
+    // Start with all items from the cloud
+    (cloudItems || []).forEach(item => mergedMap.set(item.id, item));
+    
+    // Merge in items from the client
+    (clientItems || []).forEach(clientItem => {
+      const cloudItem = mergedMap.get(clientItem.id);
+      
+      if (cloudItem) {
+        // Item exists on both. The merged item is deleted if EITHER version is deleted.
+        const isDeleted = cloudItem.isDeleted || clientItem.isDeleted;
+        // We take the client's version of the data but enforce the final deletion status.
+        mergedMap.set(clientItem.id, { ...clientItem, isDeleted });
+      } else {
+        // Item is new from the client, just add it.
+        mergedMap.set(clientItem.id, clientItem);
+      }
+    });
 
-  const mergedCardsMap = new Map<string, Flashcard>();
-  (cloudData.cards || []).forEach(card => mergedCardsMap.set(card.id, card));
-  (clientData.cards || []).forEach(card => mergedCardsMap.set(card.id, card));
-
-  const mergedData: SyncData = {
-    decks: Array.from(mergedDecksMap.values()),
-    cards: Array.from(mergedCardsMap.values()),
+    return Array.from(mergedMap.values());
   };
 
-  // 3. Save the merged data back to the cloud
+  const mergedDecks = merge<Deck>(cloudData.decks, clientData.decks);
+  const mergedCards = merge<Flashcard>(cloudData.cards, clientData.cards);
+
+  const mergedData: SyncData = {
+    decks: mergedDecks,
+    cards: mergedCards,
+  };
+
+  // 3. Save the correctly merged data back to the cloud
   const setResponse = await fetch(`${KV_URL}/set/${syncKey}`, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${KV_TOKEN}` },
