@@ -4,6 +4,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.3.1] - Settings UI Fixes
+- **Fix:** Resolved a critical bug where the theme switcher (Light/Dark/System) was not functional. Replaced the static Tailwind CSS file with the modern JIT CDN script to correctly enable dark mode class variants.
+- **UI/UX:** Improved the visual contrast of active options in the Settings page. The selected theme and default dictionary buttons now have a distinct, high-contrast style in dark mode, making the current selection clear.
+
+## [4.3.0] - Profile Page Revamp
+- **Feature:** Revamped the **User Profile** page to create a more engaging and rewarding experience.
+- **UI/UX:** Replaced the plain "Recent Activity" log with a new **"Recent Achievements"** section. This visually highlights the user's latest unlocked medals, making their accomplishments more prominent.
+- **UI/UX:** Added a convenient "View All" button to the new achievements section, allowing users to navigate directly to their full collection of medals from their profile.
+- **Improvement:** This change shifts the focus of the profile from a simple activity list to a showcase of the user's progress and milestones.
+
 ## [4.2.0] - UI Refresh & Dashboard
 - **Feature:** Introduced a major UI/UX refresh for the main "Decks" screen to create a more modern, engaging, and informative user experience.
 - **UI/UX:** Replaced the separate gamification widgets with a single, consolidated **Dashboard** header. This new component neatly organizes the Study Streak, Level/XP Progress, and a summary of Daily Goals into one sleek, at-a-glance view.

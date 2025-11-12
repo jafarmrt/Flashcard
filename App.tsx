@@ -882,7 +882,14 @@ const App: React.FC = () => {
       case 'ACHIEVEMENTS':
         return <AchievementsView earnedAchievements={earnedAchievements} onBack={() => setView('SETTINGS')} />;
       case 'PROFILE':
-        return <ProfileView userProfile={userProfile} streak={streak} onSave={handleSaveProfile} onBack={() => setView('SETTINGS')} />;
+        return <ProfileView 
+            userProfile={userProfile} 
+            streak={streak} 
+            onSave={handleSaveProfile} 
+            onBack={() => setView('SETTINGS')}
+            earnedAchievements={earnedAchievements}
+            onNavigateToAchievements={() => setView('ACHIEVEMENTS')}
+        />;
       case 'BULK_ADD':
         return <BulkAddView 
             onSave={handleBulkSaveCards}

@@ -1,29 +1,28 @@
-import React, { useState, useEffect } from 'react';
-import { UserProfile, StudyLog } from '../types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { UserProfile, UserAchievement, Achievement } from '../types';
+import { ALL_ACHIEVEMENTS } from '../services/achievements';
 import { StreakCounter, LevelProgressBar } from './GamificationWidgets';
-import { db } from '../services/localDBService';
 
 interface ProfileViewProps {
   userProfile: UserProfile | null;
   streak: number;
+  earnedAchievements: UserAchievement[];
   onSave: (profileData: Partial<UserProfile>) => void;
   onBack: () => void;
+  onNavigateToAchievements: () => void;
 }
 
 const EditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>;
 
-export const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, streak, onSave, onBack }) => {
+export const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, streak, earnedAchievements, onSave, onBack, onNavigateToAchievements }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState<Partial<UserProfile>>({
     firstName: '',
     lastName: '',
     bio: ''
   });
-  const [recentActivity, setRecentActivity] = useState<StudyLog[]>([]);
 
   useEffect(() => {
-    // Only reset form data from props when NOT in edit mode.
-    // This prevents background syncs from overwriting user input.
     if (userProfile && !isEditing) {
       setFormData({
         firstName: userProfile.firstName || '',
@@ -31,13 +30,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, streak, o
         bio: userProfile.bio || ''
       });
     }
-    
-    const fetchActivity = async () => {
-        const logs = await db.studyHistory.orderBy('id').reverse().limit(5).toArray();
-        setRecentActivity(logs);
-    };
-    fetchActivity();
-
   }, [userProfile, isEditing]);
   
   const handleSave = () => {
@@ -46,7 +38,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, streak, o
   }
 
   const handleCancel = () => {
-    // Revert form to its original state from props when cancelling
     if (userProfile) {
         setFormData({
             firstName: userProfile.firstName || '',
@@ -56,6 +47,16 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, streak, o
     }
     setIsEditing(false);
   };
+
+  const achievementsById = useMemo(() => new Map(ALL_ACHIEVEMENTS.map(a => [a.id, a])), []);
+
+  const recentAchievements = useMemo(() => {
+      return [...earnedAchievements]
+          .sort((a, b) => new Date(b.dateEarned).getTime() - new Date(a.dateEarned).getTime())
+          .slice(0, 5)
+          .map(ea => achievementsById.get(ea.achievementId))
+          .filter((a): a is Achievement => a !== undefined);
+  }, [earnedAchievements, achievementsById]);
 
   if (!userProfile) {
     return <div className="text-center p-10">Loading profile...</div>;
@@ -117,20 +118,23 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, streak, o
           <LevelProgressBar userProfile={userProfile} />
       </div>
 
-      {/* Recent Activity */}
+      {/* Recent Achievements */}
       <div className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-sm">
-        <h3 className="text-lg font-medium text-slate-500 dark:text-slate-400 mb-4">Recent Activity</h3>
-        {recentActivity.length > 0 ? (
-            <ul className="space-y-3">
-                {recentActivity.map(log => (
-                    <li key={log.id} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-700/50 rounded-md text-sm">
-                        <span className="font-semibold text-slate-700 dark:text-slate-200">Reviewed a card</span>
-                        <span className="text-slate-500 dark:text-slate-400">{new Date(log.date).toLocaleDateString()}</span>
-                    </li>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-medium text-slate-500 dark:text-slate-400">Recent Achievements</h3>
+          <button onClick={onNavigateToAchievements} className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">View All</button>
+        </div>
+        {recentAchievements.length > 0 ? (
+            <div className="flex flex-wrap gap-4">
+                {recentAchievements.map(ach => (
+                    <div key={ach.id} className="flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-700/50 rounded-md text-sm" title={`${ach.name}: ${ach.description}`}>
+                        <span className="text-2xl">{ach.icon}</span>
+                        <span className="font-semibold text-slate-700 dark:text-slate-200">{ach.name}</span>
+                    </div>
                 ))}
-            </ul>
+            </div>
         ) : (
-            <p className="text-center text-slate-500 dark:text-slate-400 py-4">No recent activity. Start a study session!</p>
+            <p className="text-center text-slate-500 dark:text-slate-400 py-4">No achievements unlocked yet. Keep studying!</p>
         )}
       </div>
 
