@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.0.0] - User Authentication System
+- **Major Feature:** Replaced the "Profile Sync Key" system with a standard **username and password authentication system**. This provides a more traditional, secure, and user-friendly way to manage accounts.
+- **UI/UX:** Added a new **Login and Registration screen** that greets users when they first open the app.
+- **Data Storage:** All cloud data (decks, cards, progress) is now securely tied to a user's account, not a shareable key.
+- **Improvement:** Removed the "Profile Sync" section from the Settings page and replaced it with a simpler "Account" section showing the currently logged-in user and a "Logout" button.
+- **Security:** Data is now properly namespaced per user on the backend, preventing any potential data crossover between accounts.
+
+## [3.5.3] - Navigation Improvement
+- **Improvement:** Clarified the main navigation by removing the "All Cards" button from the header. The "Decks" view is now the clear starting point for managing your content. The flat "All Cards" list is still accessible via a button on the Decks screen, creating a more intuitive and hierarchical user flow.
+
 ## [3.5.2] - Critical Profile Sync Fix
 - **Fix:** Resolved a critical data loss bug where user profile information (name, bio) would disappear after being saved. The issue was caused by an incorrect cloud sync logic that discarded text changes if the user's XP hadn't increased. The sync mechanism has been rebuilt to use a timestamp, ensuring that the most recently edited profile data is always preserved across all devices.
 

@@ -17,14 +17,16 @@ import { BulkAddView } from './components/BulkAddView';
 import { StudySetupModal } from './components/StudySetupModal';
 import { AchievementsView } from './components/AchievementsView';
 import { ProfileView } from './components/ProfileView';
+import { AuthView } from './components/AuthView';
 
 type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS' | 'PROFILE';
 type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 type HealthStatus = 'ok' | 'error' | 'checking';
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted'>;
+type User = { username: string };
 
 // --- API Helper ---
-const callProxy = async (action: 'sync-save' | 'sync-load' | 'sync-merge' | 'ping' | 'ping-free-dict' | 'ping-mw' | 'gemini-generate' | 'dictionary-free' | 'dictionary-mw', payload: object) => {
+const callProxy = async (action: 'auth-register' | 'auth-login' | 'sync-load' | 'sync-merge' | 'ping' | 'ping-free-dict' | 'ping-mw' | 'gemini-generate' | 'dictionary-free' | 'dictionary-mw', payload: object) => {
     const response = await fetch('/api/proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -36,126 +38,6 @@ const callProxy = async (action: 'sync-save' | 'sync-load' | 'sync-merge' | 'pin
     }
     return response.json();
 };
-
-
-// --- SyncView Component (Now nested inside Settings) ---
-export const SyncView: React.FC<{ 
-    syncKey: string;
-    onSwitchProfile: (newKey: string) => void;
-    onSyncNow: () => void;
-    syncStatus: SyncStatus;
-    lastSyncDate: string | null;
-    showToast: (message: string) => void;
-}> = ({ syncKey, onSwitchProfile, onSyncNow, syncStatus, lastSyncDate, showToast }) => {
-  const [pendingKey, setPendingKey] = useState(syncKey);
-
-  useEffect(() => {
-    setPendingKey(syncKey);
-  }, [syncKey]);
-
-  const generateNewKey = () => {
-    const adjectives = ['happy', 'blue', 'green', 'brave', 'calm', 'bright', 'clever', 'eager', 'gentle', 'gold', 'silver', 'red'];
-    const nouns = ['ocean', 'river', 'fox', 'lion', 'tiger', 'mountain', 'forest', 'cat', 'dog', 'whale', 'sky'];
-    const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
-    const noun = nouns[Math.floor(Math.random() * nouns.length)];
-    const num = Math.floor(Math.random() * 100);
-    const newKey = `${adj}-${noun}-${num}`;
-    setPendingKey(newKey);
-    showToast('New Profile Key generated!');
-  };
-
-  const handleSwitch = () => {
-    if (!pendingKey) {
-      showToast('Please enter or generate a Profile Key.');
-      return;
-    }
-    if (pendingKey === syncKey) {
-        showToast('To switch, please enter a different profile key.');
-        return;
-    }
-    if (confirm('Switching profiles will ERASE all data on this device and replace it with data from the new profile. Are you sure?')) {
-      onSwitchProfile(pendingKey);
-    }
-  };
-  
-  const handleKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const newKey = e.target.value.toLowerCase().replace(/\s+/g, '-');
-      setPendingKey(newKey);
-  }
-
-  const getStatusText = () => {
-    switch(syncStatus) {
-        case 'syncing': return { text: 'Syncing profile...', icon: '🔄', color: 'text-slate-500 dark:text-slate-400 animate-pulse' };
-        case 'synced': return { text: `Profile synced`, icon: '✅', color: 'text-green-600 dark:text-green-400' };
-        case 'error': return { text: 'Sync failed. Check connection.', icon: '⚠️', color: 'text-red-600 dark:text-red-400' };
-        default: return { text: 'Changes are saved locally.', icon: '🏠', color: 'text-slate-500 dark:text-slate-400' };
-    }
-  }
-  
-  const {text, icon, color} = getStatusText();
-
-  return (
-    <div className="bg-slate-100 dark:bg-slate-900/50 p-6 rounded-lg space-y-6 border border-slate-200 dark:border-slate-700">
-        <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100">Profile Sync</h3>
-        <p className="text-slate-600 dark:text-slate-400 text-sm">
-            Your profile is automatically saved to the cloud. Use your key to access your profile on other devices.
-        </p>
-
-        {/* Section 1: Current Profile */}
-        <div className="space-y-4">
-            <div>
-                <label htmlFor="sync-key" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Your Profile Key</label>
-                <div className="mt-1 flex gap-2">
-                    <input 
-                        type="text" 
-                        id="sync-key"
-                        value={pendingKey}
-                        onChange={handleKeyChange}
-                        className="flex-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm"
-                        placeholder="enter-or-generate-a-key"
-                    />
-                    <button onClick={() => navigator.clipboard.writeText(pendingKey)} className="px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-200 dark:hover:bg-slate-600">Copy</button>
-                </div>
-                 {!pendingKey && (
-                    <button onClick={generateNewKey} className="mt-2 text-sm text-indigo-600 dark:text-indigo-400 hover:underline">
-                        Don't have a key? Generate one.
-                    </button>
-                )}
-            </div>
-             <button 
-                onClick={onSyncNow} 
-                disabled={syncStatus === 'syncing' || !pendingKey} 
-                className="w-full flex justify-center items-center gap-2 px-4 py-3 text-sm font-medium text-white bg-green-600 hover:bg-green-700 border border-transparent rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                Save Profile to Cloud
-            </button>
-            
-            <div className="text-center text-sm text-slate-500 dark:text-slate-400">
-                <p className={`font-medium ${color}`}>{icon} {text}</p>
-                {syncStatus === 'synced' && lastSyncDate && <p className="text-xs mt-1">Last save: {lastSyncDate}</p>}
-            </div>
-        </div>
-        
-        {/* Section 2: Switch Profile */}
-        <div className="border-t border-slate-200 dark:border-slate-700 pt-6 space-y-4">
-            <h4 className="text-md font-medium text-slate-800 dark:text-slate-100">Switch to a Different Profile</h4>
-            <p className="text-sm text-slate-600 dark:text-slate-400">
-                To load a different profile, enter its key above and click the button below. <strong className="text-red-500">Warning: This will replace all local data.</strong>
-            </p>
-            <button 
-                onClick={handleSwitch} 
-                disabled={!pendingKey || pendingKey === syncKey} 
-                className="w-full flex justify-center items-center gap-2 px-4 py-3 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 border border-transparent rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                Switch & Overwrite Data
-            </button>
-        </div>
-    </div>
-  );
-};
-
 
 const convertToCSV = (cards: Flashcard[], decks: Deck[]): string => {
   const decksById = new Map(decks.map(deck => [deck.id, deck.name]));
@@ -270,22 +152,35 @@ const defaultSettings: Settings = {
 };
 
 const App: React.FC = () => {
+  // App State
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
   const [decks, setDecks] = useState<Deck[]>([]);
   const [view, setView] = useState<View>('DECKS');
   const [editingCard, setEditingCard] = useState<Flashcard | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [syncKey, setSyncKey] = useState('');
+  
+  // Auth State
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(false); // For login/register spinners
+  const [appLoading, setAppLoading] = useState(true); // For initial session check
+
+  // Sync State
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
-  const [lastSyncDate, setLastSyncDate] = useState<string | null>(null);
+
+  // Study State
   const [studyDeckId, setStudyDeckId] = useState<string | null>(null);
   const [studyCards, setStudyCards] = useState<Flashcard[]>([]);
   const [isStudySetupModalOpen, setIsStudySetupModalOpen] = useState(false);
+  
+  // Health & Settings
   const [dbStatus, setDbStatus] = useState<HealthStatus>('checking');
   const [apiStatus, setApiStatus] = useState<HealthStatus>('checking');
   const [freeDictApiStatus, setFreeDictApiStatus] = useState<HealthStatus>('checking');
   const [mwDictApiStatus, setMwDictApiStatus] = useState<HealthStatus>('checking');
   const [settings, setSettings] = useState<Settings>(defaultSettings);
+  
+  // Gamification State
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [streak, setStreak] = useState(0);
   const [earnedAchievements, setEarnedAchievements] = useState<UserAchievement[]>([]);
@@ -380,11 +275,9 @@ const App: React.FC = () => {
       setUserProfile(updatedProfile);
   };
 
-  const handleSync = async (isManual = false) => {
-    if (!syncKey) {
-        if (isManual) showToast("No profile key set. Cannot sync.");
-        return;
-    }
+  const handleSync = async () => {
+    if (!currentUser?.username) return;
+
     setSyncStatus('syncing');
     try {
         const allStudyHistory = await db.studyHistory.toArray();
@@ -395,7 +288,7 @@ const App: React.FC = () => {
             userProfile,
             userAchievements: earnedAchievements,
         };
-        const response = await callProxy('sync-merge', { syncKey, data: localData });
+        const response = await callProxy('sync-merge', { username: currentUser.username, data: localData });
         
         const { data: mergedData } = response;
         if (mergedData) {
@@ -414,163 +307,102 @@ const App: React.FC = () => {
             });
             await fetchData();
         }
-        const now = new Date();
-        localStorage.setItem('lastSyncDate', now.toISOString());
-        setLastSyncDate(now.toLocaleString());
         setSyncStatus('synced');
-        if (isManual) {
-            showToast('Profile synced with cloud!');
-        }
     } catch (error) {
         console.error('Sync failed:', error);
         setSyncStatus('error');
-        if (isManual) {
-            showToast('Sync failed. Check connection.');
-        }
     }
 };
 
-  const handleLoadFromCloud = async (key: string) => {
-    if (!key) return;
-
+  const loadDataFromCloud = async (username: string) => {
+    if (!username) return;
     setSyncStatus('syncing');
     try {
-      const response = await callProxy('sync-load', { syncKey: key });
+      await db.delete().then(() => db.open()); // Clear local DB before loading
+      
+      const response = await callProxy('sync-load', { username });
       if (response.data) {
         const { decks, cards, studyHistory, userProfile, userAchievements } = response.data;
-        // Fix: Pass tables as an array to db.transaction to avoid exceeding argument limits.
         await db.transaction('rw', [db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements], async () => {
-            await db.decks.clear();
-            await db.flashcards.clear();
-            await db.studyHistory.clear();
-            await db.userProfile.clear();
-            await db.userAchievements.clear();
-            
             if (decks) await db.decks.bulkPut(decks);
             if (cards) await db.flashcards.bulkPut(cards);
             if (studyHistory) await db.studyHistory.bulkPut(studyHistory);
             if (userProfile) await db.userProfile.put(userProfile);
             if (userAchievements) await db.userAchievements.bulkPut(userAchievements);
         });
-        await fetchData(); // Refresh state from DB
-        showToast('Profile loaded successfully from cloud!');
-        setSyncStatus('synced');
-      } else {
-        showToast('No cloud data found for this profile. Starting fresh.');
-        setSyncStatus('idle');
       }
+      await fetchData(); // Refresh state from DB
+      setSyncStatus('synced');
+      showToast('Profile loaded successfully!');
     } catch (error) {
       console.error("Failed to load from cloud", error);
-      showToast('Failed to load profile from cloud. Using local data.');
+      showToast('Failed to load profile. Please try again.');
       setSyncStatus('error');
     }
   };
   
-  // Effect for initial load and health checks
+  // Effect for initial session check
   useEffect(() => {
-    const savedKey = localStorage.getItem('syncKey') || '';
-    setSyncKey(savedKey);
-    const lastSync = localStorage.getItem('lastSyncDate');
-     if (lastSync) {
-      setLastSyncDate(new Date(lastSync).toLocaleString());
-    }
+    const checkSession = async () => {
+        const savedUser = sessionStorage.getItem('currentUser');
+        if (savedUser) {
+            const user: User = JSON.parse(savedUser);
+            setCurrentUser(user);
+            setIsLoggedIn(true);
+            await db.open();
+            await fetchData();
+        }
+        setAppLoading(false);
+    };
+
+    checkSession();
     
     // Load settings
     const savedSettings = localStorage.getItem('appSettings');
     if (savedSettings) {
         setSettings(JSON.parse(savedSettings));
     }
-
-    const initialLoad = async () => {
-        await db.open(); // Ensure DB is open
-        await fetchData();
-        if (savedKey) {
-          await handleLoadFromCloud(savedKey);
-        }
-        setDbStatus(db.isOpen() ? 'ok' : 'error');
-    };
-    initialLoad().then(() => {
-        isInitialMount.current = false;
-    });
-
-    const checkGeminiApi = async () => {
-      try {
-        await callProxy('ping', {});
-        setApiStatus('ok');
-      } catch (e) {
-        setApiStatus('error');
-      }
-    };
-    checkGeminiApi();
-
-    const checkFreeDictApi = async () => {
-      try {
-        await callProxy('ping-free-dict', {});
-        setFreeDictApiStatus('ok');
-      } catch (e) {
-        setFreeDictApiStatus('error');
-      }
-    };
-    checkFreeDictApi();
     
-    const checkMwDictApi = async () => {
-      try {
-        await callProxy('ping-mw', {});
-        setMwDictApiStatus('ok');
-      } catch (e) {
-        setMwDictApiStatus('error');
-      }
-    };
-    checkMwDictApi();
+    // Health Checks
+    const checkApis = async () => {
+        try { await callProxy('ping', {}); setApiStatus('ok'); } catch (e) { setApiStatus('error'); }
+        try { await callProxy('ping-free-dict', {}); setFreeDictApiStatus('ok'); } catch (e) { setFreeDictApiStatus('error'); }
+        try { await callProxy('ping-mw', {}); setMwDictApiStatus('ok'); } catch (e) { setMwDictApiStatus('error'); }
+    }
+    checkApis();
+    db.open().then(() => setDbStatus('ok')).catch(() => setDbStatus('error'));
 
   }, []);
 
   // Effect for applying theme
   useEffect(() => {
     const root = window.document.documentElement;
-
     const applyTheme = () => {
       const isDark =
         settings.theme === 'dark' ||
         (settings.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
       root.classList.toggle('dark', isDark);
     };
-
     applyTheme();
-
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     mediaQuery.addEventListener('change', applyTheme);
-
-    return () => {
-      mediaQuery.removeEventListener('change', applyTheme);
-    };
+    return () => mediaQuery.removeEventListener('change', applyTheme);
   }, [settings.theme]);
 
 
-  // Effect for debounced auto-syncing with MERGE strategy
+  // Effect for debounced auto-syncing
   useEffect(() => {
-    if (isInitialMount.current || !syncKey) {
+    if (isInitialMount.current || !isLoggedIn) {
         setSyncStatus('idle');
+        isInitialMount.current = false;
         return;
     };
-
-    // Immediately show that changes are waiting to be synced.
     setSyncStatus('syncing'); 
+    const handler = setTimeout(() => handleSync(), 2000);
+    return () => clearTimeout(handler);
+  }, [flashcards, decks, userProfile, earnedAchievements, isLoggedIn]);
 
-    const handler = setTimeout(() => handleSync(false), 2000); // 2-second debounce delay
 
-    return () => {
-      clearTimeout(handler);
-    };
-  }, [flashcards, decks, syncKey, userProfile, earnedAchievements]);
-
-  const handleSwitchProfile = async (newKey: string) => {
-    await db.delete();
-    localStorage.clear();
-    localStorage.setItem('syncKey', newKey);
-    window.location.reload();
-  };
-  
   const updateSettings = (newSettings: Partial<Settings>) => {
       setSettings(prev => {
           const updated = { ...prev, ...newSettings };
@@ -640,7 +472,7 @@ const App: React.FC = () => {
     const updatedProfile = { 
       ...userProfile, 
       ...profileData,
-      profileLastUpdated: new Date().toISOString() // Add/update the timestamp on every save
+      profileLastUpdated: new Date().toISOString()
     };
     await db.userProfile.put(updatedProfile);
     setUserProfile(updatedProfile);
@@ -793,11 +625,8 @@ const App: React.FC = () => {
   };
   
   const handleResetApp = async () => {
-      if(confirm("Are you sure you want to reset the application? All local decks and cards will be permanently deleted. This action cannot be undone.")) {
+      if(confirm("Are you sure you want to reset the application? All local decks and cards for this account will be permanently deleted. This action cannot be undone.")) {
           await db.delete();
-          // Also clear sync key from local storage
-          localStorage.removeItem('syncKey');
-          localStorage.removeItem('lastSyncDate');
           localStorage.removeItem('appSettings');
           window.location.reload();
       }
@@ -827,7 +656,6 @@ const App: React.FC = () => {
         cardsToStudy = cardsToStudy.filter(c => c.repetition > 0 && c.dueDate <= todayISOString);
         break;
       case 'all-cards':
-        // No filter applied, study all cards in the selected scope
         break;
       case 'all-due':
       default:
@@ -835,13 +663,11 @@ const App: React.FC = () => {
         break;
     }
     
-    // Shuffle the filtered cards
     for (let i = cardsToStudy.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [cardsToStudy[i], cardsToStudy[j]] = [cardsToStudy[j], cardsToStudy[i]];
     }
     
-    // Apply card limit
     if (options.limit > 0) {
       cardsToStudy = cardsToStudy.slice(0, options.limit);
     }
@@ -875,7 +701,7 @@ const App: React.FC = () => {
     }
 
     await db.decks.update(deckId, { name: newName });
-    await fetchData(); // Re-fetch to update state and trigger sync
+    await fetchData();
     showToast('Deck renamed successfully!');
   };
 
@@ -897,6 +723,51 @@ const App: React.FC = () => {
     }
   };
 
+  // --- Auth Handlers ---
+  const handleLogin = async (username: string, password: string) => {
+      setAuthLoading(true);
+      try {
+          await callProxy('auth-login', { username, password });
+          const user = { username };
+          setCurrentUser(user);
+          sessionStorage.setItem('currentUser', JSON.stringify(user));
+          await loadDataFromCloud(username);
+          setIsLoggedIn(true);
+          showToast(`Welcome back, ${username}!`);
+      } catch(e) {
+          showToast((e as Error).message || 'Login failed.');
+      } finally {
+          setAuthLoading(false);
+      }
+  };
+
+  const handleRegister = async (username: string, password: string) => {
+      setAuthLoading(true);
+      try {
+          await callProxy('auth-register', { username, password });
+          const user = { username };
+          setCurrentUser(user);
+          sessionStorage.setItem('currentUser', JSON.stringify(user));
+          await db.delete().then(() => db.open()); // Start with a fresh DB
+          await fetchData();
+          setIsLoggedIn(true);
+          showToast(`Account created! Welcome, ${username}!`);
+      } catch (e) {
+          showToast((e as Error).message || 'Registration failed.');
+      } finally {
+          setAuthLoading(false);
+      }
+  };
+
+  const handleLogout = () => {
+    if(confirm("Are you sure you want to log out?")) {
+        sessionStorage.removeItem('currentUser');
+        window.location.reload();
+    }
+  };
+
+
+  // --- Render Logic ---
   const visibleFlashcards = flashcards.filter(c => !c.isDeleted);
   const visibleDecks = decks.filter(d => !d.isDeleted);
   
@@ -921,16 +792,8 @@ const App: React.FC = () => {
             onNavigateToChangelog={() => setView('CHANGELOG')}
             onNavigateToAchievements={() => setView('ACHIEVEMENTS')}
             onNavigateToProfile={() => setView('PROFILE')}
-            syncView={
-                <SyncView 
-                    syncKey={syncKey} 
-                    onSwitchProfile={handleSwitchProfile}
-                    onSyncNow={() => handleSync(true)}
-                    syncStatus={syncStatus} 
-                    lastSyncDate={lastSyncDate}
-                    showToast={showToast}
-                />
-            }
+            currentUser={currentUser}
+            onLogout={handleLogout}
           />
        case 'DECKS':
         return <DeckList 
@@ -980,6 +843,18 @@ const App: React.FC = () => {
     const color = status === 'ok' ? 'bg-green-500' : status === 'error' ? 'bg-red-500' : 'bg-yellow-500';
     const pulse = status === 'checking' ? 'animate-pulse' : '';
     return <div className="flex items-center gap-1.5" title={`${label}: ${status}`}><div className={`w-2 h-2 rounded-full ${color} ${pulse}`}></div><span>{label}</span></div>
+  }
+  
+  if (appLoading) {
+      return (
+          <div className="flex items-center justify-center min-h-screen bg-slate-50 dark:bg-slate-900">
+              <div className="text-xl font-medium text-slate-600 dark:text-slate-300">Loading Lingua Cards...</div>
+          </div>
+      );
+  }
+
+  if (!isLoggedIn) {
+      return <AuthView onLogin={handleLogin} onRegister={handleRegister} isLoading={authLoading} />
   }
 
   return (

@@ -10,7 +10,8 @@ interface SettingsViewProps {
     onNavigateToChangelog: () => void;
     onNavigateToAchievements: () => void;
     onNavigateToProfile: () => void;
-    syncView: React.ReactNode;
+    currentUser: { username: string } | null;
+    onLogout: () => void;
 }
 
 const SettingsView: React.FC<SettingsViewProps> = ({
@@ -22,10 +23,11 @@ const SettingsView: React.FC<SettingsViewProps> = ({
     onNavigateToChangelog,
     onNavigateToAchievements,
     onNavigateToProfile,
-    syncView
+    currentUser,
+    onLogout
 }) => {
     const importFileRef = useRef<HTMLInputElement>(null);
-    const APP_VERSION = '3.5.2';
+    const APP_VERSION = '4.0.0';
 
     const handleImportClick = () => {
         importFileRef.current?.click();
@@ -57,6 +59,20 @@ const SettingsView: React.FC<SettingsViewProps> = ({
     return (
         <div className="max-w-3xl mx-auto space-y-8">
             <h2 className="text-3xl font-bold text-slate-800 dark:text-slate-100">Settings</h2>
+
+            {/* Account Settings */}
+            <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm overflow-hidden">
+                <h3 className="text-lg font-bold p-4 bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-700">Account</h3>
+                <SettingRow title="Logged In As" description="This is your current active user account.">
+                    <div className="flex items-center gap-2">
+                        <span className="font-semibold text-indigo-600 dark:text-indigo-400">{currentUser?.username}</span>
+                        <button onClick={onLogout} className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">
+                            Logout
+                        </button>
+                    </div>
+                </SettingRow>
+            </div>
+
 
             {/* General Settings */}
             <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm overflow-hidden">
@@ -111,16 +127,13 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                         <button onClick={onExportCSV} className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">Export CSV</button>
                     </div>
                  </SettingRow>
-                 <div className="p-4">
-                    {syncView}
-                 </div>
             </div>
             
             {/* Danger Zone */}
             <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm overflow-hidden border border-red-500/30 dark:border-red-500/50">
                 <h3 className="text-lg font-bold p-4 bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 border-b border-red-200 dark:border-red-500/50">Danger Zone</h3>
-                <SettingRow title="Reset Application" description="Permanently delete all local decks and cards. This cannot be undone.">
-                    <button onClick={onResetApp} className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md transition-colors">Reset App</button>
+                <SettingRow title="Reset Application" description="Permanently delete all local decks and cards for this account. This cannot be undone.">
+                    <button onClick={onResetApp} className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md transition-colors">Reset Account Data</button>
                 </SettingRow>
             </div>
         </div>

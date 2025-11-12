@@ -30,14 +30,8 @@ const Header: React.FC<HeaderProps> = ({ onNavigate, onAddCard, isStudyDisabled,
           {/* Desktop Navigation - Hidden on mobile */}
           <div className="hidden md:flex items-center space-x-2 sm:space-x-4">
             <button
-              onClick={() => onNavigate('LIST')}
-              className={`${navButtonStyle} ${currentView === 'LIST' || currentView === 'FORM' ? activeStyle : inactiveStyle}`}
-            >
-              All Cards
-            </button>
-            <button
               onClick={() => onNavigate('DECKS')}
-              className={`${navButtonStyle} ${currentView === 'DECKS' || currentView === 'BULK_ADD' ? activeStyle : inactiveStyle}`}
+              className={`${navButtonStyle} ${['LIST', 'DECKS', 'FORM', 'BULK_ADD'].includes(currentView) ? activeStyle : inactiveStyle}`}
             >
               Decks
             </button>

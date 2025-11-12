@@ -1,5 +1,5 @@
-// Fix: Use a default import for `Dexie` and a type-only import for `Table`. This is the correct approach for modern versions of Dexie (3.x+) and resolves type resolution issues that prevented `LinguaCardsDB` from inheriting `Dexie`'s methods and properties (like .transaction(), .version(), etc.) correctly.
-import Dexie, { type Table } from 'dexie';
+// Fix: Use named import for Dexie to ensure proper type resolution for its methods. This resolves an issue where properties like `.version()` and `.transaction()` were not found on the Dexie instance, which caused cascading type errors throughout the application.
+import { Dexie, Table } from 'dexie';
 import { Flashcard, Deck, StudyLog, UserProfile, UserAchievement } from '../types';
 
 export class LinguaCardsDB extends Dexie {

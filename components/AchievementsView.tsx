@@ -9,7 +9,8 @@ interface AchievementsViewProps {
 
 export const AchievementsView: React.FC<AchievementsViewProps> = ({ earnedAchievements, onBack }) => {
   const earnedIds = new Set(earnedAchievements.map(a => a.achievementId));
-  const earnedMap = new Map(earnedAchievements.map(a => [a.achievementId, a.dateEarned]));
+  // Fix: Explicitly type the Map to prevent its value from being inferred as `unknown`.
+  const earnedMap = new Map<string, string>(earnedAchievements.map(a => [a.achievementId, a.dateEarned]));
 
   return (
     <div className="max-w-4xl mx-auto">
