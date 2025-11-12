@@ -27,7 +27,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
     onLogout
 }) => {
     const importFileRef = useRef<HTMLInputElement>(null);
-    const APP_VERSION = '4.0.0';
+    const APP_VERSION = '4.0.1';
 
     const handleImportClick = () => {
         importFileRef.current?.click();
@@ -101,14 +101,16 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                     </div>
                 </SettingRow>
                  <SettingRow title="Default Dictionary" description="Select the default source for fetching new card details.">
-                     <select 
-                        value={settings.defaultApiSource} 
-                        onChange={e => onUpdateSettings({ defaultApiSource: e.target.value as Settings['defaultApiSource'] })} 
-                        className="block w-full max-w-xs pl-3 pr-10 py-2 text-base border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
-                    >
-                        <option value="free">Free Dictionary</option>
-                        <option value="mw">Merriam-Webster</option>
-                    </select>
+                     <div className="flex items-center gap-2 p-1 bg-slate-200 dark:bg-slate-700 rounded-lg text-sm">
+                        {(['free', 'mw'] as const).map(source => (
+                            <button 
+                                key={source} 
+                                onClick={() => onUpdateSettings({ defaultApiSource: source })} 
+                                className={`px-3 py-1 rounded-md transition-colors ${settings.defaultApiSource === source ? 'bg-white dark:bg-slate-600 shadow' : 'hover:bg-white/50 dark:hover:bg-slate-600/50'}`}>
+                                {source === 'free' ? 'Free Dictionary' : 'Merriam-Webster'}
+                            </button>
+                        ))}
+                    </div>
                 </SettingRow>
                 <SettingRow title="Achievements" description="View the medals and milestones you've unlocked.">
                      <button onClick={onNavigateToAchievements} className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">

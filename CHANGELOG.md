@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.0.1] - Dictionary Selection UI Fix
+- **Fix:** Resolved a bug on mobile devices where the "Default Dictionary" dropdown would close unexpectedly when trying to select an option.
+- **Improvement:** Replaced the dropdown with a more stable and user-friendly button group, improving the user experience on all devices and creating a more consistent design on the Settings page.
+
 ## [4.0.0] - User Authentication System
 - **Major Feature:** Replaced the "Profile Sync Key" system with a standard **username and password authentication system**. This provides a more traditional, secure, and user-friendly way to manage accounts.
 - **UI/UX:** Added a new **Login and Registration screen** that greets users when they first open the app.
