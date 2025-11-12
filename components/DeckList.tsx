@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Deck, Flashcard, UserProfile } from '../types';
-import { StreakCounter, LevelProgressBar } from './GamificationWidgets';
+import { Dashboard } from './Dashboard';
+// Fix: Import DailyGoalsWidget to resolve 'Cannot find name' error.
 import { DailyGoalsWidget } from './DailyGoalsWidget';
 
 interface DeckListProps {
@@ -43,8 +44,10 @@ const DeckCard: React.FC<{
         }
     };
 
+    const dueProgress = cardCount > 0 ? (dueCount / cardCount) * 100 : 0;
+
     return (
-        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-md p-6 flex flex-col justify-between transition-all hover:shadow-lg hover:-translate-y-1">
+        <div className="bg-gradient-to-br from-white to-slate-50 dark:from-slate-800 dark:to-slate-900 rounded-lg shadow-md p-6 flex flex-col justify-between transition-all hover:shadow-lg hover:-translate-y-1 border dark:border-slate-700/50">
             <div>
                 {isRenaming ? (
                     <div className="flex gap-2">
@@ -64,12 +67,20 @@ const DeckCard: React.FC<{
                 )}
                 <div className="mt-2 text-sm text-slate-500 dark:text-slate-400 space-y-1">
                     <p>{cardCount} card{cardCount !== 1 && 's'}</p>
-                    <p className={dueCount > 0 ? 'text-indigo-500 font-semibold' : ''}>
-                        {dueCount} due today
-                    </p>
                 </div>
             </div>
-            <div className="mt-6 flex flex-col sm:flex-row gap-2">
+
+            <div className="my-4">
+                <div className="flex justify-between items-center mb-1">
+                    <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400">DUE FOR REVIEW</span>
+                    <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">{dueCount} / {cardCount}</span>
+                </div>
+                <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2">
+                    <div className="bg-indigo-500 h-2 rounded-full" title={`${dueCount} cards due`} style={{ width: `${dueProgress}%` }}></div>
+                </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2">
                 <button
                     onClick={onStudy}
                     disabled={cardCount === 0}
@@ -120,26 +131,17 @@ const DeckList: React.FC<DeckListProps> = ({ decks, cards, onStudyDeck, onRename
     return (
         <div>
             {userProfile && (
-                <div className="mb-8 grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-                    {/* Gamification Widgets */}
-                    <div className="lg:col-span-2 bg-white dark:bg-slate-800 p-4 rounded-lg shadow-sm flex flex-col md:flex-row items-center gap-4 md:gap-6">
-                        <StreakCounter streak={streak} />
-                        <LevelProgressBar userProfile={userProfile} />
-                    </div>
-                     {/* Daily Goals Widget - Desktop */}
-                    {userProfile.dailyGoals && userProfile.dailyGoals.goals.length > 0 && (
-                       <div className="hidden lg:block lg:col-span-1">
-                         <DailyGoalsWidget goals={userProfile.dailyGoals.goals} />
-                       </div>
-                    )}
+                <div className="mb-8">
+                    <Dashboard userProfile={userProfile} streak={streak} />
                 </div>
             )}
-             {/* Daily Goals Widget - Mobile */}
-             {userProfile?.dailyGoals && userProfile.dailyGoals.goals.length > 0 && (
-                <div className="block lg:hidden mb-8">
+            
+            {userProfile?.dailyGoals && userProfile.dailyGoals.goals.length > 0 && !userProfile.dailyGoals.goals.every(g => g.isComplete) && (
+                <div className="mb-8">
                     <DailyGoalsWidget goals={userProfile.dailyGoals.goals} />
                 </div>
             )}
+
             <div className="flex flex-col sm:flex-row justify-between sm:items-center mb-6 gap-4">
                  <h2 className="text-3xl font-bold text-slate-800 dark:text-slate-100">Your Decks</h2>
                  <div className="flex items-center gap-2">

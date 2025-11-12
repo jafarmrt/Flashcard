@@ -4,6 +4,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.2.0] - UI Refresh & Dashboard
+- **Feature:** Introduced a major UI/UX refresh for the main "Decks" screen to create a more modern, engaging, and informative user experience.
+- **UI/UX:** Replaced the separate gamification widgets with a single, consolidated **Dashboard** header. This new component neatly organizes the Study Streak, Level/XP Progress, and a summary of Daily Goals into one sleek, at-a-glance view.
+- **UI/UX:** Redesigned the **Deck Cards** to be more visually appealing and functional. Each card now features:
+    - A subtle background gradient for more depth.
+    - A new **progress bar** that clearly shows the number of cards due for review in that deck.
+- **Improvement:** The overall layout of the main screen is now cleaner, more professional, and does a better job of highlighting the user's progress and daily tasks.
+
 ## [4.1.0] - Gamification: Daily Goals
 - **Feature:** Introduced a new **Daily Goals** system to enhance user engagement and provide short-term motivation.
 - **UI/UX:** Added a new "Today's Goals" widget to the main "Decks" screen, displaying three randomly assigned goals for the user to complete each day (e.g., "Review 10 cards," "Complete a quiz").
