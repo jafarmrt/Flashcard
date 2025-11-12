@@ -109,7 +109,7 @@ const ActivityHeatmap: React.FC<{ activity: Map<string, number> }> = ({ activity
             <div 
                 key={dateStr}
                 className={`w-4 h-4 rounded-sm ${getIntensityClass(count)}`}
-                title={`${count} reviews on ${date.toLocaleDateString()}`}
+                title={`${date.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}: ${count} review${count !== 1 ? 's' : ''}`}
             />
         );
     }

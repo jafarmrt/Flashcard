@@ -4,6 +4,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.4.1] - UI Polish & Version Fix
+- **Fix:** Corrected the application version number displayed on the **Settings** page, which had not been updated in the previous release. It now accurately reflects the latest version.
+- **UI/UX:** Improved the tooltip on the **Stats** page's activity heatmap. Hovering over a day now shows the full, unambiguous date (e.g., "Friday, July 26, 2024"), making it much easier to identify specific days and their activity levels.
+
 ## [4.4.0] - Stats Page Overhaul & Bug Fix
 - **Feature:** Revamped the **Stats** page to provide more meaningful and actionable insights.
 - **UI/UX:** Replaced the simple 7-day bar chart with a comprehensive 90-day **Activity Heatmap**, offering a clearer long-term view of study consistency.
