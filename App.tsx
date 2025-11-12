@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile, UserAchievement } from './types';
 import { db } from './services/localDBService';
 import { calculateLevel, calculateStreak, checkAndAwardAchievements } from './services/gamificationService';
+import { generateNewDailyGoals, updateGoalProgress } from './services/dailyGoalsService';
 import { ALL_ACHIEVEMENTS } from './services/achievements';
 import Header from './components/Header';
 import FlashcardList from './components/FlashcardList';
@@ -188,6 +189,24 @@ const App: React.FC = () => {
   
   const isInitialMount = useRef(true);
 
+  const checkAndRefreshDailyGoals = async (profile: UserProfile, currentStreak: number) => {
+    const today = new Date().toISOString().split('T')[0];
+    if (!profile.dailyGoals || profile.dailyGoals.date !== today) {
+        const newGoals = generateNewDailyGoals(currentStreak);
+        const updatedProfile: UserProfile = {
+            ...profile,
+            dailyGoals: {
+                date: today,
+                goals: newGoals,
+                allCompleteAwarded: false
+            }
+        };
+        await db.userProfile.put(updatedProfile);
+        return updatedProfile;
+    }
+    return profile;
+  };
+
   const fetchData = async () => {
     const allCards = await db.flashcards.toArray();
     const allDecks = await db.decks.toArray();
@@ -201,10 +220,15 @@ const App: React.FC = () => {
       profile = { id: 1, xp: 0, level: 1, lastStreakCheck: '', firstName: '', lastName: '', bio: '', profileLastUpdated: new Date().toISOString() };
       await db.userProfile.add(profile);
     }
-    setUserProfile(profile);
-
+    
     const allLogs = await db.studyHistory.toArray();
-    setStreak(calculateStreak(allLogs));
+    const currentStreak = calculateStreak(allLogs);
+    setStreak(currentStreak);
+    
+    if (profile) {
+      profile = await checkAndRefreshDailyGoals(profile, currentStreak);
+    }
+    setUserProfile(profile);
     
     return { cards: allCards, decks: allDecks, logs: allLogs, profile, achievements: allAchievements };
   };
@@ -241,21 +265,49 @@ const App: React.FC = () => {
 
 
   const awardXP = async (points: number, message?: string) => {
-    if (!userProfile) return;
-    const newXp = userProfile.xp + points;
+    // Refetch profile to ensure we have the latest XP
+    const currentProfile = await db.userProfile.get(1);
+    if (!currentProfile) return;
+
+    const newXp = currentProfile.xp + points;
     const { level } = calculateLevel(newXp);
     
-    const updatedProfile: UserProfile = { ...userProfile, xp: newXp, level };
+    const updatedProfile: UserProfile = { ...currentProfile, xp: newXp, level };
     
-    if (level > userProfile.level) {
+    if (level > currentProfile.level) {
         showToast(`Level Up! You reached Level ${level}! 🎉`);
-    } else {
-        showToast(message || `+${points} XP ✨`);
+    } else if (message) {
+        showToast(message);
     }
     
     await db.userProfile.put(updatedProfile);
     setUserProfile(updatedProfile);
     handleCheckAchievements(); // Check for level-based achievements
+  };
+
+  const handleGoalUpdate = async (type: 'STUDY' | 'QUIZ' | 'STREAK', value: number) => {
+    const currentProfile = await db.userProfile.get(1);
+    if (!currentProfile?.dailyGoals) return;
+
+    const { updatedProfile, xpGained, newlyCompletedGoals } = updateGoalProgress(type, value, currentProfile);
+
+    // Save progress first
+    await db.userProfile.put(updatedProfile);
+    setUserProfile(updatedProfile);
+
+    // Then award XP if any was gained
+    if (xpGained > 0) {
+        await awardXP(xpGained);
+    }
+
+    // Show toasts for specific goal completions
+    newlyCompletedGoals.forEach(goal => {
+        setTimeout(() => showToast(`Goal Complete: ${goal.description} (+${goal.xp} XP)`), 500);
+    });
+
+    if (updatedProfile.dailyGoals.allCompleteAwarded && !currentProfile.dailyGoals.allCompleteAwarded) {
+        setTimeout(() => showToast(`All goals complete! Bonus +50 XP! ✨`), newlyCompletedGoals.length > 0 ? 1000 : 500);
+    }
   };
 
   const checkStreakBonus = async () => {
@@ -269,6 +321,7 @@ const App: React.FC = () => {
       if (newStreak > streak) {
           await awardXP(newStreak * 10, `Streak Bonus: ${newStreak} days! 🔥`);
       }
+      handleGoalUpdate('STREAK', newStreak);
       
       const updatedProfile = { ...userProfile, lastStreakCheck: today };
       await db.userProfile.put(updatedProfile);
@@ -519,6 +572,7 @@ const App: React.FC = () => {
   const handleSessionEnd = async (updatedCardsFromSession: Flashcard[]) => {
     if (updatedCardsFromSession.length > 0) {
       await db.flashcards.bulkPut(updatedCardsFromSession);
+      handleGoalUpdate('STUDY', updatedCardsFromSession.length);
     }
     await fetchData();
     handleCheckAchievements();
@@ -781,7 +835,10 @@ const App: React.FC = () => {
       case 'STUDY':
         return <StudyView cards={studyCards} onExit={handleSessionEnd} awardXP={awardXP} />;
       case 'PRACTICE':
-        return <PracticeView cards={visibleFlashcards} awardXP={awardXP} onQuizComplete={handleCheckAchievements} />;
+        return <PracticeView cards={visibleFlashcards} awardXP={awardXP} onQuizComplete={(score) => {
+            handleCheckAchievements(score);
+            handleGoalUpdate('QUIZ', 1);
+        }} />;
       case 'SETTINGS':
         return <SettingsView 
             settings={settings}

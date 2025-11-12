@@ -1,5 +1,5 @@
-// Fix: Use default import for Dexie to ensure proper type resolution for its methods. The named import was incorrect for the Dexie version being used, which caused cascading type errors where methods like `.version()` and `.transaction()` were not found.
-import Dexie, { type Table } from 'dexie';
+// Fix: Use a named import for Dexie. The default import was not resolving the class methods correctly, leading to type errors for `.version()`, `.transaction()`, etc.
+import { Dexie, type Table } from 'dexie';
 import { Flashcard, Deck, StudyLog, UserProfile, UserAchievement } from '../types';
 
 export class LinguaCardsDB extends Dexie {
@@ -65,6 +65,22 @@ export class LinguaCardsDB extends Dexie {
             }
         });
     });
+
+    // Version 7: Add daily goals to userProfile for gamification
+    this.version(7).stores({
+        userProfile: 'id, firstName, lastName, bio' // Schema indexes are the same
+    }).upgrade(tx => {
+        console.log("Upgrading database to version 7, adding dailyGoals to userProfile.");
+        return tx.table('userProfile').toCollection().modify(profile => {
+            if (!profile.dailyGoals) {
+                profile.dailyGoals = {
+                    date: '1970-01-01', // old date to trigger refresh
+                    goals: [],
+                    allCompleteAwarded: false
+                };
+            }
+        });
+    });
   }
 }
 
@@ -73,5 +89,19 @@ export const db = new LinguaCardsDB();
 // Pre-populate with a default deck and user profile if none exist
 db.on('populate', async () => {
   await db.decks.add({ id: 'default', name: 'Default Deck' });
-  await db.userProfile.add({ id: 1, xp: 0, level: 1, lastStreakCheck: '', firstName: '', lastName: '', bio: '', profileLastUpdated: new Date().toISOString() });
+  await db.userProfile.add({ 
+      id: 1, 
+      xp: 0, 
+      level: 1, 
+      lastStreakCheck: '', 
+      firstName: '', 
+      lastName: '', 
+      bio: '', 
+      profileLastUpdated: new Date().toISOString(),
+      dailyGoals: {
+          date: '1970-01-01',
+          goals: [],
+          allCompleteAwarded: false
+      }
+  });
 });

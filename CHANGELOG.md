@@ -1,7 +1,14 @@
 
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## [4.1.0] - Gamification: Daily Goals
+- **Feature:** Introduced a new **Daily Goals** system to enhance user engagement and provide short-term motivation.
+- **UI/UX:** Added a new "Today's Goals" widget to the main "Decks" screen, displaying three randomly assigned goals for the user to complete each day (e.g., "Review 10 cards," "Complete a quiz").
+- **Gamification:** Users now earn bonus XP for completing each goal, with an additional special bonus for completing all goals in a single day.
+- **Logic:** The system automatically refreshes goals every 24 hours and tracks progress as users interact with the app.
 
 ## [4.0.2] - Toast Notification Visibility Fix
 - **Fix:** Resolved a critical UI bug where toast notifications (e.g., for achievements, updates) were hidden behind the bottom navigation bar on mobile devices.

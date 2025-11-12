@@ -13,6 +13,16 @@ export interface StudyLog {
   rating: PerformanceRating;
 }
 
+export interface DailyGoal {
+  id: string; // e.g., 'study-10'
+  type: 'STUDY' | 'QUIZ' | 'STREAK';
+  description: string; // e.g., 'Review 10 cards'
+  target: number;
+  progress: number;
+  xp: number;
+  isComplete: boolean;
+}
+
 export interface UserProfile {
   id: number; // primary key, always 1 for the single user
   firstName?: string;
@@ -22,6 +32,11 @@ export interface UserProfile {
   level: number;
   lastStreakCheck: string; // ISO date string YYYY-MM-DD
   profileLastUpdated?: string; // ISO string for timestamp
+  dailyGoals?: {
+    date: string; // YYYY-MM-DD
+    goals: DailyGoal[];
+    allCompleteAwarded: boolean;
+  };
 }
 
 export interface Achievement {

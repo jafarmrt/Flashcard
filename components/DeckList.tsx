@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Deck, Flashcard, UserProfile } from '../types';
 import { StreakCounter, LevelProgressBar } from './GamificationWidgets';
+import { DailyGoalsWidget } from './DailyGoalsWidget';
 
 interface DeckListProps {
     decks: Deck[];
@@ -119,9 +120,24 @@ const DeckList: React.FC<DeckListProps> = ({ decks, cards, onStudyDeck, onRename
     return (
         <div>
             {userProfile && (
-                <div className="mb-8 p-4 bg-white dark:bg-slate-800 rounded-lg shadow-sm flex flex-col md:flex-row items-center gap-4 md:gap-6">
-                    <StreakCounter streak={streak} />
-                    <LevelProgressBar userProfile={userProfile} />
+                <div className="mb-8 grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+                    {/* Gamification Widgets */}
+                    <div className="lg:col-span-2 bg-white dark:bg-slate-800 p-4 rounded-lg shadow-sm flex flex-col md:flex-row items-center gap-4 md:gap-6">
+                        <StreakCounter streak={streak} />
+                        <LevelProgressBar userProfile={userProfile} />
+                    </div>
+                     {/* Daily Goals Widget - Desktop */}
+                    {userProfile.dailyGoals && userProfile.dailyGoals.goals.length > 0 && (
+                       <div className="hidden lg:block lg:col-span-1">
+                         <DailyGoalsWidget goals={userProfile.dailyGoals.goals} />
+                       </div>
+                    )}
+                </div>
+            )}
+             {/* Daily Goals Widget - Mobile */}
+             {userProfile?.dailyGoals && userProfile.dailyGoals.goals.length > 0 && (
+                <div className="block lg:hidden mb-8">
+                    <DailyGoalsWidget goals={userProfile.dailyGoals.goals} />
                 </div>
             )}
             <div className="flex flex-col sm:flex-row justify-between sm:items-center mb-6 gap-4">
