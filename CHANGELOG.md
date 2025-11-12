@@ -4,6 +4,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.4.0] - Stats Page Overhaul & Bug Fix
+- **Feature:** Revamped the **Stats** page to provide more meaningful and actionable insights.
+- **UI/UX:** Replaced the simple 7-day bar chart with a comprehensive 90-day **Activity Heatmap**, offering a clearer long-term view of study consistency.
+- **Feature:** Introduced a new **"Knowledge Breakdown"** section, which includes:
+    - **Difficult Cards:** The existing list, but now more accurate.
+    - **Review Soon:** A new list showing cards due in the next 7 days.
+    - **Mastered Cards:** A new list showcasing cards with a review interval greater than 30 days.
+- **Fix:** Resolved a critical bug where deleted cards were incorrectly appearing in the "Difficult Cards" list. The calculation now correctly filters out deleted cards, ensuring the data is accurate.
+
 ## [4.3.3] - Theme & Settings UI Fixes
 - **Fix:** Resolved a critical bug where the theme switcher (Light/Dark/System) was not functional. Added the required `darkMode: 'class'` configuration for Tailwind CSS, enabling the theme toggle to work as intended.
 - **UI/UX:** Improved the visual contrast of active options on the Settings page. The selected theme and default dictionary buttons now have a distinct, high-contrast style in dark mode, making the current selection clear.
