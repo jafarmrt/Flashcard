@@ -1,3 +1,4 @@
+
 import React, { useRef } from 'react';
 import { Settings } from '../types';
 
@@ -27,7 +28,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
     onLogout
 }) => {
     const importFileRef = useRef<HTMLInputElement>(null);
-    const APP_VERSION = '4.0.1';
+    const APP_VERSION = '4.0.2';
 
     const handleImportClick = () => {
         importFileRef.current?.click();

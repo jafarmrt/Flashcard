@@ -1,6 +1,11 @@
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## [4.0.2] - Toast Notification Visibility Fix
+- **Fix:** Resolved a critical UI bug where toast notifications (e.g., for achievements, updates) were hidden behind the bottom navigation bar on mobile devices.
+- **Improvement:** Notifications are now responsively positioned. They appear centered above the bottom navigation on mobile for clear visibility and remain in the bottom-right corner on desktop.
 
 ## [4.0.1] - Dictionary Selection UI Fix
 - **Fix:** Resolved a bug on mobile devices where the "Default Dictionary" dropdown would close unexpectedly when trying to select an option.
