@@ -29,7 +29,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
     onLogout
 }) => {
     const importFileRef = useRef<HTMLInputElement>(null);
-    const APP_VERSION = '4.3.1';
+    const APP_VERSION = '4.3.2';
 
     const handleImportClick = () => {
         importFileRef.current?.click();
@@ -96,7 +96,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                             <button 
                                 key={theme} 
                                 onClick={() => onUpdateSettings({ theme: theme.toLowerCase() as Settings['theme'] })} 
-                                className={`px-3 py-1 rounded-md transition-colors ${settings.theme === theme.toLowerCase() ? 'bg-white dark:bg-slate-900 shadow font-semibold text-slate-800 dark:text-white' : 'hover:bg-white/50 dark:hover:bg-slate-600/50'}`}>
+                                className={`px-3 py-1 rounded-md transition-colors ${settings.theme === theme.toLowerCase() ? 'bg-white dark:bg-slate-600 shadow font-semibold text-indigo-700 dark:text-white' : 'hover:bg-slate-200/70 dark:hover:bg-slate-600/70'}`}>
                                 {theme}
                             </button>
                         ))}
@@ -108,7 +108,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                             <button 
                                 key={source} 
                                 onClick={() => onUpdateSettings({ defaultApiSource: source })} 
-                                className={`px-3 py-1 rounded-md transition-colors ${settings.defaultApiSource === source ? 'bg-white dark:bg-slate-900 shadow font-semibold text-slate-800 dark:text-white' : 'hover:bg-white/50 dark:hover:bg-slate-600/50'}`}>
+                                className={`px-3 py-1 rounded-md transition-colors ${settings.defaultApiSource === source ? 'bg-white dark:bg-slate-600 shadow font-semibold text-indigo-700 dark:text-white' : 'hover:bg-slate-200/70 dark:hover:bg-slate-600/70'}`}>
                                 {source === 'free' ? 'Free Dictionary' : 'Merriam-Webster'}
                             </button>
                         ))}

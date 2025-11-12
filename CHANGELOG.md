@@ -4,6 +4,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.3.2] - Settings UI Contrast Fix
+- **Fix:** Corrected a visual bug in the Settings page where the active theme and dictionary options were nearly invisible in dark mode due to low color contrast. The selected option is now clearly highlighted with a lighter background, making it easy to see the current choice.
+
 ## [4.3.1] - Settings UI Fixes
 - **Fix:** Resolved a critical bug where the theme switcher (Light/Dark/System) was not functional. Replaced the static Tailwind CSS file with the modern JIT CDN script to correctly enable dark mode class variants.
 - **UI/UX:** Improved the visual contrast of active options in the Settings page. The selected theme and default dictionary buttons now have a distinct, high-contrast style in dark mode, making the current selection clear.
