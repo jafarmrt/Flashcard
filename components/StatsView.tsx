@@ -124,6 +124,54 @@ const ActivityHeatmap: React.FC<{ activity: Map<string, number> }> = ({ activity
     );
 };
 
+const StatsSkeleton: React.FC = () => {
+    const SkeletonCard: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+        <div className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-sm">
+            {children}
+        </div>
+    );
+    const SkeletonPlaceholder: React.FC<{ className?: string }> = ({ className }) => (
+        <div className={`bg-slate-200 dark:bg-slate-700 rounded ${className || ''}`}></div>
+    );
+
+    return (
+        <div className="space-y-8 animate-pulse">
+            <SkeletonCard>
+                <div className="flex flex-col items-center">
+                    <SkeletonPlaceholder className="h-6 w-48 mb-2" />
+                    <SkeletonPlaceholder className="h-12 w-32" />
+                </div>
+            </SkeletonCard>
+            <SkeletonCard>
+                <SkeletonPlaceholder className="h-6 w-1/3 mb-4" />
+                <div className="grid grid-cols-7 sm:grid-cols-15 md:grid-cols-20 lg:grid-cols-30 gap-1 justify-start">
+                    {Array.from({ length: 90 }).map((_, i) => (
+                        <SkeletonPlaceholder key={i} className="w-4 h-4 rounded-sm" />
+                    ))}
+                </div>
+            </SkeletonCard>
+            <SkeletonCard>
+                <SkeletonPlaceholder className="h-6 w-1/4 mb-4" />
+                <div className="flex flex-col md:flex-row gap-8">
+                    {Array.from({ length: 3 }).map((_, i) => (
+                        <div key={i} className="flex-1 min-w-0">
+                            <SkeletonPlaceholder className="h-5 w-1/3 mb-3" />
+                            <div className="space-y-2">
+                                <SkeletonPlaceholder className="h-10 w-full" />
+                                <SkeletonPlaceholder className="h-10 w-full" />
+                                <SkeletonPlaceholder className="h-10 w-full" />
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </SkeletonCard>
+            <div className="flex justify-center">
+                 <SkeletonPlaceholder className="h-11 w-40 rounded-lg" />
+            </div>
+        </div>
+    );
+};
+
 
 export const StatsView: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const [stats, setStats] = useState<Stats | null>(null);
@@ -148,7 +196,7 @@ export const StatsView: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   }, []);
 
   if (loading) {
-    return <div className="text-center p-10">Loading stats...</div>;
+    return <StatsSkeleton />;
   }
   
   if (!stats) {

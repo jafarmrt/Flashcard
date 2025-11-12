@@ -81,6 +81,14 @@ export class LinguaCardsDB extends Dexie {
             }
         });
     });
+
+    // Version 8: Add index for isDeleted for performance
+    this.version(8).stores({
+        flashcards: 'id, deckId, front, back, dueDate, isDeleted'
+    }).upgrade(tx => {
+        console.log("Upgrading database to version 8, adding isDeleted index to flashcards.");
+        return;
+    });
   }
 }
 

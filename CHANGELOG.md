@@ -4,6 +4,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.5.0] - Stability & Polish
+- **Performance:** Improved database performance by adding an index to a frequently queried field. This makes loading data, especially on the **Stats** page, significantly faster for users with a large number of cards.
+- **UI/UX:** Implemented a skeleton loader for the **Stats** page. Instead of a simple "Loading..." message, the app now displays an animated placeholder that mimics the page layout, creating a smoother and more professional user experience.
+- **Fix:** Resolved a minor UI bug on the **All Cards** screen where very long deck names could disrupt the layout. Long names are now gracefully truncated with an ellipsis.
+
 ## [4.4.1] - UI Polish & Version Fix
 - **Fix:** Corrected the application version number displayed on the **Settings** page, which had not been updated in the previous release. It now accurately reflects the latest version.
 - **UI/UX:** Improved the tooltip on the **Stats** page's activity heatmap. Hovering over a day now shows the full, unambiguous date (e.g., "Friday, July 26, 2024"), making it much easier to identify specific days and their activity levels.

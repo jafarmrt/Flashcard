@@ -102,7 +102,7 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                         <p className="text-lg font-semibold text-slate-800 dark:text-slate-100 truncate">{card.front}</p>
                         <p className="text-slate-600 dark:text-slate-400 truncate">{card.back}</p>
                         <div className="flex items-center gap-4 text-xs text-slate-500 dark:text-slate-400 mt-2">
-                             <span className="bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-full">{decksById.get(card.deckId) || 'Unknown'}</span>
+                             <span title={decksById.get(card.deckId) || 'Unknown'} className="bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-full truncate max-w-32">{decksById.get(card.deckId) || 'Unknown'}</span>
                              <span>{formatDate(card.dueDate)}</span>
                         </div>
                     </div>
