@@ -127,9 +127,13 @@ export const fetchFromMerriamWebster = async (word: string): Promise<DictionaryR
 
 // --- Audio Fetcher ---
 export const fetchAudioData = async (url: string): Promise<string> => {
-  const response = await fetch(url);
+  const response = await fetch('/api/proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'fetch-audio', url: url })
+  });
   if (!response.ok) {
-    throw new Error('Failed to fetch audio file');
+    throw new Error('Failed to fetch audio file via proxy');
   }
   const blob = await response.blob();
   return new Promise((resolve, reject) => {

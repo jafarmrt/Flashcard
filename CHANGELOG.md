@@ -4,6 +4,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.8.0] - Bulk Add Audio & Stability Fix
+- **Fix:** Resolved a critical bug preventing audio pronunciation from being downloaded in the Bulk Add feature. Audio requests are now routed through a secure proxy to bypass browser CORS restrictions.
+- **Fix:** Fixed an issue where the Bulk Add process would hang indefinitely if an error occurred (especially with audio fetching). The processing logic is now more robust and ensures the process always completes, correctly reporting success or failure for each word.
+
 ## [4.7.0] - Bulk Add Inspector & Smart Retry
 - **Feature:** Added a new "Inspector" to the Bulk Add review screen. Users can now click on any word to see a detailed breakdown of the data fetching process, including which APIs were used (Dictionary, AI, Audio) and the success or failure status of each.
 - **Feature:** Implemented a "Smart Retry" system. If a specific part of the process fails for a word (e.g., AI times out but the dictionary lookup succeeds), a retry button will appear next to that specific part. This allows users to re-fetch only the missing data without losing the information that was already successfully retrieved.

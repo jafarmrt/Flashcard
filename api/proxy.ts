@@ -120,6 +120,27 @@ async function handleMerriamWebster(payload: any, res: VercelResponse, apiKey: s
     return res.status(apiResponse.status).json(data);
 }
 
+async function handleFetchAudio(payload: any, res: VercelResponse) {
+    const { url } = payload;
+    if (!url) return res.status(400).json({ error: 'URL is required.' });
+
+    try {
+        const audioResponse = await fetch(url);
+        if (!audioResponse.ok) {
+            const errorText = await audioResponse.text();
+            return res.status(audioResponse.status).json({ error: 'Failed to fetch audio from source.', details: errorText });
+        }
+        const contentType = audioResponse.headers.get('content-type') || 'application/octet-stream';
+        res.setHeader('Content-Type', contentType);
+        
+        const arrayBuffer = await audioResponse.arrayBuffer();
+        return res.status(200).send(Buffer.from(arrayBuffer));
+
+    } catch (error) {
+        return res.status(500).json({ error: 'Internal server error while fetching audio.', details: (error as Error).message });
+    }
+}
+
 
 // --- HANDLERS FOR AUTH & SYNC (using Vercel KV Store REST API) ---
 const KV_URL = process.env.KV_REST_API_URL;
@@ -318,6 +339,9 @@ export default async function handler(request: VercelRequest, response: VercelRe
         const mwApiKey = process.env.MW_API_KEY;
         if (!mwApiKey) return response.status(500).json({ error: 'Merriam-Webster API key not configured.' });
         return await handleMerriamWebster(payload, response, mwApiKey);
+      
+      case 'fetch-audio':
+        return await handleFetchAudio(payload, response);
 
       case 'auth-register':
         return await handleRegister(payload, response);

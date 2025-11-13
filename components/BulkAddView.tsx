@@ -99,16 +99,6 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
             // Create a deep copy to safely mutate nested objects like `details` and `card`
             const newWordState = JSON.parse(JSON.stringify(newState[index]));
             updater(newWordState);
-
-            // Re-evaluate overall status after an update
-            const { dictionary, ai } = newWordState.details;
-            if (newWordState.status !== 'loading') {
-                 if (dictionary.status === 'done' && ai.status === 'done') {
-                    newWordState.status = 'done';
-                } else if (dictionary.status === 'error' || ai.status === 'error' || dictionary.status === 'timeout' || ai.status === 'timeout') {
-                    newWordState.status = 'error';
-                }
-            }
            
             newState[index] = newWordState;
             return newState;
@@ -147,8 +137,6 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                     };
                     draft.details.dictionary = { status: 'done', source, audioUrl: details.audioUrl };
                 });
-                await processWordPart(word, 'audio'); // Chain audio processing
-
             } else if (part === 'ai') {
                 updateWordState(word, draft => { draft.details.ai.status = 'loading'; });
                 const details = await Promise.race([
@@ -195,11 +183,30 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
     }, [defaultApiSource, aiTimeout, dictTimeout]);
 
     const handleProcessWord = useCallback(async (word: string) => {
+        if (isCancelledRef.current) return;
         updateWordState(word, draft => { draft.status = 'loading'; });
-        await Promise.all([
-            processWordPart(word, 'dictionary'),
-            processWordPart(word, 'ai')
-        ]);
+    
+        // Step 1: Run Dictionary and AI fetches in parallel
+        const dictPromise = processWordPart(word, 'dictionary');
+        const aiPromise = processWordPart(word, 'ai');
+        await Promise.allSettled([dictPromise, aiPromise]);
+    
+        // Step 2: Conditionally fetch audio AFTER dictionary is done
+        const wordStateAfterApis = processedWordsRef.current.find(p => p.word === word);
+        if (wordStateAfterApis?.details.dictionary.status === 'done' && wordStateAfterApis.details.dictionary.audioUrl) {
+            await processWordPart(word, 'audio');
+        }
+    
+        // Step 3: Finalize the overall status based on the outcome
+        const finalState = processedWordsRef.current.find(p => p.word === word);
+        if (finalState) {
+            // A card is considered successful if the essential parts (dict, ai) are done.
+            // Audio is optional and its failure shouldn't fail the card.
+            const isSuccess = finalState.details.dictionary.status === 'done' && finalState.details.ai.status === 'done';
+            updateWordState(word, draft => {
+                draft.status = isSuccess ? 'done' : 'error';
+            });
+        }
     }, [processWordPart]);
 
     const runProcessingQueue = async (wordsQueue: string[]) => {
