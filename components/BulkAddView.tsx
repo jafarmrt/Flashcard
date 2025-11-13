@@ -18,6 +18,9 @@ interface BulkAddViewProps {
     onCancel: () => void;
     showToast: (message: string) => void;
     defaultApiSource: DictionarySource;
+    concurrency: number;
+    aiTimeout: number; // in seconds
+    dictTimeout: number; // in seconds
 }
 
 const statusIcons = {
@@ -28,12 +31,10 @@ const statusIcons = {
     timeout: <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-yellow-500"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
 };
 
-// Fix: Explicitly type the Promise to return `never` on success, as it only ever rejects.
-// This ensures that when used in `Promise.race`, it doesn't widen the result type.
 const timeoutPromise = (ms: number, message: string) => 
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error(message)), ms));
 
-export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, showToast, defaultApiSource }) => {
+export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, showToast, defaultApiSource, concurrency, aiTimeout, dictTimeout }) => {
     const [step, setStep] = useState<'input' | 'processing' | 'review'>('input');
     const [wordsInput, setWordsInput] = useState('');
     const [deckName, setDeckName] = useState('New Vocabulary');
@@ -42,26 +43,23 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
     const [isProcessing, setIsProcessing] = useState(false);
     const isCancelledRef = useRef(false);
 
-    const processSingleWord = useCallback(async (word: string, index: number) => {
+    const processSingleWord = useCallback(async (word: string) => {
+        const index = processedWords.findIndex(p => p.word === word);
+        if (index === -1) return;
+
         setProcessedWords(prev => prev.map((item, i) => i === index ? { ...item, status: 'loading' } : item));
 
         try {
             const processWithTimeout = async () => {
-                // --- PARALLEL API CALLS ---
-                // Start both dictionary and AI fetches at the same time.
-
-                // Fix: Add an explicit return type to prevent `dictDetails` from being inferred as `unknown`.
                 const getDictionaryDetails = async (): Promise<DictionaryResult> => {
                     const primaryFetcher = defaultApiSource === 'free' ? fetchFromFreeDictionary : fetchFromMerriamWebster;
                     const secondaryFetcher = defaultApiSource === 'free' ? fetchFromMerriamWebster : fetchFromFreeDictionary;
                     try {
-                        // Race primary dictionary against a 2.5s timeout
                         return await Promise.race([
                             primaryFetcher(word),
-                            timeoutPromise(2500, 'Primary dictionary API timed out.')
+                            timeoutPromise(dictTimeout * 1000, `Primary dictionary timed out after ${dictTimeout}s.`)
                         ]);
                     } catch (e) {
-                        // If it times out or fails, try the secondary
                         return await secondaryFetcher(word);
                     }
                 };
@@ -69,13 +67,11 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                 const dictionaryPromise = getDictionaryDetails();
                 const aiPromise = Promise.race([
                     generatePersianDetails(word),
-                    timeoutPromise(15000, 'AI generation timed out after 15 seconds.')
+                    timeoutPromise(aiTimeout * 1000, `AI timed out after ${aiTimeout}s.`)
                 ]);
 
-                // Wait for both parallel operations to complete
                 const [dictDetails, aiDetails] = await Promise.all([dictionaryPromise, aiPromise]);
 
-                // --- SEQUENTIAL AUDIO CALL (depends on dictionary results) ---
                 let audioDataUrl: string | undefined = undefined;
                 if (dictDetails.audioUrl) {
                     try { audioDataUrl = await fetchAudioData(dictDetails.audioUrl); } catch (audioError) { console.warn(`Could not fetch audio for ${word}`, audioError); }
@@ -93,12 +89,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                 };
             };
             
-            // Overall 1-minute timeout for the entire word processing.
-            const newCard = await Promise.race([
-                processWithTimeout(),
-                timeoutPromise(60000, 'Processing timed out after 1 minute.')
-            ]) as FlashcardFormData;
-
+            const newCard = await processWithTimeout();
             if (isCancelledRef.current) return;
             setProcessedWords(prev => prev.map((item, i) => i === index ? { ...item, status: 'done', card: newCard } : item));
 
@@ -108,42 +99,21 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
             const status: ProcessingStatus = errorMessage.toLowerCase().includes('timeout') ? 'timeout' : 'error';
             setProcessedWords(prev => prev.map((item, i) => i === index ? { ...item, status, error: errorMessage } : item));
         }
-    }, [defaultApiSource]);
-
-
-    const handleProcessWords = async () => {
-        // Fix: Explicitly type `words` as `string[]` and use `Array.from` to ensure correct type inference.
-        const words: string[] = Array.from(new Set(wordsInput.split('\n').map(word => word.trim()).filter(Boolean))); // Remove duplicates
-        if (words.length === 0) {
-            showToast("Please enter at least one word.");
-            return;
-        }
-        if (!deckName.trim()) {
-            showToast("Please enter a deck name.");
-            return;
-        }
-
+    }, [defaultApiSource, aiTimeout, dictTimeout, processedWords]);
+    
+    const runProcessing = async (wordsToRun: string[]) => {
         isCancelledRef.current = false;
         setIsProcessing(true);
         setStep('processing');
-        const initialProcessedWords: ProcessedWord[] = words.map(word => ({ word, status: 'pending' }));
-        setProcessedWords(initialProcessedWords);
         
-        const CONCURRENCY_LIMIT = 3;
-        const queue = [...words];
+        const queue = [...wordsToRun];
         
-        const runTask = async (word: string, index: number) => {
-            if (isCancelledRef.current) return;
-            await processSingleWord(word, index);
-        };
-
-        const workers = Array(CONCURRENCY_LIMIT).fill(null).map(async () => {
+        const workers = Array(concurrency).fill(null).map(async () => {
             while (queue.length > 0) {
                 if (isCancelledRef.current) break;
                 const word = queue.shift();
                 if (word) {
-                    const originalIndex = words.indexOf(word);
-                    await runTask(word, originalIndex);
+                    await processSingleWord(word);
                 }
             }
         });
@@ -153,12 +123,41 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
         if (!isCancelledRef.current) {
             setIsProcessing(false);
             const successCount = processedWords.filter(p => p.status === 'done').length;
-            const failureCount = words.length - successCount;
+            const failureCount = processedWords.length - successCount;
             showToast(`Processing complete. ${successCount} successful, ${failureCount} failed.`);
             setStep('review');
         }
     };
+
+
+    const handleInitialProcess = () => {
+        const words: string[] = Array.from(new Set(wordsInput.split('\n').map(word => word.trim()).filter(Boolean)));
+        if (words.length === 0) {
+            showToast("Please enter at least one word.");
+            return;
+        }
+        if (!deckName.trim()) {
+            showToast("Please enter a deck name.");
+            return;
+        }
+        setProcessedWords(words.map(word => ({ word, status: 'pending' })));
+        runProcessing(words);
+    };
+
+    const handleRetryAll = () => {
+        const failedWords = processedWords.filter(p => ['error', 'timeout'].includes(p.status)).map(p => p.word);
+        if(failedWords.length > 0) {
+            runProcessing(failedWords);
+        } else {
+            showToast("No failed words to retry.");
+        }
+    };
     
+    const handleDeleteFailedWord = (wordToDelete: string) => {
+        setProcessedWords(prev => prev.filter(p => p.word !== wordToDelete));
+    };
+
+
     const handleSave = async () => {
         setIsSaving(true);
         const cardsToSave = processedWords.filter(pw => pw.status === 'done' && pw.card).map(pw => pw.card!);
@@ -171,7 +170,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
         setIsSaving(false);
     };
 
-    const handleCancel = () => {
+    const handleCancelProcessing = () => {
         if (isProcessing) {
             isCancelledRef.current = true;
             setIsProcessing(false);
@@ -215,7 +214,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                     <button type="button" onClick={onCancel} className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">
                         Cancel
                     </button>
-                    <button type="button" onClick={handleProcessWords} className="px-6 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors">
+                    <button type="button" onClick={handleInitialProcess} className="px-6 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors">
                         Process Words
                     </button>
                 </div>
@@ -224,7 +223,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
     );
     
     const renderProcessingStep = () => {
-        const completed = processedWords.filter(p => p.status === 'done' || p.status === 'error' || p.status === 'timeout').length;
+        const completed = processedWords.filter(p => ['done', 'error', 'timeout'].includes(p.status)).length;
         const total = processedWords.length;
         const progress = total > 0 ? (completed / total) * 100 : 0;
 
@@ -244,7 +243,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                     ))}
                 </div>
                 <div className="text-center mt-6">
-                    <button onClick={handleCancel} className="px-6 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md transition-colors">
+                    <button onClick={handleCancelProcessing} className="px-6 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md transition-colors">
                         Stop Processing
                     </button>
                 </div>
@@ -253,21 +252,21 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
     };
 
     const renderReviewStep = () => {
-        const successCount = processedWords.filter(p => p.status === 'done').length;
-        const errorCount = processedWords.filter(p => p.status === 'error' || p.status === 'timeout').length;
+        const successItems = processedWords.filter(p => p.status === 'done');
+        const failedItems = processedWords.filter(p => ['error', 'timeout'].includes(p.status));
         return (
             <div className="max-w-3xl mx-auto bg-white dark:bg-slate-800 p-8 rounded-lg shadow-md">
                 <h2 className="text-2xl font-bold mb-1 text-slate-800 dark:text-slate-100">Review & Save</h2>
                 <p className="text-slate-600 dark:text-slate-400 mb-6">
-                    <span className="text-green-600 dark:text-green-400 font-semibold">{successCount} cards</span> ready to be saved. <span className="text-red-600 dark:text-red-400 font-semibold">{errorCount} words</span> failed.
+                    <span className="text-green-600 dark:text-green-400 font-semibold">{successItems.length} cards</span> ready to be saved. <span className="text-red-600 dark:text-red-400 font-semibold">{failedItems.length} words</span> failed.
                 </p>
 
                 <div className="space-y-4 h-96 overflow-y-auto p-4 bg-slate-50 dark:bg-slate-900/50 rounded-lg">
-                    {successCount > 0 && (
+                    {successItems.length > 0 && (
                         <div>
                             <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-2">Ready to Save</h3>
                             <ul className="space-y-2">
-                                {processedWords.filter(p => p.status === 'done').map((item, i) => (
+                                {successItems.map((item, i) => (
                                     <li key={i} className="flex justify-between items-center p-3 bg-white dark:bg-slate-800 rounded-md shadow-sm">
                                         <span className="font-semibold">{item.word}</span>
                                         <span className="text-slate-500 dark:text-slate-400">{item.card?.back}</span>
@@ -276,17 +275,25 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                             </ul>
                         </div>
                     )}
-                     {errorCount > 0 && (
+                     {failedItems.length > 0 && (
                         <div>
-                            <h3 className="text-lg font-semibold text-red-700 dark:text-red-400 mt-6 mb-2">Failed Words</h3>
+                            <div className="flex justify-between items-center mt-6 mb-2">
+                                <h3 className="text-lg font-semibold text-red-700 dark:text-red-400">Failed Words</h3>
+                                <button onClick={handleRetryAll} className="px-3 py-1 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md">Retry All Failed</button>
+                            </div>
                              <ul className="space-y-2">
-                                {processedWords.filter(p => p.status === 'error' || p.status === 'timeout').map((item, i) => (
-                                    <li key={i} className="flex justify-between items-center p-3 bg-red-50 dark:bg-red-900/30 rounded-md">
-                                        <div>
+                                {failedItems.map((item, i) => (
+                                    <li key={i} className="flex items-center gap-2 p-2 bg-red-50 dark:bg-red-900/30 rounded-md">
+                                        <div className="flex-1">
                                             <span className="font-semibold text-red-800 dark:text-red-200">{item.word}</span>
                                             <span className="block text-xs text-red-600 dark:text-red-300 truncate">Reason: {item.error}</span>
                                         </div>
-                                        <span className="text-xs font-mono px-2 py-1 bg-red-100 text-red-700 dark:bg-red-800 dark:text-red-200 rounded">{item.status}</span>
+                                        <button onClick={() => processSingleWord(item.word)} title="Retry" className="p-2 text-indigo-600 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-full">
+                                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.5 2v6h-6"/><path d="M2.5 22v-6h6"/><path d="M2 11.5a10 10 0 0 1 18.8-4.3l-3.3 3.3a5 5 0 0 0-8.5 4.3"/></svg>
+                                        </button>
+                                        <button onClick={() => handleDeleteFailedWord(item.word)} title="Delete" className="p-2 text-red-600 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-full">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                                        </button>
                                     </li>
                                 ))}
                             </ul>
@@ -298,8 +305,8 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                     <button type="button" onClick={() => { setWordsInput(''); setStep('input'); }} className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">
                         Add More
                     </button>
-                    <button type="button" onClick={handleSave} disabled={isSaving || successCount === 0} className="px-6 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-wait">
-                        {isSaving ? 'Saving...' : `Save ${successCount} Cards`}
+                    <button type="button" onClick={handleSave} disabled={isSaving || successItems.length === 0} className="px-6 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-wait">
+                        {isSaving ? 'Saving...' : `Save ${successItems.length} Cards`}
                     </button>
                 </div>
             </div>

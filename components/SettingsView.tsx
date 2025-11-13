@@ -29,7 +29,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
     onLogout
 }) => {
     const importFileRef = useRef<HTMLInputElement>(null);
-    const APP_VERSION = '4.5.0';
+    const APP_VERSION = '4.6.0';
 
     const handleImportClick = () => {
         importFileRef.current?.click();
@@ -118,6 +118,29 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                      <button onClick={onNavigateToAchievements} className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">
                         View Achievements
                     </button>
+                </SettingRow>
+            </div>
+
+            {/* Bulk Add Settings */}
+            <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm overflow-hidden">
+                <h3 className="text-lg font-bold p-4 bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-700">Bulk Add Settings</h3>
+                <SettingRow title="Concurrency" description="Number of words to process at the same time (1-3). Higher is faster but may hit API limits.">
+                    <div className="flex items-center gap-4">
+                        <input type="range" min="1" max="3" step="1" value={settings.bulkAddConcurrency || 3} onChange={e => onUpdateSettings({ bulkAddConcurrency: parseInt(e.target.value, 10) })} className="w-32"/>
+                        <span className="font-bold w-4 text-center">{settings.bulkAddConcurrency || 3}</span>
+                    </div>
+                </SettingRow>
+                <SettingRow title="AI Timeout" description="How long to wait for the AI to respond for each word (in seconds).">
+                     <div className="flex items-center gap-4">
+                        <input type="range" min="5" max="60" step="5" value={settings.bulkAddAiTimeout || 15} onChange={e => onUpdateSettings({ bulkAddAiTimeout: parseInt(e.target.value, 10) })} className="w-32"/>
+                        <span className="font-bold w-8 text-center">{settings.bulkAddAiTimeout || 15}s</span>
+                    </div>
+                </SettingRow>
+                <SettingRow title="Dictionary Timeout" description="How long to wait for the primary dictionary before trying the backup.">
+                     <div className="flex items-center gap-4">
+                        <input type="range" min="3" max="20" step="1" value={settings.bulkAddDictTimeout || 5} onChange={e => onUpdateSettings({ bulkAddDictTimeout: parseInt(e.target.value, 10) })} className="w-32"/>
+                        <span className="font-bold w-8 text-center">{settings.bulkAddDictTimeout || 5}s</span>
+                    </div>
                 </SettingRow>
             </div>
 

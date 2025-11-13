@@ -1,5 +1,8 @@
-// Fix: A type-only import for `Table` was causing issues with TypeScript's ability to resolve Dexie's methods. Changed to a regular import to fix type resolution.
-import Dexie, { Table } from 'dexie';
+// Fix: The previous import `import Dexie, { Table } from 'dexie'` was incorrect as it imports `Table` as a value instead of a type.
+// This confused TypeScript's module resolution, causing it to not recognize that LinguaCardsDB extends Dexie.
+// The correct approach is to import Dexie as the default export and Table as a type.
+import Dexie from 'dexie';
+import type { Table } from 'dexie';
 import { Flashcard, Deck, StudyLog, UserProfile, UserAchievement } from '../types';
 
 export class LinguaCardsDB extends Dexie {

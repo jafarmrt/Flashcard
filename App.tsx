@@ -150,6 +150,9 @@ const BottomNav: React.FC<{
 const defaultSettings: Settings = {
     theme: 'system',
     defaultApiSource: 'free',
+    bulkAddConcurrency: 3,
+    bulkAddAiTimeout: 15,
+    bulkAddDictTimeout: 5,
 };
 
 const App: React.FC = () => {
@@ -413,7 +416,7 @@ const App: React.FC = () => {
     // Load settings
     const savedSettings = localStorage.getItem('appSettings');
     if (savedSettings) {
-        setSettings(JSON.parse(savedSettings));
+        setSettings(prev => ({...prev, ...JSON.parse(savedSettings)}));
     }
     
     // Health Checks
@@ -896,6 +899,9 @@ const App: React.FC = () => {
             onCancel={() => setView('DECKS')} 
             showToast={showToast}
             defaultApiSource={settings.defaultApiSource}
+            concurrency={settings.bulkAddConcurrency || 3}
+            aiTimeout={settings.bulkAddAiTimeout || 15}
+            dictTimeout={settings.bulkAddDictTimeout || 2.5}
         />;
       case 'LIST':
       default:

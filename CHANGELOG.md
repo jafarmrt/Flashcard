@@ -4,6 +4,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.6.0] - Bulk Add Enhancements & Configuration
+- **Feature:** Words that fail during the Bulk Add process can now be retried individually or all at once. Failed words can also be manually removed from the list, giving users full control over the process.
+- **Feature:** Added a new section in Settings to customize the Bulk Add feature. Users can now control the processing speed and reliability by adjusting the number of concurrent requests (1-3) and setting custom timeouts for the AI and Dictionary APIs.
+
 ## [4.5.0] - Stability & Polish
 - **Performance:** Improved database performance by adding an index to a frequently queried field. This makes loading data, especially on the **Stats** page, significantly faster for users with a large number of cards.
 - **UI/UX:** Implemented a skeleton loader for the **Stats** page. Instead of a simple "Loading..." message, the app now displays an animated placeholder that mimics the page layout, creating a smoother and more professional user experience.

@@ -78,6 +78,9 @@ export interface Flashcard {
 export interface Settings {
     theme: 'light' | 'dark' | 'system';
     defaultApiSource: 'free' | 'mw';
+    bulkAddConcurrency?: number;
+    bulkAddAiTimeout?: number;
+    bulkAddDictTimeout?: number;
 }
 
 export interface StudySessionOptions {
