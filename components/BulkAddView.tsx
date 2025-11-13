@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, memo } from 'react';
+import React, { useState, useRef, useCallback, memo, useEffect } from 'react';
 import { Flashcard } from '../types';
 import { generatePersianDetails } from '../services/geminiService';
 import { fetchFromFreeDictionary, fetchFromMerriamWebster, fetchAudioData, DictionaryResult } from '../services/dictionaryService';
@@ -85,6 +85,11 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
     const [isProcessing, setIsProcessing] = useState(false);
     const isCancelledRef = useRef(false);
 
+    const processedWordsRef = useRef(processedWords);
+    useEffect(() => {
+        processedWordsRef.current = processedWords;
+    }, [processedWords]);
+
     const updateWordState = (word: string, updater: (draft: ProcessedWord) => void) => {
         setProcessedWords(prev => {
             const index = prev.findIndex(p => p.word === word);
@@ -115,13 +120,6 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
         part: 'dictionary' | 'ai' | 'audio'
     ) => {
         if (isCancelledRef.current) return;
-        
-        let wordState: ProcessedWord | undefined;
-        setProcessedWords(prev => {
-            wordState = prev.find(p => p.word === word);
-            return prev;
-        });
-        if (!wordState) return;
 
         try {
             if (part === 'dictionary') {
@@ -162,9 +160,15 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                     draft.details.ai = { status: 'done', source: 'Gemini' };
                 });
             } else if (part === 'audio') {
-                const audioUrl = wordState.details.dictionary.audioUrl;
+                const wordState = processedWordsRef.current.find(p => p.word === word);
+                const audioUrl = wordState?.details.dictionary.audioUrl;
+
                 if (!audioUrl) {
-                    updateWordState(word, draft => { draft.details.audio = { status: 'error', error: 'No audio source found.' }; });
+                    updateWordState(word, draft => {
+                         if (draft.details.audio.status === 'pending') {
+                            draft.details.audio = { status: 'error', error: 'No audio source found.' };
+                        }
+                    });
                     return;
                 }
                 updateWordState(word, draft => { draft.details.audio.status = 'loading'; });
