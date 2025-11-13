@@ -67,7 +67,10 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                 };
 
                 const dictionaryPromise = getDictionaryDetails();
-                const aiPromise = generatePersianDetails(word);
+                const aiPromise = Promise.race([
+                    generatePersianDetails(word),
+                    timeoutPromise(15000, 'AI generation timed out after 15 seconds.')
+                ]);
 
                 // Wait for both parallel operations to complete
                 const [dictDetails, aiDetails] = await Promise.all([dictionaryPromise, aiPromise]);

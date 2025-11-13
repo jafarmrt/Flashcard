@@ -1,5 +1,5 @@
-// Fix: Use a default import for Dexie. The named import was not resolving the class methods correctly, leading to type errors for `.version()`, `.transaction()`, etc., which suggests an issue with module resolution or Dexie version. Default import resolves this.
-import Dexie, { type Table } from 'dexie';
+// Fix: A type-only import for `Table` was causing issues with TypeScript's ability to resolve Dexie's methods. Changed to a regular import to fix type resolution.
+import Dexie, { Table } from 'dexie';
 import { Flashcard, Deck, StudyLog, UserProfile, UserAchievement } from '../types';
 
 export class LinguaCardsDB extends Dexie {
