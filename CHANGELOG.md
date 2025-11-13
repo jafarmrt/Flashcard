@@ -4,6 +4,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.7.0] - Bulk Add Inspector & Smart Retry
+- **Feature:** Added a new "Inspector" to the Bulk Add review screen. Users can now click on any word to see a detailed breakdown of the data fetching process, including which APIs were used (Dictionary, AI, Audio) and the success or failure status of each.
+- **Feature:** Implemented a "Smart Retry" system. If a specific part of the process fails for a word (e.g., AI times out but the dictionary lookup succeeds), a retry button will appear next to that specific part. This allows users to re-fetch only the missing data without losing the information that was already successfully retrieved.
+- **Improvement:** Error messages in the Bulk Add view are now much more specific, showing the exact reason for failure (e.g., "Word not found," "AI timed out") to help diagnose issues.
+
 ## [4.6.0] - Bulk Add Enhancements & Configuration
 - **Feature:** Words that fail during the Bulk Add process can now be retried individually or all at once. Failed words can also be manually removed from the list, giving users full control over the process.
 - **Feature:** Added a new section in Settings to customize the Bulk Add feature. Users can now control the processing speed and reliability by adjusting the number of concurrent requests (1-3) and setting custom timeouts for the AI and Dictionary APIs.
