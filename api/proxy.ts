@@ -49,6 +49,60 @@ interface UserData {
     data: SyncData;
 }
 
+
+// --- HANDLER FOR GEMINI API ---
+async function handleGeminiGenerate(payload: any, response: VercelResponse, apiKey: string) {
+  const { model, contents, config } = payload;
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+
+  const {
+    systemInstruction,
+    responseModalities,
+    speechConfig,
+    ...generationConfig
+  } = config || {};
+
+
+  const finalContents = Array.isArray(contents)
+    ? contents
+    : (contents && typeof contents === 'object' && contents.parts)
+      ? [contents]
+      : [{ parts: [{ text: contents }] }];
+
+  const googleApiBody: Record<string, any> = {
+    contents: finalContents,
+    ...(systemInstruction && { systemInstruction }),
+    ...(responseModalities && { responseModalities }),
+    ...(speechConfig && { speechConfig }),
+    ...(Object.keys(generationConfig).length > 0 && { generationConfig }),
+  };
+
+  const geminiResponse = await fetch(`${endpoint}?key=${apiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(googleApiBody),
+  });
+
+  if (!geminiResponse.ok) {
+    const errorText = await geminiResponse.text();
+    console.error('Google API Error:', errorText);
+    try {
+      const errorJson = JSON.parse(errorText);
+      return response.status(geminiResponse.status).json({ error: 'Google API Error', details: errorJson });
+    } catch (e) {
+      return response.status(geminiResponse.status).json({ error: 'Google API Error', details: errorText });
+    }
+  }
+
+  const responseData = await geminiResponse.json();
+  const adaptedResponse = {
+    text: responseData.candidates?.[0]?.content?.parts?.[0]?.text || '',
+    candidates: responseData.candidates,
+  };
+
+  return response.status(200).json(adaptedResponse);
+}
+
 // --- HANDLERS FOR DICTIONARY APIS ---
 async function handleFreeDictionary(payload: any, res: VercelResponse) {
     const { word } = payload;
@@ -251,6 +305,11 @@ export default async function handler(request: VercelRequest, response: VercelRe
         if (!mwApiKeyPing) return response.status(500).json({ error: 'Merriam-Webster API key not configured.' });
         const mwResponse = await fetch(`https://www.dictionaryapi.com/api/v3/references/collegiate/json/test?key=${mwApiKeyPing}`);
         return response.status(mwResponse.ok ? 200 : 503).json({ message: mwResponse.ok ? 'pong' : 'api unreachable' });
+
+      case 'gemini-generate':
+        const apiKey = process.env.API_KEY;
+        if (!apiKey) return response.status(500).json({ error: 'API key not configured.' });
+        return await handleGeminiGenerate(payload, response, apiKey);
 
       case 'dictionary-free':
         return await handleFreeDictionary(payload, response);

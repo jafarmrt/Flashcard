@@ -4,11 +4,6 @@
 
 All notable changes to this project will be documented in this file.
 
-## [4.6.0] - Bulk Add Overhaul & AI Reliability
-- **Fix:** Resolved critical reliability issues in the "Bulk Add" and "AI Generate" features that caused frequent timeouts and failures.
-- **Architecture:** Rerouted all AI requests to be sent directly from the browser to the Gemini API, bypassing a server proxy that had a restrictive timeout. This eliminates the root cause of the failures.
-- **Improvement:** The success rate for processing large lists of words is now significantly higher. The smart retry mechanism is now able to function correctly, handling momentary API rate limits without being prematurely cut off by the server.
-
 ## [4.5.0] - Stability & Polish
 - **Performance:** Improved database performance by adding an index to a frequently queried field. This makes loading data, especially on the **Stats** page, significantly faster for users with a large number of cards.
 - **UI/UX:** Implemented a skeleton loader for the **Stats** page. Instead of a simple "Loading..." message, the app now displays an animated placeholder that mimics the page layout, creating a smoother and more professional user experience.

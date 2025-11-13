@@ -47,44 +47,32 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
 
         try {
             const processWithTimeout = async () => {
-                
-                const generatePersianDetailsWithRetry = async (wordToProcess: string) => {
-                    const MAX_RETRIES = 3;
-                    let lastError: Error | null = null;
-                    for (let i = 0; i < MAX_RETRIES; i++) {
-                        try {
-                            if (isCancelledRef.current) throw new Error("Operation cancelled");
-                            return await generatePersianDetails(wordToProcess);
-                        } catch (error) {
-                            lastError = error as Error;
-                            if (i < MAX_RETRIES - 1) { // If it's not the last attempt
-                                const delay = 2000 * Math.pow(2, i); // 2s, 4s
-                                console.warn(`AI generation for "${wordToProcess}" failed. Retrying in ${delay}ms... (Attempt ${i + 2})`);
-                                await new Promise(resolve => setTimeout(resolve, delay));
-                            }
-                        }
-                    }
-                    throw lastError; // Throw the last captured error if all retries fail
-                };
+                // --- PARALLEL API CALLS ---
+                // Start both dictionary and AI fetches at the same time.
 
+                // Fix: Add an explicit return type to prevent `dictDetails` from being inferred as `unknown`.
                 const getDictionaryDetails = async (): Promise<DictionaryResult> => {
                     const primaryFetcher = defaultApiSource === 'free' ? fetchFromFreeDictionary : fetchFromMerriamWebster;
                     const secondaryFetcher = defaultApiSource === 'free' ? fetchFromMerriamWebster : fetchFromFreeDictionary;
                     try {
+                        // Race primary dictionary against a 2.5s timeout
                         return await Promise.race([
                             primaryFetcher(word),
                             timeoutPromise(2500, 'Primary dictionary API timed out.')
                         ]);
                     } catch (e) {
+                        // If it times out or fails, try the secondary
                         return await secondaryFetcher(word);
                     }
                 };
 
                 const dictionaryPromise = getDictionaryDetails();
-                const aiPromise = generatePersianDetailsWithRetry(word);
+                const aiPromise = generatePersianDetails(word);
 
+                // Wait for both parallel operations to complete
                 const [dictDetails, aiDetails] = await Promise.all([dictionaryPromise, aiPromise]);
 
+                // --- SEQUENTIAL AUDIO CALL (depends on dictionary results) ---
                 let audioDataUrl: string | undefined = undefined;
                 if (dictDetails.audioUrl) {
                     try { audioDataUrl = await fetchAudioData(dictDetails.audioUrl); } catch (audioError) { console.warn(`Could not fetch audio for ${word}`, audioError); }
@@ -102,6 +90,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                 };
             };
             
+            // Overall 1-minute timeout for the entire word processing.
             const newCard = await Promise.race([
                 processWithTimeout(),
                 timeoutPromise(60000, 'Processing timed out after 1 minute.')
