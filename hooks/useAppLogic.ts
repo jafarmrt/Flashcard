@@ -689,7 +689,7 @@ export const useAppLogic = () => {
   };
 
   const handleCompleteCardDetails = async (cardId: string) => {
-    const cardToComplete = flashcards.find(c => c.id === cardId);
+    const cardToComplete = await db.flashcards.get(cardId);
     if (!cardToComplete) {
         showToast("Card not found.");
         return;

@@ -8,6 +8,10 @@ const changelogText = `# Changelog
 
 All notable changes to this project will be documented in this file.
 
+## [5.0.1] - Concurrency Fix & UI Polish
+- **Fix:** Resolved a critical data integrity bug in the "All Cards" list where making rapid, consecutive changes to different cards could cause previous updates to be reverted. The inline completion logic now fetches the latest card data directly from the database to prevent race conditions.
+- **UI/UX:** The loading spinner on the inline "Complete Card" button is now centered and more visually stable during the update process.
+
 ## [5.0.0] - "All Cards" Page Overhaul
 - **Feature:** Added advanced sorting options to the "All Cards" list. Users can now sort by English (A-Z, Z-A), Persian (A-Z, Z-A), latest added, and cards that are missing audio.
 - **Feature:** Implemented pagination for the "All Cards" list, displaying 100 cards per page to improve performance and usability for large collections.

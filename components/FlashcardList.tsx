@@ -107,6 +107,9 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
       </div>
     );
   }
+  
+  const actionButtonClasses = "w-8 h-8 flex items-center justify-center rounded-full transition-colors hover:bg-slate-200 dark:hover:bg-slate-600";
+
 
   return (
     <div>
@@ -144,13 +147,13 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                     </div>
                     <div className="flex flex-shrink-0 gap-1 sm:gap-2 pl-2 items-center">
                         {card.audioSrc && (
-                             <button onClick={(e) => playAudio(card.audioSrc!, e)} aria-label={`Play audio for ${card.front}`} className="p-2 text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-300 transition-colors rounded-full hover:bg-slate-200 dark:hover:bg-slate-600"><SpeakerIcon /></button>
+                             <button onClick={(e) => playAudio(card.audioSrc!, e)} aria-label={`Play audio for ${card.front}`} className={`${actionButtonClasses} text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-300`}><SpeakerIcon /></button>
                         )}
-                        <button onClick={() => handleComplete(card.id)} disabled={completingCardId === card.id} aria-label={`Complete details for ${card.front}`} className="p-2 text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 transition-colors rounded-full hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-50 disabled:cursor-wait">
+                        <button onClick={() => handleComplete(card.id)} disabled={completingCardId === card.id} aria-label={`Complete details for ${card.front}`} className={`${actionButtonClasses} text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 disabled:opacity-50 disabled:cursor-wait`}>
                             {completingCardId === card.id ? <LoadingIcon /> : <CompleteIcon />}
                         </button>
-                        <button onClick={() => onEdit(card)} aria-label={`Edit ${card.front}`} className="p-2 text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 transition-colors rounded-full hover:bg-slate-200 dark:hover:bg-slate-600"><EditIcon /></button>
-                        <button onClick={() => onDelete(card.id)} aria-label={`Delete ${card.front}`} className="p-2 text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 transition-colors rounded-full hover:bg-slate-200 dark:hover:bg-slate-600"><DeleteIcon /></button>
+                        <button onClick={() => onEdit(card)} aria-label={`Edit ${card.front}`} className={`${actionButtonClasses} text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300`}><EditIcon /></button>
+                        <button onClick={() => onDelete(card.id)} aria-label={`Delete ${card.front}`} className={`${actionButtonClasses} text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300`}><DeleteIcon /></button>
                     </div>
                 </div>
             ))}
