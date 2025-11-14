@@ -24,18 +24,32 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
   const [isAnswered, setIsAnswered] = useState(false);
 
   const startPractice = async () => {
-    // A "new" word is one that has never been reviewed correctly.
-    // Fix: Explicitly type the parameter 'c' to resolve a potential type inference issue.
-    const newCards = cards.filter((c: Flashcard) => c.repetition === 0);
+    // Tier 1: Prefer new cards (never reviewed correctly)
+    let practicePool = cards.filter(c => c.repetition === 0);
+
+    // Tier 2: If not enough new cards, add cards due for review
+    if (practicePool.length < 4) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      // Get unique due cards that are not already in the pool
+      const dueCards = cards.filter(c => new Date(c.dueDate) <= today && !practicePool.find(pc => pc.id === c.id));
+      practicePool = [...practicePool, ...dueCards];
+    }
     
-    if (newCards.length < 4) {
-      alert("You need at least 4 new cards (cards you haven't studied yet) to start a practice session.");
-      return;
+    // Tier 3: If still not enough, use all cards as a last resort
+    if (practicePool.length < 4) {
+      practicePool = [...cards];
+    }
+    
+    // Final check: If the user has less than 4 cards in total
+    if (practicePool.length < 4) {
+        alert("You need at least 4 cards in your collection to start a practice session.");
+        return;
     }
 
     setPracticeState('generating');
     
-    const practiceCards = shuffleArray(newCards).slice(0, 10);
+    const practiceCards = shuffleArray(practicePool).slice(0, 10);
     const generatedQuestions = await generateInstructionalQuiz(practiceCards);
 
     if (generatedQuestions && generatedQuestions.length > 0) {

@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.0.2] - Practice Mode Fix
+- **Fix:** Resolved a major issue where the "Practice" feature would not work if the user had fewer than 4 "new" cards. The quiz generation logic is now more flexible, prioritizing new cards, then falling back to cards due for review, and finally using any available cards to ensure the feature is always accessible.
+
 ## [5.0.1] - Concurrency Fix & UI Polish
 - **Fix:** Resolved a critical data integrity bug in the "All Cards" list where making rapid, consecutive changes to different cards could cause previous updates to be reverted. The inline completion logic now fetches the latest card data directly from the database to prevent race conditions.
 - **UI/UX:** The loading spinner on the inline "Complete Card" button is now centered and more visually stable during the update process.
