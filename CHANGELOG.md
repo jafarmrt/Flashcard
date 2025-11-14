@@ -4,6 +4,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.9.3] - Improved Card Sorting
+- **UI/UX:** The "All Cards" list now defaults to sorting alphabetically by the English word (front of the card). This provides a more intuitive and organized view for users browsing their entire collection. The option to sort by other columns remains available.
+
 ## [4.9.2] - Bulk Add Resiliency & Control
 - **Improvement:** Cards in the Bulk Add process are now considered successful and can be saved even if the audio fetch fails, as long as essential details (translation, definition) are retrieved.
 - **Feature:** Added a "Retry All Failed" button to the review screen, allowing users to re-process all words that encountered an error without starting over.
@@ -68,4 +71,152 @@ All notable changes to this project will be documented in this file.
 - **Feature:** Introduced a major UI/UX refresh for the main "Decks" screen to create a more modern, engaging, and informative user experience.
 - **UI/UX:** Replaced the separate gamification widgets with a single, consolidated **Dashboard** header. This new component neatly organizes the Study Streak, Level/XP Progress, and a summary of Daily Goals into one sleek, at-a-glance view.
 - **UI/UX:** Redesigned the **Deck Cards** to be more visually appealing and functional. Each card now features:
-    - A subtle
+    - A subtle--- START OF FILE components/ChangelogView.tsx ---
+
+import React from 'react';
+
+interface ChangelogViewProps {
+  onBack: () => void;
+}
+
+const changelogText = `# Changelog
+
+All notable changes to this project will be documented in this file.
+
+## [3.4.0] - Comprehensive Cloud Sync Fix
+- **Fix:** Resolved a critical data synchronization bug where user progress (study streak, XP, level, and achievements) was not synced between devices. The sync logic has been completely overhauled to include \`studyHistory\`, \`userProfile\`, and \`userAchievements\` data in addition to cards and decks.
+- **Improvement:** The server-side merge logic is now more intelligent, combining study logs from all devices and ensuring the user profile with the most progress (highest XP) is kept, preventing data loss.
+- **Result:** A user's entire application state, including their vital study streak, is now consistent across all devices linked with the same sync key.
+
+## [3.3.1] - Localization Fix
+- **Fix:** Translated the names and descriptions of all achievements from Persian to English to match the application's primary language.
+
+## [3.3.0] - Gamification: Achievements & Badges
+- **Feature:** Introduced a comprehensive achievements system to reward user milestones.
+- **Achievements:** Added a variety of unlockable medals for goals like maintaining a study streak, creating cards, leveling up, mastering a deck, and getting a perfect quiz score.
+- **UI/UX:** Created a new "Achievements" page, accessible from Settings, to display all possible medals and show which ones have been earned.
+- **Notifications:** Users now receive a toast notification when they unlock a new achievement, providing immediate positive feedback.
+- **Database:** Added a new \`userAchievements\` table to the local database to store progress.
+
+## [3.2.0] - Gamification: XP, Levels & Streaks
+- **Feature:** Introduced the first phase of gamification to make learning more engaging.
+- **XP & Levels:** Users now earn Experience Points (XP) for completing activities like studying cards, creating new cards, and finishing practice quizzes. Gaining XP increases your user level.
+- **UI/UX:** Added a new progress bar and level indicator on the main "Decks" screen to visualize your learning journey.
+- **Streak Display:** The daily study streak is now prominently displayed with a flame icon on the main screen to provide daily motivation.
+- **Database:** Added a new \`userProfile\` table to the local database to store gamification progress.
+
+## [3.1.1] - Theme Switching Fix
+- **Fix:** Resolved a critical bug where the theme switcher (Light/Dark/System) in the Settings page was not working. The application's Tailwind CSS configuration was missing the necessary \`darkMode: 'class'\` setting, which prevented the theme from being applied correctly.
+- **Improvement:** The 'System' theme option is now more responsive. It will now automatically update the app's theme in real-time if the user changes their operating system's theme, without requiring a page refresh.
+
+## [3.1.0] - Settings & Reliability
+- **Fix:** Resolved a critical bug where the in-app changelog failed to load due to a network error. The changelog content is now embedded directly into the app for instant and reliable offline access.
+
+## [3.0.2] - Cram Mode
+- **Feature:** Added a new **"Study All Cards"** option in the Study Setup screen. This allows users to review all cards in a deck, regardless of their due date. This is perfect for cramming before a test or when you want to review everything.
+
+## [3.0.1] - Bulk Add Reliability
+- **Improvement:** Increased the processing timeout for each word in the "Bulk Add" feature from 7 seconds to 1 minute. This significantly improves the success rate for creating cards, especially on slower network connections or with more complex words.
+
+## [3.0.0] - Gamification & Enhanced Study Experience
+- **Feature:** Added **Customizable Study Sessions**. Before starting a study session, users can now access a setup screen with the following options:
+    - **Filter Cards:** Choose to study only "New Cards", only "Review Cards", or all cards that are "All Due Today".
+    - **Session Size:** Set a maximum number of cards to review in a single session.
+- **Improvement:** This feature gives users more control over their learning, allowing for shorter, more focused study sessions tailored to their needs.
+
+## [2.3.7] - Practice Quiz Gameplay Fix
+- **Fix:** Corrected an issue in the "Practice" quiz where the context sentence, which often contained the answer, was shown before the user selected an option. The context is now revealed only after an answer is submitted, improving the quality of the quiz.
+
+## [2.3.6] - Practice Quiz Timeout Fix
+- **Fix:** Resolved a persistent timeout error in the "Practice" feature. The AI prompt for generating quiz questions was overly complex, causing delays.
+- **Improvement:** The AI prompt has been simplified to be more direct, reducing processing time.
+- **Performance:** Switched to a faster AI model ('gemini-2.5-flash') for quiz generation, making the feature significantly more responsive and reliable.
+
+## [2.3.5] - Bulk Add Timeout & Parallelism Fix
+- **Fix:** Resolved a critical bug in the "Bulk Add" feature where all words would fail with a timeout error. The root cause was that API calls were being made sequentially (one after another), which took too long. The logic has been re-engineered to run the dictionary and AI API calls in parallel (at the same time), which drastically speeds up the process for each word.
+- **Improvement:** The overall timeout for each word has been increased from 5 to 7 seconds as a safety buffer, making the feature more resilient to slow network conditions.
+- **Result:** This change dramatically increases the success rate of the feature, making it reliable and functional as intended.
+
+## [2.3.4] - Bulk Add Reliability & Speed
+- **Feature:** Overhauled the "Bulk Add" feature to be significantly faster and more reliable.
+- **Performance:** Implemented concurrent processing to fetch data for up to 3 words simultaneously, dramatically reducing the total time for large lists.
+- **Reliability:** Added a 5-second timeout for each word. If a word's processing gets stuck, it is automatically cancelled and the process moves to the next word.
+- **Reliability:** Implemented a smart dictionary fallback. If the primary dictionary API doesn't respond within 2.5 seconds, the system automatically tries the secondary API.
+- **UI/UX:** The UI now provides much clearer feedback during processing, showing the status of each word (e.g., loading, done, timeout, error).
+- **UI/UX:** At the end of the process, a summary report is shown, informing the user of how many cards were created successfully and how many failed.
+
+## [2.3.3] - Cloud Sync Data Integrity Fix
+- **Fix:** Resolved a critical data integrity bug in the cloud sync feature where deleted cards and decks could reappear. The server-side merge logic was flawed, allowing devices with old data to "undelete" items. The logic is now "deletion-aware," ensuring that once an item is deleted, it stays deleted across all synced devices. This prevents "ghost" cards from appearing in the Study view and ensures data consistency.
+
+## [2.3.2] - Data Consistency Fix
+- **Fix:** Resolved a critical data consistency bug where deleting a deck would not reliably delete all of its associated cards. This caused "ghost" cards to appear in the Study view even after they were supposed to be deleted. The deletion logic now correctly reads from the database within an atomic transaction to ensure all cards are removed, preventing this issue.
+
+## [2.3.1] - Bulk Add Fix
+- **Fix:** Resolved a critical bug in the "Bulk Add" feature where the view would get stuck on the initial input screen after clicking "Process Words". The UI now correctly transitions through the processing and review steps.
+
+## [2.3.0] - Bulk Word Import
+- **Feature:** Added a new "Bulk Add" feature accessible from the Decks screen.
+- **UI/UX:** Users can now paste a list of words to automatically create multiple flashcards at once.
+- **AI:** The bulk add process automatically fetches Persian translations, definitions, pronunciation, and audio for each word, with a progress indicator and review step.
+`;
+
+
+const renderChangelog = (text: string) => {
+  const lines = text.split('\n');
+  const elements = [];
+  let listItems: React.ReactNode[] = [];
+
+  const flushList = () => {
+    if (listItems.length > 0) {
+      elements.push(<ul key={`ul-${elements.length}`} className="list-disc pl-6 space-y-1 my-4">{listItems}</ul>);
+      listItems = [];
+    }
+  };
+
+  lines.forEach((line, index) => {
+    if (line.startsWith('## [')) {
+      flushList();
+      elements.push(<h2 key={index} className="text-xl font-bold mt-6 mb-2 border-b border-slate-200 dark:border-slate-700 pb-2">{line.substring(3).trim()}</h2>);
+    } else if (line.match(/^-\s+\*\*/)) {
+      const content = line.substring(line.indexOf('**') + 2).replace(/\*\*:/, ':');
+      const parts = content.split(':');
+      const label = parts[0];
+      const description = parts.slice(1).join(':');
+      listItems.push(
+        <li key={index}>
+          <strong className="font-semibold text-slate-800 dark:text-slate-100">{label}:</strong>
+          <span className="text-slate-600 dark:text-slate-300">{description}</span>
+        </li>
+      );
+    } else if (line.trim() === '') {
+      flushList();
+    } else {
+        if (line.startsWith('# ')) {
+            flushList();
+            elements.push(<h1 key={index} className="text-3xl font-bold mb-4">{line.substring(2)}</h1>);
+        } else if (listItems.length === 0) { // Don't treat blank lines within lists as paragraphs
+             elements.push(<p key={index} className="text-slate-600 dark:text-slate-400">{line}</p>);
+        }
+    }
+  });
+
+  flushList(); // Add any remaining list items
+  return elements;
+};
+
+
+export const ChangelogView: React.FC<ChangelogViewProps> = ({ onBack }) => {
+  return (
+    <div className="max-w-3xl mx-auto bg-white dark:bg-slate-800 p-6 sm:p-8 rounded-lg shadow-md">
+      <h2 className="text-2xl font-bold mb-4 text-slate-800 dark:text-slate-100">Version History</h2>
+      <div className="prose dark:prose-invert max-w-none bg-slate-50 dark:bg-slate-900/50 p-4 rounded-md h-96 overflow-y-auto">
+          {renderChangelog(changelogText)}
+      </div>
+      <div className="text-center mt-6">
+        <button onClick={onBack} className="px-6 py-2 rounded-lg bg-indigo-600 text-white font-semibold shadow-md hover:bg-indigo-700 transition-colors">
+          Back to Settings
+        </button>
+      </div>
+    </div>
+  );
+};

@@ -27,7 +27,7 @@ const formatDate = (isoString: string) => {
 };
 
 const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onDelete, onBackToDecks }) => {
-  const [sortConfig, setSortConfig] = useState<{ key: keyof Flashcard | 'deckName'; direction: 'ascending' | 'descending' }>({ key: 'dueDate', direction: 'ascending' });
+  const [sortConfig, setSortConfig] = useState<{ key: keyof Flashcard | 'deckName'; direction: 'ascending' | 'descending' }>({ key: 'front', direction: 'ascending' });
   const [selectedDeckId, setSelectedDeckId] = useState<string>('all');
  
   const decksById = useMemo(() => new Map(decks.map(deck => [deck.id, deck.name])), [decks]);
