@@ -8,6 +8,10 @@ const changelogText = `# Changelog
 
 All notable changes to this project will be documented in this file.
 
+## [5.0.4] - Practice Mode Reliability Fix
+- **Fix:** Resolved a critical issue where the AI-powered "Practice" mode would frequently fail or time out. The quiz size has been reduced from 10 to 5 questions to create a lighter, faster API request.
+- **Improvement:** Added validation to ensure only cards with valid English words are used to generate quizzes, preventing errors and improving stability.
+
 ## [5.0.3] - Data Persistence Fix
 - **Fix:** Resolved a critical data loss bug where recent edits to a flashcard could be overwritten by an automated cloud sync. A new timestamp-based sync logic has been implemented. Now, when syncing, the app compares the local and cloud versions of a card and always keeps the one that was most recently updated, ensuring no work is ever lost.
 

@@ -41,15 +41,19 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
       practicePool = [...cards];
     }
     
-    // Final check: If the user has less than 4 cards in total
-    if (practicePool.length < 4) {
-        alert("You need at least 4 cards in your collection to start a practice session.");
+    // NEW: Filter out any cards that don't have a front value before sending to AI
+    const validPracticePool = practicePool.filter(c => c.front && c.front.trim() !== '');
+
+    // Final check: If the user has less than 4 valid cards in total
+    if (validPracticePool.length < 4) {
+        alert("You need at least 4 valid cards (with English words) in your collection to start a practice session.");
         return;
     }
 
     setPracticeState('generating');
     
-    const practiceCards = shuffleArray(practicePool).slice(0, 10);
+    // CHANGED: Quiz size reduced from 10 to 5 for faster, more reliable generation.
+    const practiceCards = shuffleArray(validPracticePool).slice(0, 5);
     const generatedQuestions = await generateInstructionalQuiz(practiceCards);
 
     if (generatedQuestions && generatedQuestions.length > 0) {
