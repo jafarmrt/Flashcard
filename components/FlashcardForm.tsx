@@ -13,7 +13,8 @@ import {
 } from '../services/dictionaryService';
 
 
-type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId'>;
+// Fix: Omit `createdAt` and `isDeleted` as they are not managed by the form.
+type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'createdAt' | 'isDeleted'>;
 type DictionarySource = 'free' | 'mw';
 
 interface FlashcardFormProps {

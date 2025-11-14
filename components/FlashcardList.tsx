@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Flashcard, Deck } from '../types';
 
 interface FlashcardListProps {
@@ -7,29 +7,43 @@ interface FlashcardListProps {
   onEdit: (card: Flashcard) => void;
   onDelete: (id: string) => void;
   onBackToDecks: () => void;
+  onCompleteCard: (cardId: string) => Promise<void>;
 }
 
 const EditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>;
 const DeleteIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>;
 const SpeakerIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>;
+const CompleteIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m5 3 2.5 5L10 3l2.5 5L15 3l2.5 5L20 3"/><path d="M10 13a2.5 2.5 0 0 0-2.5 2.5V21h5v-5.5A2.5 2.5 0 0 0 10 13Z"/><path d="M5 21h14"/></svg>;
+const LoadingIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg>;
 
-const formatDate = (isoString: string) => {
-    const date = new Date(isoString);
-    const today = new Date();
-    today.setHours(0,0,0,0);
-    const dateToCompare = new Date(date);
-    dateToCompare.setHours(0,0,0,0);
+const MissingInfoIndicator: React.FC<{ card: Flashcard }> = ({ card }) => {
+    const missing = [];
+    if (!card.audioSrc) missing.push({ key: 'A', title: 'Missing Audio' });
+    if (!card.pronunciation) missing.push({ key: 'P', title: 'Missing Pronunciation' });
+    if (!card.definition?.length) missing.push({ key: 'D', title: 'Missing Definition' });
+    if (!card.exampleSentenceTarget?.length) missing.push({ key: 'E', title: 'Missing Example' });
 
-    if (dateToCompare <= today) {
-        return <span className="font-semibold text-indigo-500 dark:text-indigo-400">Due Today</span>
-    }
-    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    if (missing.length === 0) return null;
+
+    return (
+        <div className="flex items-center gap-1" title={missing.map(m => m.title).join(', ')}>
+            {missing.map(m => (
+                <span key={m.key} className="flex items-center justify-center w-4 h-4 text-[10px] font-bold text-slate-500 bg-slate-200 dark:bg-slate-600 dark:text-slate-300 rounded-full">
+                    {m.key}
+                </span>
+            ))}
+        </div>
+    );
 };
 
-const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onDelete, onBackToDecks }) => {
-  const [sortConfig, setSortConfig] = useState<{ key: keyof Flashcard | 'deckName'; direction: 'ascending' | 'descending' }>({ key: 'front', direction: 'ascending' });
+
+const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onDelete, onBackToDecks, onCompleteCard }) => {
+  const [sortKey, setSortKey] = useState<string>('front-asc');
   const [selectedDeckId, setSelectedDeckId] = useState<string>('all');
- 
+  const [currentPage, setCurrentPage] = useState(1);
+  const [completingCardId, setCompletingCardId] = useState<string | null>(null);
+  const CARDS_PER_PAGE = 100;
+
   const decksById = useMemo(() => new Map(decks.map(deck => [deck.id, deck.name])), [decks]);
 
   const filteredCards = useMemo(() => {
@@ -40,24 +54,34 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
   const sortedCards = useMemo(() => {
     let sortableCards = [...filteredCards];
     sortableCards.sort((a, b) => {
-        const aValue = sortConfig.key === 'deckName' ? decksById.get(a.deckId) : a[sortConfig.key as keyof Flashcard];
-        const bValue = sortConfig.key === 'deckName' ? decksById.get(b.deckId) : b[sortConfig.key as keyof Flashcard];
-
-        if (aValue === undefined && bValue === undefined) return 0;
-        if (aValue === undefined) return 1;
-        if (bValue === undefined) return -1;
-        
-        let comparison = 0;
-        if (typeof aValue === 'string' && typeof bValue === 'string') {
-          comparison = aValue.localeCompare(bValue, undefined, { sensitivity: 'base' });
-        } else if (typeof aValue === 'number' && typeof bValue === 'number') {
-           comparison = aValue - bValue;
+        switch (sortKey) {
+            case 'front-asc':
+                return a.front.localeCompare(b.front);
+            case 'front-desc':
+                return b.front.localeCompare(a.front);
+            case 'back-asc':
+                return a.back.localeCompare(b.back);
+            case 'back-desc':
+                return b.back.localeCompare(a.back);
+            case 'latest':
+                return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+            case 'needs-audio':
+                if (!a.audioSrc && b.audioSrc) return -1;
+                if (a.audioSrc && !b.audioSrc) return 1;
+                return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(); // secondary sort
+            default:
+                return 0;
         }
-        
-        return sortConfig.direction === 'ascending' ? comparison : -comparison;
-      });
+    });
     return sortableCards;
-  }, [filteredCards, sortConfig, decksById]);
+  }, [filteredCards, sortKey]);
+
+  const paginatedCards = useMemo(() => {
+    const startIndex = (currentPage - 1) * CARDS_PER_PAGE;
+    return sortedCards.slice(startIndex, startIndex + CARDS_PER_PAGE);
+  }, [sortedCards, currentPage]);
+
+  const totalPages = Math.ceil(sortedCards.length / CARDS_PER_PAGE);
   
   const playAudio = (audioSrc: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -69,6 +93,11 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
     }
   };
 
+  const handleComplete = async (cardId: string) => {
+    setCompletingCardId(cardId);
+    await onCompleteCard(cardId);
+    setCompletingCardId(null);
+  };
 
   if (cards.length === 0) {
     return (
@@ -87,35 +116,52 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                 Back to Decks
             </button>
             <div className="flex items-center gap-2 w-full md:w-auto">
-                <select id="deck-filter" value={selectedDeckId} onChange={e => setSelectedDeckId(e.target.value)} className="block w-full max-w-xs pl-3 pr-10 py-2 text-base border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md">
+                <select id="deck-filter" value={selectedDeckId} onChange={e => {setSelectedDeckId(e.target.value); setCurrentPage(1);}} className="block w-full max-w-xs pl-3 pr-10 py-2 text-base border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md">
                     <option value="all">All Cards ({cards.length})</option>
                     {decks.map(deck => <option key={deck.id} value={deck.id}>{deck.name}</option>)}
+                </select>
+                <select id="sort-order" value={sortKey} onChange={e => {setSortKey(e.target.value); setCurrentPage(1);}} className="block w-full max-w-xs pl-3 pr-10 py-2 text-base border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md">
+                    <option value="front-asc">English (A-Z)</option>
+                    <option value="front-desc">English (Z-A)</option>
+                    <option value="back-asc">Persian (A-Z)</option>
+                    <option value="back-desc">Persian (Z-A)</option>
+                    <option value="latest">Latest Added</option>
+                    <option value="needs-audio">Missing Audio First</option>
                 </select>
             </div>
         </div>
 
-        {/* Card List for Mobile, Table for Desktop */}
         <div className="space-y-3">
-            {sortedCards.map((card) => (
+            {paginatedCards.map((card) => (
                 <div key={card.id} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-4 flex justify-between items-center transition-all hover:shadow-md hover:bg-slate-50 dark:hover:bg-slate-700/50">
                     <div className="flex-1 overflow-hidden min-w-0">
                         <p className="text-lg font-semibold text-slate-800 dark:text-slate-100 truncate">{card.front}</p>
                         <p className="text-slate-600 dark:text-slate-400 truncate">{card.back}</p>
                         <div className="flex items-center gap-4 text-xs text-slate-500 dark:text-slate-400 mt-2">
                              <span title={decksById.get(card.deckId) || 'Unknown'} className="bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-full truncate max-w-32">{decksById.get(card.deckId) || 'Unknown'}</span>
-                             <span>{formatDate(card.dueDate)}</span>
+                             <MissingInfoIndicator card={card} />
                         </div>
                     </div>
                     <div className="flex flex-shrink-0 gap-1 sm:gap-2 pl-2 items-center">
                         {card.audioSrc && (
                              <button onClick={(e) => playAudio(card.audioSrc!, e)} aria-label={`Play audio for ${card.front}`} className="p-2 text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-300 transition-colors rounded-full hover:bg-slate-200 dark:hover:bg-slate-600"><SpeakerIcon /></button>
                         )}
+                        <button onClick={() => handleComplete(card.id)} disabled={completingCardId === card.id} aria-label={`Complete details for ${card.front}`} className="p-2 text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 transition-colors rounded-full hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-50 disabled:cursor-wait">
+                            {completingCardId === card.id ? <LoadingIcon /> : <CompleteIcon />}
+                        </button>
                         <button onClick={() => onEdit(card)} aria-label={`Edit ${card.front}`} className="p-2 text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 transition-colors rounded-full hover:bg-slate-200 dark:hover:bg-slate-600"><EditIcon /></button>
                         <button onClick={() => onDelete(card.id)} aria-label={`Delete ${card.front}`} className="p-2 text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 transition-colors rounded-full hover:bg-slate-200 dark:hover:bg-slate-600"><DeleteIcon /></button>
                     </div>
                 </div>
             ))}
         </div>
+        {totalPages > 1 && (
+            <div className="flex justify-center items-center gap-4 mt-6">
+                <button disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)} className="px-4 py-2 text-sm font-medium rounded-md bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-50">Previous</button>
+                <span className="text-sm text-slate-600 dark:text-slate-300">Page {currentPage} of {totalPages}</span>
+                <button disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => p + 1)} className="px-4 py-2 text-sm font-medium rounded-md bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-50">Next</button>
+            </div>
+        )}
     </div>
   );
 };

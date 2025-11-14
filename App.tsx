@@ -38,6 +38,7 @@ const App: React.FC = () => {
         handleResetApp, handleStudyDeck, handleStartStudySession, setIsStudySetupModalOpen,
         handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
         updateSettings, handleCheckAchievements, handleGoalUpdate, studyCards,
+        handleCompleteCardDetails,
         previousViewRef
     } = useAppLogic();
 
@@ -119,7 +120,7 @@ const App: React.FC = () => {
                 />;
             case 'LIST':
             default:
-                return <FlashcardList cards={visibleFlashcards} decks={visibleDecks} onEdit={handleEditCard} onDelete={handleDeleteCard} onBackToDecks={() => setView('DECKS')} />;
+                return <FlashcardList cards={visibleFlashcards} decks={visibleDecks} onEdit={handleEditCard} onDelete={handleDeleteCard} onBackToDecks={() => setView('DECKS')} onCompleteCard={handleCompleteCardDetails} />;
         }
     };
 

@@ -5,7 +5,6 @@ import App from './App';
 // Register Service Worker for PWA
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    // Fix: Register the service worker without `type: 'module'` as the target file is a classic script.
     navigator.serviceWorker.register('/service-worker.js')
       .then(registration => {
         console.log('SW registered: ', registration);

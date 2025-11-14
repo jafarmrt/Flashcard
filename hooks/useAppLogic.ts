@@ -6,12 +6,21 @@ import { generateNewDailyGoals, updateGoalProgress } from '../services/dailyGoal
 import { ALL_ACHIEVEMENTS } from '../services/achievements';
 import { callProxy } from '../services/apiService';
 import { convertToCSV, parseCSV } from '../services/csvService';
+import { 
+  generatePersianDetails,
+} from '../services/geminiService';
+import {
+  fetchFromFreeDictionary,
+  fetchFromMerriamWebster,
+  fetchAudioData,
+  DictionaryResult
+} from '../services/dictionaryService';
 
 // Types used within the hook and exported for the App component
 export type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS' | 'PROFILE';
 export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 export type HealthStatus = 'ok' | 'error' | 'checking';
-type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted'>;
+type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted' | 'createdAt'>;
 type User = { username: string };
 
 const defaultSettings: Settings = {
@@ -376,6 +385,7 @@ export const useAppLogic = () => {
         repetition: 0,
         easinessFactor: 2.5,
         interval: 0,
+        createdAt: new Date().toISOString(),
         dueDate: new Date().toISOString(),
       };
       await db.flashcards.add(newCard);
@@ -423,6 +433,7 @@ export const useAppLogic = () => {
         repetition: 0,
         easinessFactor: 2.5,
         interval: 0,
+        createdAt: new Date().toISOString(),
         dueDate: new Date().toISOString(),
     }));
 
@@ -525,6 +536,7 @@ export const useAppLogic = () => {
                 repetition: 0,
                 easinessFactor: 2.5,
                 interval: 0,
+                createdAt: new Date().toISOString(),
                 dueDate: new Date().toISOString(),
             };
             newCards.push(newCard);
@@ -676,6 +688,52 @@ export const useAppLogic = () => {
     }
   };
 
+  const handleCompleteCardDetails = async (cardId: string) => {
+    const cardToComplete = flashcards.find(c => c.id === cardId);
+    if (!cardToComplete) {
+        showToast("Card not found.");
+        return;
+    }
+
+    try {
+        const fetcher = settings.defaultApiSource === 'free' ? fetchFromFreeDictionary : fetchFromMerriamWebster;
+        const details: DictionaryResult = await fetcher(cardToComplete.front);
+        
+        let audioDataUrl: string | undefined = cardToComplete.audioSrc;
+        if (details.audioUrl && !audioDataUrl) {
+            try {
+                audioDataUrl = await fetchAudioData(details.audioUrl);
+            } catch (audioError) {
+                console.warn("Could not fetch audio for inline completion.", audioError);
+            }
+        }
+        
+        let persianDetails = { back: cardToComplete.back, notes: cardToComplete.notes };
+        if (!cardToComplete.back || !cardToComplete.notes) {
+            persianDetails = await generatePersianDetails(cardToComplete.front);
+        }
+
+        const updatedCard: Flashcard = {
+            ...cardToComplete,
+            pronunciation: cardToComplete.pronunciation || details.pronunciation,
+            partOfSpeech: cardToComplete.partOfSpeech || details.partOfSpeech,
+            definition: (cardToComplete.definition && cardToComplete.definition.length > 0) ? cardToComplete.definition : details.definitions,
+            exampleSentenceTarget: (cardToComplete.exampleSentenceTarget && cardToComplete.exampleSentenceTarget.length > 0) ? cardToComplete.exampleSentenceTarget : details.exampleSentences,
+            audioSrc: audioDataUrl,
+            back: persianDetails.back,
+            notes: persianDetails.notes || ''
+        };
+
+        await db.flashcards.put(updatedCard);
+        await fetchData();
+        showToast(`Card "${cardToComplete.front}" updated!`);
+
+    } catch (error) {
+        console.error("Failed to complete card details:", error);
+        showToast(`Could not complete details for "${cardToComplete.front}".`);
+    }
+  };
+
   return {
       // State
       flashcards, decks, view, editingCard, toastMessage, isLoggedIn, currentUser, authLoading, appLoading,
@@ -687,6 +745,6 @@ export const useAppLogic = () => {
       handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV,
       handleResetApp, handleStudyDeck, handleStartStudySession, setIsStudySetupModalOpen,
       handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
-      updateSettings, handleCheckAchievements, handleGoalUpdate,
+      updateSettings, handleCheckAchievements, handleGoalUpdate, handleCompleteCardDetails
   };
 };

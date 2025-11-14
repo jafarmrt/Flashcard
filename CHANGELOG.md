@@ -1,8 +1,12 @@
-
-
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## [5.0.0] - "All Cards" Page Overhaul
+- **Feature:** Added advanced sorting options to the "All Cards" list. Users can now sort by English (A-Z, Z-A), Persian (A-Z, Z-A), latest added, and cards that are missing audio.
+- **Feature:** Implemented pagination for the "All Cards" list, displaying 100 cards per page to improve performance and usability for large collections.
+- **Feature:** Introduced an inline "Complete Card" feature. Cards with missing information (audio, definition, etc.) now show visual indicators. A new "magic wand" button allows users to automatically fetch all missing details for a single card using AI and dictionary APIs directly from the list view, without needing to open the editor.
+- **Improvement:** Added a `createdAt` timestamp to all new cards to enable more accurate sorting by "latest". A database migration ensures older cards have a fallback creation date.
 
 ## [4.9.6] - Code Refactoring & Maintainability
 - **Refactor:** Restructured the main application component (`App.tsx`) for improved maintainability and scalability. Core business logic, state management, and side effects were extracted into a dedicated custom hook (`useAppLogic`).

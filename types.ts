@@ -64,6 +64,7 @@ export interface Flashcard {
   exampleSentenceTarget?: string[];
   notes?: string;
   isDeleted?: boolean;
+  createdAt: string; // ISO string
 
   // Field for audio
   audioSrc?: string; // base64 data URL

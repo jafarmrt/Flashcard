@@ -111,9 +111,24 @@ export class LinguaCardsDB extends Dexie {
         studyHistory: '++id, cardId, date',
         userProfile: 'id, firstName, lastName, bio',
         userAchievements: '&achievementId'
+    });
+
+    // Version 9: Add createdAt for better sorting and index it.
+    this.version(9).stores({
+        flashcards: 'id, deckId, front, back, dueDate, isDeleted, createdAt',
+        decks: 'id, name, isDeleted',
+        studyHistory: '++id, cardId, date',
+        userProfile: 'id, firstName, lastName, bio',
+        userAchievements: '&achievementId'
     }).upgrade(tx => {
-        console.log("Upgrading database to version 8, adding isDeleted index to flashcards.");
-        return;
+        console.log("Upgrading database to version 9, adding createdAt to flashcards and isDeleted to decks.");
+        // Add createdAt to existing cards using their ID (which is a timestamp) as a fallback.
+        return tx.table('flashcards').toCollection().modify(card => {
+            if (!card.createdAt) {
+                const timestamp = parseInt(card.id.split('-')[0], 10);
+                card.createdAt = new Date(timestamp).toISOString();
+            }
+        });
     });
   }
 }
