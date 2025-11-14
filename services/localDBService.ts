@@ -23,14 +23,18 @@ export class LinguaCardsDB extends Dexie {
     
     // Version 2 Schema (Adds studyHistory)
     this.version(2).stores({
+      flashcards: 'id, deckId, front, back, dueDate',
+      decks: 'id, name',
       studyHistory: '++id, cardId, date'
     }).upgrade(tx => {
       console.log("Upgrading database to version 2, adding studyHistory table.");
-      return; 
     });
 
     // Version 3 Schema (Adds userProfile for gamification)
     this.version(3).stores({
+      flashcards: 'id, deckId, front, back, dueDate',
+      decks: 'id, name',
+      studyHistory: '++id, cardId, date',
       userProfile: 'id' // 'id' will always be 1 for the single user profile
     }).upgrade(tx => {
        console.log("Upgrading database to version 3, adding userProfile table.");
@@ -39,15 +43,22 @@ export class LinguaCardsDB extends Dexie {
     
     // Version 4 Schema (Adds userAchievements for gamification)
     this.version(4).stores({
+      flashcards: 'id, deckId, front, back, dueDate',
+      decks: 'id, name',
+      studyHistory: '++id, cardId, date',
+      userProfile: 'id',
       userAchievements: '&achievementId'
     }).upgrade(tx => {
       console.log("Upgrading database to version 4, adding userAchievements table.");
-      return;
     });
 
     // Version 5 Schema (Adds profile fields to userProfile)
     this.version(5).stores({
-        userProfile: 'id, firstName, lastName, bio'
+        flashcards: 'id, deckId, front, back, dueDate',
+        decks: 'id, name',
+        studyHistory: '++id, cardId, date',
+        userProfile: 'id, firstName, lastName, bio',
+        userAchievements: '&achievementId',
     }).upgrade(tx => {
         console.log("Upgrading database to version 5, adding profile fields to userProfile table.");
         return tx.table('userProfile').toCollection().modify(profile => {
@@ -59,7 +70,11 @@ export class LinguaCardsDB extends Dexie {
 
     // Version 6: Add profileLastUpdated timestamp for smarter syncing
     this.version(6).stores({
-        userProfile: 'id, firstName, lastName, bio' // Schema indexes are the same
+        flashcards: 'id, deckId, front, back, dueDate',
+        decks: 'id, name',
+        studyHistory: '++id, cardId, date',
+        userProfile: 'id, firstName, lastName, bio',
+        userAchievements: '&achievementId',
     }).upgrade(tx => {
         console.log("Upgrading database to version 6, adding profileLastUpdated to userProfile.");
         return tx.table('userProfile').toCollection().modify(profile => {
@@ -71,7 +86,11 @@ export class LinguaCardsDB extends Dexie {
 
     // Version 7: Add daily goals to userProfile for gamification
     this.version(7).stores({
-        userProfile: 'id, firstName, lastName, bio' // Schema indexes are the same
+        flashcards: 'id, deckId, front, back, dueDate',
+        decks: 'id, name',
+        studyHistory: '++id, cardId, date',
+        userProfile: 'id, firstName, lastName, bio',
+        userAchievements: '&achievementId',
     }).upgrade(tx => {
         console.log("Upgrading database to version 7, adding dailyGoals to userProfile.");
         return tx.table('userProfile').toCollection().modify(profile => {
@@ -87,7 +106,11 @@ export class LinguaCardsDB extends Dexie {
 
     // Version 8: Add index for isDeleted for performance
     this.version(8).stores({
-        flashcards: 'id, deckId, front, back, dueDate, isDeleted'
+        flashcards: 'id, deckId, front, back, dueDate, isDeleted',
+        decks: 'id, name',
+        studyHistory: '++id, cardId, date',
+        userProfile: 'id, firstName, lastName, bio',
+        userAchievements: '&achievementId'
     }).upgrade(tx => {
         console.log("Upgrading database to version 8, adding isDeleted index to flashcards.");
         return;
