@@ -147,6 +147,8 @@ async function handleFetchAudio(payload: any, res: VercelResponse) {
         }
         const contentType = audioResponse.headers.get('content-type') || 'application/octet-stream';
         res.setHeader('Content-Type', contentType);
+        // Cache for 1 day on Vercel's Edge Network to reduce bandwidth
+        res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
         
         const arrayBuffer = await audioResponse.arrayBuffer();
         return res.status(200).send(Buffer.from(arrayBuffer));

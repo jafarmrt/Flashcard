@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.0.7] - Accessibility & Bandwidth Optimization
+- **Accessibility Fix:** Resolved an accessibility issue in the login/registration form where input fields were not associated with their labels. This improves the experience for users with screen readers.
+- **Performance/Cost:** Drastically reduced cloud sync bandwidth by no longer storing large Base64 audio strings in the database. The app now stores a lightweight URL to the audio file and fetches it on-demand for playback.
+- **Performance/Cost:** Enabled server-side caching for proxied audio files. Repeated playback of the same audio file will now be served from Vercel's Edge Network, reducing load on the origin server and further decreasing bandwidth consumption.
+- **UI/UX:** The audio player in the card editor form has been changed to a "Play" button for a more consistent user interface across the application.
+
 ## [5.0.6] - Data Persistence & Reliability Fix
 - **Fix:** Resolved a critical data race condition where card updates (especially using the "Complete Card" feature) could be reverted by a background cloud sync. The sync process now reads directly from the local database, ensuring the latest data is always synchronized and preventing stale state from overwriting recent changes.
 - **Performance:** Optimized the inline card update process. Instead of reloading all cards from the database after a change, the app now performs a more efficient update directly in the application's state, resulting in a faster and more responsive user interface.

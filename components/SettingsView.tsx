@@ -27,7 +27,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
     onLogout
 }) => {
     const importFileRef = useRef<HTMLInputElement>(null);
-    const APP_VERSION = '5.0.6';
+    const APP_VERSION = '5.0.7';
 
     const handleImportClick = () => {
         importFileRef.current?.click();
@@ -148,18 +148,24 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                  <SettingRow title="Import / Export" description="Save your data to a CSV file or load data from one.">
                     <div className="flex gap-2">
                         <input type="file" ref={importFileRef} onChange={handleFileImport} accept=".csv" className="hidden" />
-                        <button onClick={handleImportClick} className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">Import CSV</button>
-                        <button onClick={onExportCSV} className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">Export CSV</button>
+                        <button onClick={handleImportClick} className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">
+                            Import CSV
+                        </button>
+                        <button onClick={onExportCSV} className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">
+                            Export CSV
+                        </button>
                     </div>
-                 </SettingRow>
-            </div>
-            
-            {/* Danger Zone */}
-            <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm overflow-hidden border border-red-500/30 dark:border-red-500/50">
-                <h3 className="text-lg font-bold p-4 bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 border-b border-red-200 dark:border-red-500/50">Danger Zone</h3>
-                <SettingRow title="Reset Application" description="Permanently delete all local decks and cards for this account. This cannot be undone.">
-                    <button onClick={onResetApp} className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md transition-colors">Reset Account Data</button>
                 </SettingRow>
+            </div>
+
+            {/* Danger Zone */}
+            <div className="bg-red-50 dark:bg-red-900/20 rounded-lg shadow-sm overflow-hidden border border-red-200 dark:border-red-900/50">
+                 <h3 className="text-lg font-bold p-4 text-red-800 dark:text-red-200 bg-red-100 dark:bg-red-900/30 border-b border-red-200 dark:border-red-900/50">Danger Zone</h3>
+                 <SettingRow title="Reset Application" description="This will permanently delete all your local data. This action cannot be undone.">
+                    <button onClick={onResetApp} className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md shadow-sm">
+                        Reset App
+                    </button>
+                 </SettingRow>
             </div>
         </div>
     );

@@ -721,13 +721,9 @@ export const useAppLogic = () => {
         const fetcher = settings.defaultApiSource === 'free' ? fetchFromFreeDictionary : fetchFromMerriamWebster;
         const details: DictionaryResult = await fetcher(cardToComplete.front);
         
-        let audioDataUrl: string | undefined = cardToComplete.audioSrc;
-        if (details.audioUrl && !audioDataUrl) {
-            try {
-                audioDataUrl = await fetchAudioData(details.audioUrl);
-            } catch (audioError) {
-                console.warn("Could not fetch audio for inline completion.", audioError);
-            }
+        let audioUrl: string | undefined = cardToComplete.audioSrc;
+        if (details.audioUrl && !audioUrl) {
+           audioUrl = details.audioUrl;
         }
         
         let persianDetails = { back: cardToComplete.back, notes: cardToComplete.notes };
@@ -741,7 +737,7 @@ export const useAppLogic = () => {
             partOfSpeech: cardToComplete.partOfSpeech || details.partOfSpeech,
             definition: (cardToComplete.definition && cardToComplete.definition.length > 0) ? cardToComplete.definition : details.definitions,
             exampleSentenceTarget: (cardToComplete.exampleSentenceTarget && cardToComplete.exampleSentenceTarget.length > 0) ? cardToComplete.exampleSentenceTarget : details.exampleSentences,
-            audioSrc: audioDataUrl,
+            audioSrc: audioUrl,
             back: persianDetails.back,
             notes: persianDetails.notes || '',
             updatedAt: new Date().toISOString()

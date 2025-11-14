@@ -35,6 +35,9 @@ const MicIcon = ({ recording }: { recording: boolean }) => (
     </svg>
 );
 
+const SpeakerIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>;
+const LoadingIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg>;
+
 
 const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCancel, initialDeckName, showToast, defaultApiSource }) => {
   const [formData, setFormData] = useState<FlashcardFormData>({
@@ -52,6 +55,7 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
   // Loading states
   const [isFetchingDetails, setIsFetchingDetails] = useState(false);
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+  const [isFetchingAudio, setIsFetchingAudio] = useState(false);
 
   // Pronunciation feedback state
   const [isRecording, setIsRecording] = useState(false);
@@ -124,24 +128,14 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
       try {
           const fetcher = defaultApiSource === 'free' ? fetchFromFreeDictionary : fetchFromMerriamWebster;
           const details: DictionaryResult = await fetcher(formData.front);
-          
-          let audioDataUrl: string | undefined = undefined;
-          if (details.audioUrl) {
-              try {
-                  audioDataUrl = await fetchAudioData(details.audioUrl);
-              } catch (audioError) {
-                  console.warn("Could not fetch audio, but details were retrieved.", audioError);
-                  showToast('Details loaded, but audio failed.');
-              }
-          }
-          
+                    
           setFormData(prev => ({
               ...prev,
               pronunciation: details.pronunciation,
               partOfSpeech: details.partOfSpeech,
               definition: details.definitions,
               exampleSentenceTarget: details.exampleSentences,
-              audioSrc: audioDataUrl,
+              audioSrc: details.audioUrl,
           }));
           showToast(`Details fetched from ${defaultApiSource === 'free' ? 'Free Dictionary' : 'Merriam-Webster'}.`);
 
@@ -207,6 +201,21 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
         console.error("Error accessing microphone:", error);
         alert("Microphone access is required for this feature. Please enable it in your browser settings.");
       }
+    }
+  };
+
+  const playAudio = async () => {
+    if (!formData.audioSrc || isFetchingAudio) return;
+    setIsFetchingAudio(true);
+    try {
+        const dataUrl = await fetchAudioData(formData.audioSrc);
+        const audio = new Audio(dataUrl);
+        audio.play();
+        audio.onended = () => setIsFetchingAudio(false);
+    } catch (error) {
+        console.error("Failed to play audio:", error);
+        showToast("Could not play audio.");
+        setIsFetchingAudio(false);
     }
   };
 
@@ -333,14 +342,22 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
         </div>
 
         <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Pronunciation Audio</label>
-            <div className="flex items-center justify-center p-2 h-[52px] rounded-md bg-slate-100 dark:bg-slate-700/50">
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Pronunciation Audio</label>
+            <div className="mt-1 flex items-center gap-4 h-[52px]">
                 {formData.audioSrc ? (
-                    <audio controls src={formData.audioSrc} className="w-full h-10"></audio>
-                ) : isFetchingDetails ? (
-                    <span className="text-sm text-slate-500 dark:text-slate-400">Fetching audio...</span>
+                    <button 
+                        type="button" 
+                        onClick={playAudio} 
+                        disabled={isFetchingAudio}
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors disabled:opacity-50"
+                    >
+                        {isFetchingAudio ? <LoadingIcon/> : <SpeakerIcon />}
+                        <span>Play Audio</span>
+                    </button>
                 ) : (
-                    <span className="text-sm text-slate-500 dark:text-slate-400">Audio will be fetched with details.</span>
+                     <span className="text-sm text-slate-500 dark:text-slate-400 px-1">
+                        {isFetchingDetails ? "Fetching details..." : "Audio will be fetched with details."}
+                     </span>
                 )}
             </div>
         </div>

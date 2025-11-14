@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Flashcard, Deck } from '../types';
+import { fetchAudioData } from '../services/dictionaryService';
 
 interface FlashcardListProps {
   cards: Flashcard[];
@@ -42,6 +43,7 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
   const [selectedDeckId, setSelectedDeckId] = useState<string>('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [completingCardId, setCompletingCardId] = useState<string | null>(null);
+  const [playingAudioUrl, setPlayingAudioUrl] = useState<string | null>(null);
   const CARDS_PER_PAGE = 100;
 
   const decksById = useMemo(() => new Map(decks.map(deck => [deck.id, deck.name])), [decks]);
@@ -83,13 +85,19 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
 
   const totalPages = Math.ceil(sortedCards.length / CARDS_PER_PAGE);
   
-  const playAudio = (audioSrc: string, e: React.MouseEvent) => {
+  const playAudio = async (audioUrl: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (playingAudioUrl) return; 
+    setPlayingAudioUrl(audioUrl);
     try {
-      const audio = new Audio(audioSrc);
+      const dataUrl = await fetchAudioData(audioUrl);
+      const audio = new Audio(dataUrl);
       audio.play();
+      audio.addEventListener('ended', () => setPlayingAudioUrl(null));
+      audio.addEventListener('error', () => setPlayingAudioUrl(null));
     } catch (error) {
       console.error("Failed to play audio:", error);
+      setPlayingAudioUrl(null);
     }
   };
 
@@ -147,7 +155,14 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                     </div>
                     <div className="flex flex-shrink-0 gap-1 sm:gap-2 pl-2 items-center">
                         {card.audioSrc && (
-                             <button onClick={(e) => playAudio(card.audioSrc!, e)} aria-label={`Play audio for ${card.front}`} className={`${actionButtonClasses} text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-300`}><SpeakerIcon /></button>
+                             <button 
+                                onClick={(e) => playAudio(card.audioSrc!, e)} 
+                                disabled={!!playingAudioUrl}
+                                aria-label={`Play audio for ${card.front}`} 
+                                className={`${actionButtonClasses} text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-300 disabled:opacity-50`}
+                            >
+                                {playingAudioUrl === card.audioSrc ? <LoadingIcon /> : <SpeakerIcon />}
+                            </button>
                         )}
                         <button onClick={() => handleComplete(card.id)} disabled={completingCardId === card.id} aria-label={`Complete details for ${card.front}`} className={`${actionButtonClasses} text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 disabled:opacity-50 disabled:cursor-wait`}>
                             {completingCardId === card.id ? <LoadingIcon /> : <CompleteIcon />}

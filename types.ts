@@ -68,7 +68,7 @@ export interface Flashcard {
   updatedAt?: string; // ISO string for timestamp-based sync
 
   // Field for audio
-  audioSrc?: string; // base64 data URL
+  audioSrc?: string; // URL of the audio file
 
   // Fields for Spaced Repetition System (SRS)
   repetition: number;

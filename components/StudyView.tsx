@@ -3,6 +3,7 @@ import { Flashcard } from '../types';
 import { calculateSrs, PerformanceRating } from '../services/srsService';
 import { db } from '../services/localDBService';
 import { levenshtein } from '../services/stringSimilarity';
+import { fetchAudioData } from '../services/dictionaryService';
 
 interface StudyViewProps {
   cards: Flashcard[];
@@ -13,11 +14,23 @@ interface StudyViewProps {
 const SpeakerIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>;
 
 const FlashcardComponent: React.FC<{ card: Flashcard; isFlipped: boolean; }> = ({ card, isFlipped }) => {
-  const playAudio = (e: React.MouseEvent) => {
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+  const playAudio = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (card.audioSrc) {
-      const audio = new Audio(card.audioSrc);
-      audio.play().catch(error => console.error("Audio playback failed:", error));
+    if (card.audioSrc && !isAudioPlaying) {
+      setIsAudioPlaying(true);
+      try {
+        const dataUrl = await fetchAudioData(card.audioSrc);
+        const audio = new Audio(dataUrl);
+        audio.play().catch(error => {
+            console.error("Audio playback failed:", error);
+            setIsAudioPlaying(false);
+        });
+        audio.onended = () => setIsAudioPlaying(false);
+      } catch (error) {
+        console.error("Failed to play audio:", error);
+        setIsAudioPlaying(false);
+      }
     }
   };
 
@@ -31,8 +44,14 @@ const FlashcardComponent: React.FC<{ card: Flashcard; isFlipped: boolean; }> = (
         {/* Front */}
         <div className="absolute w-full h-full bg-white dark:bg-slate-800 rounded-lg shadow-xl flex flex-col justify-center items-center p-6" style={{ backfaceVisibility: 'hidden' }}>
           {card.audioSrc && (
-            <button onClick={playAudio} aria-label="Play pronunciation" className="absolute top-4 right-4 text-slate-400 hover:text-indigo-500 transition-colors">
-              <SpeakerIcon />
+            <button onClick={playAudio} disabled={isAudioPlaying} aria-label="Play pronunciation" className="absolute top-4 right-4 text-slate-400 hover:text-indigo-500 transition-colors disabled:opacity-50">
+              {isAudioPlaying ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
+                      <line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
+                  </svg>
+              ) : (
+                  <SpeakerIcon />
+              )}
             </button>
           )}
           <p className="text-sm text-slate-500 dark:text-slate-400 mb-2">{card.pronunciation}</p>
