@@ -51,6 +51,7 @@ const statusIcons = {
     timeout: <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-yellow-500"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
 };
 const ChevronDown = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>;
+const EditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>;
 
 const timeoutPromise = (ms: number, message: string) =>
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error(message)), ms));
@@ -70,6 +71,75 @@ const DetailRow = memo(({ label, details, onRetry }: { label: string, details: P
                 <button onClick={onRetry} title="Retry" className="p-2 text-indigo-600 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-full">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.5 2v6h-6"/><path d="M2.5 22v-6h6"/><path d="M2 11.5a10 10 0 0 1 18.8-4.3l-3.3 3.3a5 5 0 0 0-8.5 4.3"/></svg>
                 </button>
+            )}
+        </div>
+    );
+});
+
+// --- REVIEW ITEM COMPONENT ---
+const ReviewItem = memo(({
+    item, onUpdateCard, onToggleDetails, onRetryPart
+}: {
+    item: ProcessedWord;
+    onUpdateCard: (word: string, updatedCard: Partial<FlashcardFormData>) => void;
+    onToggleDetails: (word: string) => void;
+    onRetryPart: (word: string, part: 'dictionary' | 'ai' | 'audio') => void;
+}) => {
+    const [isEditing, setIsEditing] = useState(false);
+    const [editData, setEditData] = useState({ back: '', notes: '' });
+
+    useEffect(() => {
+        if (item.card) {
+            setEditData({ back: item.card.back || '', notes: item.card.notes || '' });
+        }
+    }, [item.card]);
+
+    const handleSaveEdit = () => {
+        onUpdateCard(item.word, { ...item.card, ...editData });
+        setIsEditing(false);
+    };
+
+    const handleCancelEdit = () => {
+        setEditData({ back: item.card.back || '', notes: item.card.notes || '' });
+        setIsEditing(false);
+    };
+
+    return (
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm">
+            <div className="flex items-center gap-4 p-3">
+                <div className="flex-shrink-0 w-5">{statusIcons[item.status]}</div>
+                {isEditing ? (
+                    <div className="flex-1 space-y-2">
+                        <input type="text" value={editData.back} onChange={e => setEditData(d => ({...d, back: e.target.value}))} className="block w-full text-sm px-2 py-1 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm" placeholder="Persian Translation"/>
+                        <input type="text" value={editData.notes} onChange={e => setEditData(d => ({...d, notes: e.target.value}))} className="block w-full text-sm px-2 py-1 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm" placeholder="Notes"/>
+                    </div>
+                ) : (
+                    <div className="flex-1 min-w-0">
+                         <p className="font-medium text-slate-700 dark:text-slate-200 truncate">{item.word}</p>
+                         {item.status === 'done' && <p className="text-sm text-slate-500 dark:text-slate-400 truncate">{item.card.back}</p>}
+                         {item.status !== 'done' && <p className="text-sm text-slate-500 dark:text-slate-400 capitalize">{item.status}</p>}
+                    </div>
+                )}
+                <div className="flex items-center gap-1">
+                    {isEditing ? (
+                        <>
+                            <button onClick={handleSaveEdit} className="p-2 text-green-600 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-full"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></button>
+                            <button onClick={handleCancelEdit} className="p-2 text-red-600 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-full"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+                        </>
+                    ) : (
+                       <>
+                         {item.status === 'done' && <button onClick={() => setIsEditing(true)} className="p-2 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-full"><EditIcon /></button>}
+                         <button onClick={() => onToggleDetails(item.word)} className="p-2 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-full"><ChevronDown /></button>
+                       </>
+                    )}
+                </div>
+            </div>
+             {item.isExpanded && !isEditing && (
+                <div className="bg-slate-50 dark:bg-slate-800/50 rounded-b-lg">
+                    <DetailRow label="Dictionary" details={item.details.dictionary} onRetry={() => onRetryPart(item.word, 'dictionary')} />
+                    <DetailRow label="AI Details" details={item.details.ai} onRetry={() => onRetryPart(item.word, 'ai')} />
+                    <DetailRow label="Audio" details={item.details.audio} onRetry={() => onRetryPart(item.word, 'audio')} />
+                </div>
             )}
         </div>
     );
@@ -267,6 +337,12 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
     const handleRetryPart = (word: string, part: 'dictionary' | 'ai' | 'audio') => {
         processWordPart(word, part);
     };
+    
+    const handleUpdateWordCard = (word: string, updatedCard: Partial<FlashcardFormData>) => {
+        updateWordState(word, draft => {
+            draft.card = { ...draft.card, ...updatedCard };
+        });
+    };
 
     const handleSave = async () => {
         setIsSaving(true);
@@ -369,7 +445,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                     <div>
                         <h2 className="text-2xl font-bold mb-1 text-slate-800 dark:text-slate-100">Review & Save</h2>
                         <p className="text-slate-600 dark:text-slate-400 mb-6">
-                            <span className="text-green-600 dark:text-green-400 font-semibold">{successCount} cards</span> ready, <span className="text-red-600 dark:text-red-400 font-semibold">{failedCount} failed</span>. Click a word to see details.
+                            <span className="text-green-600 dark:text-green-400 font-semibold">{successCount} cards</span> ready, <span className="text-red-600 dark:text-red-400 font-semibold">{failedCount} failed</span>. Edit translations or inspect details.
                         </p>
                     </div>
                     {failedCount > 0 && <button onClick={handleRetryAllFailed} className="px-3 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md">Retry All Failed</button>}
@@ -377,21 +453,13 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
 
                 <div className="space-y-2 h-96 overflow-y-auto p-2 bg-slate-50 dark:bg-slate-900/50 rounded-lg">
                     {processedWords.map(item => (
-                       <div key={item.word} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm">
-                            <div className="flex items-center gap-4 p-3 cursor-pointer" onClick={() => toggleDetails(item.word)}>
-                                {statusIcons[item.status]}
-                                <span className="flex-1 font-medium text-slate-700 dark:text-slate-200">{item.word}</span>
-                                <span className="text-sm text-slate-500 dark:text-slate-400 capitalize">{item.status}</span>
-                                <ChevronDown />
-                            </div>
-                            {item.isExpanded && (
-                                <div className="bg-slate-50 dark:bg-slate-800/50 rounded-b-lg">
-                                    <DetailRow label="Dictionary" details={item.details.dictionary} onRetry={() => handleRetryPart(item.word, 'dictionary')} />
-                                    <DetailRow label="AI Details" details={item.details.ai} onRetry={() => handleRetryPart(item.word, 'ai')} />
-                                    <DetailRow label="Audio" details={item.details.audio} onRetry={() => handleRetryPart(item.word, 'audio')} />
-                                </div>
-                            )}
-                       </div>
+                       <ReviewItem 
+                            key={item.word}
+                            item={item}
+                            onUpdateCard={handleUpdateWordCard}
+                            onToggleDetails={toggleDetails}
+                            onRetryPart={handleRetryPart}
+                       />
                     ))}
                 </div>
                 

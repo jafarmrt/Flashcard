@@ -162,6 +162,7 @@ const App: React.FC = () => {
   const [view, setView] = useState<View>('DECKS');
   const [editingCard, setEditingCard] = useState<Flashcard | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const previousViewRef = useRef<View>('DECKS');
   
   // Auth State
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -468,11 +469,13 @@ const App: React.FC = () => {
   }
 
   const handleAddCard = () => {
+    previousViewRef.current = view;
     setEditingCard(null);
     setView('FORM');
   };
 
   const handleEditCard = (card: Flashcard) => {
+    previousViewRef.current = view;
     setEditingCard(card);
     setView('FORM');
   };
@@ -520,7 +523,7 @@ const App: React.FC = () => {
     await fetchData();
     handleCheckAchievements();
     setEditingCard(null);
-    setView('DECKS');
+    setView(previousViewRef.current);
   };
 
   const handleSaveProfile = async (profileData: Partial<UserProfile>) => {
@@ -873,7 +876,7 @@ const App: React.FC = () => {
             card={editingCard} 
             decks={visibleDecks} 
             onSave={handleSaveCard} 
-            onCancel={() => setView('DECKS')} 
+            onCancel={() => setView(previousViewRef.current)} 
             initialDeckName={editingCardDeckName} 
             showToast={showToast}
             defaultApiSource={settings.defaultApiSource}
