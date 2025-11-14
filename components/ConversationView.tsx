@@ -22,8 +22,11 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
   const [score, setScore] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
   const [isAnswered, setIsAnswered] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
 
   const startPractice = async () => {
+    setErrorMessage(null); // Clear previous errors
     // Tier 1: Prefer new cards (never reviewed correctly)
     let practicePool = cards.filter(c => c.repetition === 0);
 
@@ -64,7 +67,7 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
         setIsAnswered(false);
         setPracticeState('active');
     } else {
-        alert("Sorry, we couldn't generate a practice session right now. Please try again later.");
+        setErrorMessage("Sorry, we couldn't generate a practice session. The AI service may be temporarily unavailable. Please try again later.");
         setPracticeState('idle');
     }
   };
@@ -115,6 +118,11 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
       <div className="text-center py-20 bg-white dark:bg-slate-800 rounded-lg shadow-sm">
         <h2 className="text-2xl font-semibold text-slate-700 dark:text-slate-200">Ready to Practice?</h2>
         <p className="mt-2 text-slate-500 dark:text-slate-400">Take a short, AI-generated quiz on your newest words to reinforce your learning.</p>
+        {errorMessage && (
+            <div className="mt-4 p-3 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-lg text-sm">
+                <p>{errorMessage}</p>
+            </div>
+        )}
         <button onClick={startPractice} className="mt-6 px-6 py-3 text-lg font-semibold text-white bg-indigo-600 rounded-lg shadow-md hover:bg-indigo-700 transition-colors">
             Start Practice Session
         </button>

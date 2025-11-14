@@ -8,6 +8,10 @@ const changelogText = `# Changelog
 
 All notable changes to this project will be documented in this file.
 
+## [5.0.5] - Stability & UX Fixes
+- **Fix:** Improved error handling in "Practice" mode. If the AI service fails to generate a quiz, a user-friendly message is now shown on the screen instead of a disruptive system alert.
+- **Fix:** Resolved a Service Worker registration error that could cause a 404 error in the browser console and prevent offline capabilities from working correctly.
+
 ## [5.0.4] - Practice Mode Reliability Fix
 - **Fix:** Resolved a critical issue where the AI-powered "Practice" mode would frequently fail or time out. The quiz size has been reduced from 10 to 5 questions to create a lighter, faster API request.
 - **Improvement:** Added validation to ensure only cards with valid English words are used to generate quizzes, preventing errors and improving stability.
