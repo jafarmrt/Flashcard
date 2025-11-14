@@ -4,6 +4,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.9.5] - Data Sync & UI Fixes
+- **Fix:** Resolved a critical data sync bug that could cause daily goal progress to be reset when using the app across multiple devices or sessions. The cloud merge logic now correctly handles and preserves daily goal data.
+- **UI/UX:** Corrected the label on the "Back" button on the **Stats** page. It now accurately reads "Back to Decks" to match its behavior, eliminating user confusion.
+
 ## [4.9.4] - Critical Data Persistence Fix
 - **Fix:** Resolved a critical bug that caused user data loss (including study history, daily goals, streak, and XP) after an application update. The local database versioning logic was flawed, causing tables to be deleted during schema upgrades. The database migration process has been corrected to ensure all existing user data is preserved across all future updates.
 

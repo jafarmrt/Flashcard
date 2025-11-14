@@ -241,7 +241,7 @@ export const StatsView: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
        <div className="text-center mt-8">
             <button onClick={onBack} className="px-6 py-2 rounded-lg bg-indigo-600 text-white font-semibold shadow-md hover:bg-indigo-700 transition-colors">
-              Back to Settings
+              Back to Decks
             </button>
        </div>
     </div>

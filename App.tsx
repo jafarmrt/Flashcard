@@ -293,7 +293,12 @@ const App: React.FC = () => {
     const currentProfile = await db.userProfile.get(1);
     if (!currentProfile?.dailyGoals) return;
 
-    const { updatedProfile, xpGained, newlyCompletedGoals } = updateGoalProgress(type, value, currentProfile);
+    const { updatedProfile: profileWithGoalProgress, xpGained, newlyCompletedGoals } = updateGoalProgress(type, value, currentProfile);
+    
+    const updatedProfile = {
+        ...profileWithGoalProgress,
+        profileLastUpdated: new Date().toISOString()
+    };
 
     // Save progress first
     await db.userProfile.put(updatedProfile);

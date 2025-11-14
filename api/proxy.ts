@@ -21,6 +21,15 @@ interface StudyLog {
   date: string;
   rating: 'AGAIN' | 'GOOD' | 'EASY';
 }
+interface DailyGoal {
+  id: string;
+  type: 'STUDY' | 'QUIZ' | 'STREAK';
+  description: string;
+  target: number;
+  progress: number;
+  xp: number;
+  isComplete: boolean;
+}
 interface UserProfile {
   id: number;
   xp: number;
@@ -30,6 +39,11 @@ interface UserProfile {
   lastName?: string;
   bio?: string;
   profileLastUpdated?: string;
+  dailyGoals?: {
+    date: string;
+    goals: DailyGoal[];
+    allCompleteAwarded: boolean;
+  };
 }
 interface UserAchievement {
   achievementId: string;
@@ -272,6 +286,41 @@ async function handleSyncMerge(payload: any, response: VercelResponse) {
       const clientTimestamp = new Date(clientP.profileLastUpdated || 0);
       const cloudTimestamp = new Date(cloudP.profileLastUpdated || 0);
       const newerProfile = clientTimestamp >= cloudTimestamp ? clientP : cloudP;
+      
+      let mergedDailyGoals;
+      const clientGoals = clientP.dailyGoals;
+      const cloudGoals = cloudP.dailyGoals;
+
+      if (clientGoals && cloudGoals) {
+          if (clientGoals.date > cloudGoals.date) {
+              mergedDailyGoals = clientGoals;
+          } else if (cloudGoals.date > clientGoals.date) {
+              mergedDailyGoals = cloudGoals;
+          } else { // Same date, merge progress
+              const mergedGoalsMap = new Map<string, DailyGoal>();
+              (cloudGoals.goals || []).forEach(g => mergedGoalsMap.set(g.id, { ...g }));
+              (clientGoals.goals || []).forEach(cg => {
+                  const existingGoal = mergedGoalsMap.get(cg.id);
+                  if (existingGoal) {
+                      if (cg.progress > existingGoal.progress) {
+                          existingGoal.progress = cg.progress;
+                          existingGoal.isComplete = cg.isComplete;
+                      }
+                  } else {
+                      mergedGoalsMap.set(cg.id, { ...cg });
+                  }
+              });
+              const finalGoals = Array.from(mergedGoalsMap.values());
+              mergedDailyGoals = {
+                  date: clientGoals.date,
+                  goals: finalGoals,
+                  allCompleteAwarded: clientGoals.allCompleteAwarded || cloudGoals.allCompleteAwarded,
+              };
+          }
+      } else {
+          mergedDailyGoals = clientGoals || cloudGoals;
+      }
+
       mergedUserProfile = {
           id: clientP.id,
           xp: Math.max(clientP.xp, cloudP.xp),
@@ -280,7 +329,8 @@ async function handleSyncMerge(payload: any, response: VercelResponse) {
           firstName: newerProfile.firstName,
           lastName: newerProfile.lastName,
           bio: newerProfile.bio,
-          profileLastUpdated: newerProfile.profileLastUpdated
+          profileLastUpdated: newerProfile.profileLastUpdated,
+          dailyGoals: mergedDailyGoals || undefined,
       };
   } else {
       mergedUserProfile = clientP || cloudP;
