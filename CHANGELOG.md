@@ -4,6 +4,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.9.2] - Bulk Add Resiliency & Control
+- **Improvement:** Cards in the Bulk Add process are now considered successful and can be saved even if the audio fetch fails, as long as essential details (translation, definition) are retrieved.
+- **Feature:** Added a "Retry All Failed" button to the review screen, allowing users to re-process all words that encountered an error without starting over.
+- **Improvement:** The individual retry logic for specific parts (Dictionary, AI, Audio) is now more robust. A successful partial retry will now correctly update the overall status of the word, allowing it to be saved.
+
 ## [4.9.1] - Context-Aware Navigation
 - **Improvement:** The card editor form is now context-aware. After saving or canceling, the app will return you to your previous screen ("Decks" or "All Cards") instead of always navigating back to the "Decks" view. This creates a more intuitive and seamless user flow.
 

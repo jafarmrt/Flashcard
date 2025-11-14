@@ -334,8 +334,22 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
         }
     };
 
-    const handleRetryPart = (word: string, part: 'dictionary' | 'ai' | 'audio') => {
-        processWordPart(word, part);
+    const handleRetryPart = async (word: string, part: 'dictionary' | 'ai' | 'audio') => {
+        await processWordPart(word, part);
+    
+        // After the part is retried, re-evaluate the overall status
+        const finalState = processedWordsRef.current.find(p => p.word === word);
+        if (finalState) {
+            const isSuccess = finalState.details.dictionary.status === 'done' && finalState.details.ai.status === 'done';
+            
+            // Only update if the status needs changing (e.g., from 'error' to 'done')
+            if (isSuccess && finalState.status !== 'done') {
+                updateWordState(word, draft => { draft.status = 'done'; });
+            } else if (!isSuccess && finalState.status === 'done') {
+                // This case is unlikely but handles if a retry causes failure
+                updateWordState(word, draft => { draft.status = 'error'; });
+            }
+        }
     };
     
     const handleUpdateWordCard = (word: string, updatedCard: Partial<FlashcardFormData>) => {
@@ -441,14 +455,14 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
         const failedCount = processedWords.filter(p => ['error', 'timeout'].includes(p.status)).length;
         return (
             <div className="max-w-3xl mx-auto bg-white dark:bg-slate-800 p-8 rounded-lg shadow-md">
-                <div className="flex justify-between items-start">
+                <div className="flex flex-col sm:flex-row justify-between sm:items-start gap-4">
                     <div>
                         <h2 className="text-2xl font-bold mb-1 text-slate-800 dark:text-slate-100">Review & Save</h2>
                         <p className="text-slate-600 dark:text-slate-400 mb-6">
                             <span className="text-green-600 dark:text-green-400 font-semibold">{successCount} cards</span> ready, <span className="text-red-600 dark:text-red-400 font-semibold">{failedCount} failed</span>. Edit translations or inspect details.
                         </p>
                     </div>
-                    {failedCount > 0 && <button onClick={handleRetryAllFailed} className="px-3 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md">Retry All Failed</button>}
+                    {failedCount > 0 && <button onClick={handleRetryAllFailed} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md shadow-sm transition-colors">Retry All Failed</button>}
                 </div>
 
                 <div className="space-y-2 h-96 overflow-y-auto p-2 bg-slate-50 dark:bg-slate-900/50 rounded-lg">
