@@ -214,14 +214,22 @@ export const useAppLogic = () => {
 
     setSyncStatus('syncing');
     try {
+        // Fix: Read directly from the database to ensure the latest data is synced,
+        // preventing race conditions with React state.
+        const allCards = await db.flashcards.toArray();
+        const allDecks = await db.decks.toArray();
         const allStudyHistory = await db.studyHistory.toArray();
-        const localData = { 
-            decks, 
-            cards: flashcards,
+        const profile = await db.userProfile.get(1);
+        const allAchievements = await db.userAchievements.toArray();
+
+        const localData = {
+            decks: allDecks,
+            cards: allCards,
             studyHistory: allStudyHistory,
-            userProfile,
-            userAchievements: earnedAchievements,
+            userProfile: profile,
+            userAchievements: allAchievements,
         };
+
         const response = await callProxy('sync-merge', { username: currentUser.username, data: localData });
         
         const { data: mergedData } = response;
@@ -740,7 +748,10 @@ export const useAppLogic = () => {
         };
 
         await db.flashcards.put(updatedCard);
-        await fetchData();
+        
+        // Performance Fix: Surgically update the state instead of re-fetching everything.
+        setFlashcards(prev => prev.map(c => c.id === updatedCard.id ? updatedCard : c));
+
         showToast(`Card "${cardToComplete.front}" updated!`);
 
     } catch (error) {

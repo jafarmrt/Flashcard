@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.0.6] - Data Persistence & Reliability Fix
+- **Fix:** Resolved a critical data race condition where card updates (especially using the "Complete Card" feature) could be reverted by a background cloud sync. The sync process now reads directly from the local database, ensuring the latest data is always synchronized and preventing stale state from overwriting recent changes.
+- **Performance:** Optimized the inline card update process. Instead of reloading all cards from the database after a change, the app now performs a more efficient update directly in the application's state, resulting in a faster and more responsive user interface.
+
 ## [5.0.5] - Stability & UX Fixes
 - **Fix:** Improved error handling in "Practice" mode. If the AI service fails to generate a quiz, a user-friendly message is now shown on the screen instead of a disruptive system alert.
 - **Fix:** Resolved a Service Worker registration error that could cause a 404 error in the browser console and prevent offline capabilities from working correctly.
@@ -84,7 +88,7 @@ All notable changes to this project will be documented in this file.
 - **Fix:** Resolved a critical bug where deleted cards were incorrectly appearing in the "Difficult Cards" list. The calculation now correctly filters out deleted cards, ensuring the data is accurate.
 
 ## [4.3.3] - Theme & Settings UI Fixes
-- **Fix:** Resolved a critical bug where the theme switcher (Light/Dark/System) was not functional. Added the required `darkMode: 'class'` configuration for Tailwind CSS, enabling the theme toggle to work as intended.
+- **Fix:** Resolved a critical bug where the theme switcher (Light/Dark/System) was not functional. Added the required \`darkMode: 'class'\` configuration for Tailwind CSS, enabling the theme toggle to work as intended.
 - **UI/UX:** Improved the visual contrast of active options on the Settings page. The selected theme and default dictionary buttons now have a distinct, high-contrast style in dark mode, making the current selection clear.
 
 ## [4.3.2] - Settings UI Contrast Fix
