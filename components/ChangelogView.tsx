@@ -8,6 +8,10 @@ const changelogText = `# Changelog
 
 All notable changes to this project will be documented in this file.
 
+## [4.9.6] - Code Refactoring & Maintainability
+- **Refactor:** Restructured the main application component (\`App.tsx\`) for improved maintainability and scalability. Core business logic, state management, and side effects were extracted into a dedicated custom hook (\`useAppLogic\`).
+- **Improvement:** Utility functions (API calls, CSV handling) and smaller UI components were moved into separate, organized files. This architectural enhancement makes the codebase cleaner, easier to navigate, and simplifies future updates.
+
 ## [4.9.5] - Data Sync & UI Fixes
 - **Fix:** Resolved a critical data sync bug that could cause daily goal progress to be reset when using the app across multiple devices or sessions. The cloud merge logic now correctly handles and preserves daily goal data.
 - **UI/UX:** Corrected the label on the "Back" button on the **Stats** page. It now accurately reads "Back to Decks" to match its behavior, eliminating user confusion.
