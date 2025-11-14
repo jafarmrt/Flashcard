@@ -27,7 +27,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
     onLogout
 }) => {
     const importFileRef = useRef<HTMLInputElement>(null);
-    const APP_VERSION = '5.0.2';
+    const APP_VERSION = '5.0.3';
 
     const handleImportClick = () => {
         importFileRef.current?.click();

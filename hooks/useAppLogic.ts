@@ -20,7 +20,7 @@ import {
 export type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS' | 'PROFILE';
 export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 export type HealthStatus = 'ok' | 'error' | 'checking';
-type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted' | 'createdAt'>;
+type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted' | 'createdAt' | 'updatedAt'>;
 type User = { username: string };
 
 const defaultSettings: Settings = {
@@ -352,7 +352,7 @@ export const useAppLogic = () => {
   };
 
   const handleDeleteCard = async (id: string) => {
-    await db.flashcards.update(id, { isDeleted: true });
+    await db.flashcards.update(id, { isDeleted: true, updatedAt: new Date().toISOString() });
     await fetchData();
     showToast('Card deleted successfully!');
   };
@@ -374,10 +374,16 @@ export const useAppLogic = () => {
     }
     
     if (editingCard) {
-      const updatedCard: Flashcard = { ...editingCard, ...cardData, deckId: deck!.id };
+      const updatedCard: Flashcard = { 
+        ...editingCard, 
+        ...cardData, 
+        deckId: deck!.id, 
+        updatedAt: new Date().toISOString() 
+      };
       await db.flashcards.put(updatedCard);
       showToast('Card updated successfully!');
     } else {
+      const now = new Date().toISOString();
       const newCard: Flashcard = {
         ...cardData,
         id: Date.now().toString(),
@@ -385,8 +391,9 @@ export const useAppLogic = () => {
         repetition: 0,
         easinessFactor: 2.5,
         interval: 0,
-        createdAt: new Date().toISOString(),
-        dueDate: new Date().toISOString(),
+        createdAt: now,
+        updatedAt: now,
+        dueDate: now,
       };
       await db.flashcards.add(newCard);
       await awardXP(2, 'New Card Added!');
@@ -426,6 +433,7 @@ export const useAppLogic = () => {
         deck = newDeck;
     }
 
+    const now = new Date().toISOString();
     const newCards: Flashcard[] = cardsToSave.map((cardData, index) => ({
         ...cardData,
         id: `${Date.now()}-${index}`,
@@ -433,8 +441,9 @@ export const useAppLogic = () => {
         repetition: 0,
         easinessFactor: 2.5,
         interval: 0,
-        createdAt: new Date().toISOString(),
-        dueDate: new Date().toISOString(),
+        createdAt: now,
+        updatedAt: now,
+        dueDate: now,
     }));
 
     if (newCards.length > 0) {
@@ -450,7 +459,9 @@ export const useAppLogic = () => {
 
   const handleSessionEnd = async (updatedCardsFromSession: Flashcard[]) => {
     if (updatedCardsFromSession.length > 0) {
-      await db.flashcards.bulkPut(updatedCardsFromSession);
+      const now = new Date().toISOString();
+      const cardsToUpdate = updatedCardsFromSession.map(c => ({ ...c, updatedAt: now }));
+      await db.flashcards.bulkPut(cardsToUpdate);
       handleGoalUpdate('STUDY', updatedCardsFromSession.length);
     }
     await fetchData();
@@ -523,6 +534,7 @@ export const useAppLogic = () => {
                 deck = newDeck;
             }
 
+            const now = new Date().toISOString();
             const newCard: Flashcard = {
                 id: `${Date.now()}-${rowCount}`,
                 deckId: deck.id,
@@ -536,8 +548,9 @@ export const useAppLogic = () => {
                 repetition: 0,
                 easinessFactor: 2.5,
                 interval: 0,
-                createdAt: new Date().toISOString(),
-                dueDate: new Date().toISOString(),
+                createdAt: now,
+                updatedAt: now,
+                dueDate: now,
             };
             newCards.push(newCard);
         }
@@ -632,9 +645,10 @@ export const useAppLogic = () => {
     try {
       const cardsInDeck = await db.flashcards.where('deckId').equals(deckId).toArray();
       const cardIdsToSoftDelete = cardsInDeck.map(card => card.id);
+      const now = new Date().toISOString();
       await db.transaction('rw', db.flashcards, db.decks, async () => {
           if (cardIdsToSoftDelete.length > 0) {
-              await db.flashcards.where('id').anyOf(cardIdsToSoftDelete).modify({ isDeleted: true });
+              await db.flashcards.where('id').anyOf(cardIdsToSoftDelete).modify({ isDeleted: true, updatedAt: now });
           }
           await db.decks.update(deckId, { isDeleted: true });
       });
@@ -721,7 +735,8 @@ export const useAppLogic = () => {
             exampleSentenceTarget: (cardToComplete.exampleSentenceTarget && cardToComplete.exampleSentenceTarget.length > 0) ? cardToComplete.exampleSentenceTarget : details.exampleSentences,
             audioSrc: audioDataUrl,
             back: persianDetails.back,
-            notes: persianDetails.notes || ''
+            notes: persianDetails.notes || '',
+            updatedAt: new Date().toISOString()
         };
 
         await db.flashcards.put(updatedCard);

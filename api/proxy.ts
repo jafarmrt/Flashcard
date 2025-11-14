@@ -13,6 +13,7 @@ interface Flashcard {
   id: string;
   deckId: string;
   isDeleted?: boolean;
+  updatedAt?: string; // Add timestamp for sync
   // Other properties are not needed for merge logic
 }
 interface StudyLog {
@@ -256,8 +257,9 @@ async function handleSyncMerge(payload: any, response: VercelResponse) {
 
   const cloudData = user.data || { decks: [], cards: [], studyHistory: [], userProfile: null, userAchievements: [] };
 
-  const merge = <T extends { id: string; isDeleted?: boolean }>(cloudItems: T[], clientItems: T[]): T[] => {
-    const mergedMap = new Map<string, T>();
+  const mergeDecks = (cloudItems: Deck[], clientItems: Deck[]): Deck[] => {
+    // Simple merge: client wins, but deletion is preserved.
+    const mergedMap = new Map<string, Deck>();
     (cloudItems || []).forEach(item => mergedMap.set(item.id, item));
     (clientItems || []).forEach(clientItem => {
       const cloudItem = mergedMap.get(clientItem.id);
@@ -271,8 +273,31 @@ async function handleSyncMerge(payload: any, response: VercelResponse) {
     return Array.from(mergedMap.values());
   };
 
-  const mergedDecks = merge<Deck>(cloudData.decks, clientData.decks);
-  const mergedCards = merge<Flashcard>(cloudData.cards, clientData.cards);
+  const mergeFlashcards = (cloudItems: Flashcard[], clientItems: Flashcard[]): Flashcard[] => {
+    const mergedMap = new Map<string, Flashcard>();
+    (cloudItems || []).forEach(item => mergedMap.set(item.id, item));
+    (clientItems || []).forEach(clientItem => {
+      const cloudItem = mergedMap.get(clientItem.id);
+      if (cloudItem) {
+        const clientTimestamp = new Date(clientItem.updatedAt || 0).getTime();
+        const cloudTimestamp = new Date(cloudItem.updatedAt || 0).getTime();
+        
+        // The one with the later timestamp wins
+        const winner = clientTimestamp >= cloudTimestamp ? clientItem : cloudItem;
+        
+        // Ensure deletion is always preserved from either side
+        winner.isDeleted = clientItem.isDeleted || cloudItem.isDeleted;
+        mergedMap.set(clientItem.id, winner);
+      } else {
+        // It's a new item from the client
+        mergedMap.set(clientItem.id, clientItem);
+      }
+    });
+    return Array.from(mergedMap.values());
+  };
+
+  const mergedDecks = mergeDecks(cloudData.decks, clientData.decks);
+  const mergedCards = mergeFlashcards(cloudData.cards, clientData.cards);
 
   const studyHistoryMap = new Map<string, StudyLog>();
   (cloudData.studyHistory || []).forEach(log => studyHistoryMap.set(`${log.cardId}-${log.date}-${log.rating}`, log));

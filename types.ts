@@ -65,6 +65,7 @@ export interface Flashcard {
   notes?: string;
   isDeleted?: boolean;
   createdAt: string; // ISO string
+  updatedAt?: string; // ISO string for timestamp-based sync
 
   // Field for audio
   audioSrc?: string; // base64 data URL

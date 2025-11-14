@@ -130,6 +130,22 @@ export class LinguaCardsDB extends Dexie {
             }
         });
     });
+
+    // Version 10: Add updatedAt for reliable data sync.
+    this.version(10).stores({
+        flashcards: 'id, deckId, front, back, dueDate, isDeleted, createdAt, updatedAt',
+        decks: 'id, name, isDeleted',
+        studyHistory: '++id, cardId, date',
+        userProfile: 'id, firstName, lastName, bio',
+        userAchievements: '&achievementId'
+    }).upgrade(tx => {
+        console.log("Upgrading database to version 10, adding updatedAt to flashcards for sync.");
+        return tx.table('flashcards').toCollection().modify(card => {
+            if (!card.updatedAt) {
+                card.updatedAt = card.createdAt; // Set initial value to createdAt
+            }
+        });
+    });
   }
 }
 
