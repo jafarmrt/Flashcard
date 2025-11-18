@@ -1,4 +1,5 @@
 import React from 'react';
+import ReactDOM from 'react-dom/client';
 import { useAppLogic, View, HealthStatus } from './hooks/useAppLogic';
 
 import { Flashcard, Deck } from './types';
@@ -38,7 +39,7 @@ const App: React.FC = () => {
         handleResetApp, handleStudyDeck, handleStartStudySession, setIsStudySetupModalOpen,
         handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
         updateSettings, handleCheckAchievements, handleGoalUpdate, studyCards,
-        handleCompleteCardDetails,
+        handleCompleteCardDetails, handleAutoFixCards, handleStopAutoFix, autoFixProgress,
         previousViewRef
     } = useAppLogic();
 
@@ -120,7 +121,17 @@ const App: React.FC = () => {
                 />;
             case 'LIST':
             default:
-                return <FlashcardList cards={visibleFlashcards} decks={visibleDecks} onEdit={handleEditCard} onDelete={handleDeleteCard} onBackToDecks={() => setView('DECKS')} onCompleteCard={handleCompleteCardDetails} />;
+                return <FlashcardList 
+                    cards={visibleFlashcards} 
+                    decks={visibleDecks} 
+                    onEdit={handleEditCard} 
+                    onDelete={handleDeleteCard} 
+                    onBackToDecks={() => setView('DECKS')} 
+                    onCompleteCard={handleCompleteCardDetails}
+                    onAutoFixAll={handleAutoFixCards}
+                    onStopAutoFix={handleStopAutoFix}
+                    autoFixProgress={autoFixProgress}
+                />;
         }
     };
 

@@ -54,6 +54,10 @@ export const useAppLogic = () => {
   const [studyCards, setStudyCards] = useState<Flashcard[]>([]);
   const [isStudySetupModalOpen, setIsStudySetupModalOpen] = useState(false);
   
+  // Auto-Fix State
+  const [autoFixProgress, setAutoFixProgress] = useState<{ current: number, total: number } | null>(null);
+  const cancelAutoFixRef = useRef(false);
+
   // Health & Settings
   const [dbStatus, setDbStatus] = useState<HealthStatus>('checking');
   const [apiStatus, setApiStatus] = useState<HealthStatus>('checking');
@@ -648,7 +652,7 @@ export const useAppLogic = () => {
   }
 
   const handleRenameDeck = async (deckId: string, newName: string) => {
-    const existingDeck: Deck | undefined = decks.find(d => d.name.toLowerCase() === newName.toLowerCase() && !d.isDeleted);
+    const existingDeck: Deck | undefined = decks.find(d => d.name.toLowerCase() && newName.toLowerCase() && !d.isDeleted);
     if (existingDeck && existingDeck.id !== deckId) {
         showToast('A deck with this name already exists.');
         return;
@@ -719,16 +723,18 @@ export const useAppLogic = () => {
     }
   };
 
-  const handleCompleteCardDetails = async (cardId: string) => {
+  const handleCompleteCardDetails = async (cardId: string, options: { silent?: boolean } = {}) => {
     const cardToComplete = await db.flashcards.get(cardId);
     if (!cardToComplete) {
-        showToast("Card not found.");
+        if (!options.silent) showToast("Card not found.");
         return;
     }
 
     try {
         const fetcher = settings.defaultApiSource === 'free' ? fetchFromFreeDictionary : fetchFromMerriamWebster;
-        const details: DictionaryResult = await fetcher(cardToComplete.front);
+        const details: DictionaryResult = await fetcher(cardToComplete.front).catch(() => ({
+             pronunciation: '', partOfSpeech: '', definitions: [], exampleSentences: [], audioUrl: undefined
+        }));
         
         let audioUrl: string | undefined = cardToComplete.audioSrc;
         if (details.audioUrl && !audioUrl) {
@@ -737,7 +743,11 @@ export const useAppLogic = () => {
         
         let persianDetails = { back: cardToComplete.back, notes: cardToComplete.notes };
         if (!cardToComplete.back || !cardToComplete.notes) {
-            persianDetails = await generatePersianDetails(cardToComplete.front);
+             try {
+                persianDetails = await generatePersianDetails(cardToComplete.front);
+             } catch (e) {
+                 console.error("AI Generation failed during complete:", e);
+             }
         }
 
         const updatedCard: Flashcard = {
@@ -757,12 +767,50 @@ export const useAppLogic = () => {
         // Performance Fix: Surgically update the state instead of re-fetching everything.
         setFlashcards(prev => prev.map(c => c.id === updatedCard.id ? updatedCard : c));
 
-        showToast(`Card "${cardToComplete.front}" updated!`);
+        if (!options.silent) showToast(`Card "${cardToComplete.front}" updated!`);
 
     } catch (error) {
         console.error("Failed to complete card details:", error);
-        showToast(`Could not complete details for "${cardToComplete.front}".`);
+        if (!options.silent) showToast(`Could not complete details for "${cardToComplete.front}".`);
     }
+  };
+
+  const handleAutoFixCards = async () => {
+    cancelAutoFixRef.current = false;
+    const incompleteCards = flashcards.filter(c => 
+        !c.isDeleted && (
+            !c.audioSrc || 
+            !c.definition || c.definition.length === 0 ||
+            !c.exampleSentenceTarget || c.exampleSentenceTarget.length === 0 ||
+            !c.pronunciation ||
+            !c.back ||
+            !c.notes
+        )
+    );
+
+    if (incompleteCards.length === 0) {
+        showToast("All cards are already complete!");
+        return;
+    }
+
+    setAutoFixProgress({ current: 0, total: incompleteCards.length });
+
+    for (let i = 0; i < incompleteCards.length; i++) {
+        if (cancelAutoFixRef.current) {
+            break;
+        }
+        const card = incompleteCards[i];
+        await handleCompleteCardDetails(card.id, { silent: true });
+        setAutoFixProgress({ current: i + 1, total: incompleteCards.length });
+    }
+
+    setAutoFixProgress(null);
+    const message = cancelAutoFixRef.current ? "Auto-fix stopped." : "All cards checked and updated!";
+    showToast(message);
+  };
+
+  const handleStopAutoFix = () => {
+      cancelAutoFixRef.current = true;
   };
 
   return {
@@ -770,12 +818,13 @@ export const useAppLogic = () => {
       flashcards, decks, view, editingCard, toastMessage, isLoggedIn, currentUser, authLoading, appLoading,
       syncStatus, studyDeckId, studyCards, isStudySetupModalOpen, dbStatus, apiStatus,
       freeDictApiStatus, mwDictApiStatus, settings, userProfile, streak, earnedAchievements,
-      previousViewRef,
+      previousViewRef, autoFixProgress,
       // Handlers
       setView, showToast, handleAddCard, handleEditCard, handleDeleteCard, handleSaveCard,
       handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV,
       handleResetApp, handleStudyDeck, handleStartStudySession, setIsStudySetupModalOpen,
       handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
-      updateSettings, handleCheckAchievements, handleGoalUpdate, handleCompleteCardDetails
+      updateSettings, handleCheckAchievements, handleGoalUpdate, handleCompleteCardDetails,
+      handleAutoFixCards, handleStopAutoFix
   };
 };

@@ -9,6 +9,9 @@ interface FlashcardListProps {
   onDelete: (id: string) => void;
   onBackToDecks: () => void;
   onCompleteCard: (cardId: string) => Promise<void>;
+  onAutoFixAll: () => void;
+  onStopAutoFix: () => void;
+  autoFixProgress: { current: number, total: number } | null;
 }
 
 const EditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>;
@@ -17,6 +20,8 @@ const SpeakerIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" hei
 const CompleteIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m5 3 2.5 5L10 3l2.5 5L15 3l2.5 5L20 3"/><path d="M10 13a2.5 2.5 0 0 0-2.5 2.5V21h5v-5.5A2.5 2.5 0 0 0 10 13Z"/><path d="M5 21h14"/></svg>;
 const LoadingIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg>;
 const SearchIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-400"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>;
+const MagicWandIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m19 2 2 2-2 2-2-2 2-2Z"/><path d="m5 17 2 2-2 2-2-2 2-2Z"/><path d="m15 17 2 2-2 2-2-2 2-2Z"/><path d="M14.5 4 2.5 16 5.5 19 17.5 7 14.5 4Z"/><line x1="21.5" y1="11" x2="17.5" y2="7"/></svg>;
+const StopIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>;
 
 const MissingInfoIndicator: React.FC<{ card: Flashcard }> = ({ card }) => {
     const missing = [];
@@ -39,7 +44,7 @@ const MissingInfoIndicator: React.FC<{ card: Flashcard }> = ({ card }) => {
 };
 
 
-const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onDelete, onBackToDecks, onCompleteCard }) => {
+const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onDelete, onBackToDecks, onCompleteCard, onAutoFixAll, onStopAutoFix, autoFixProgress }) => {
   const [sortKey, setSortKey] = useState<string>('front-asc');
   const [selectedDeckId, setSelectedDeckId] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -151,6 +156,16 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
             </button>
             
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto">
+                {autoFixProgress ? (
+                     <button onClick={onStopAutoFix} className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md shadow-sm transition-colors">
+                        <StopIcon /> Stop ({autoFixProgress.current}/{autoFixProgress.total})
+                     </button>
+                ) : (
+                    <button onClick={onAutoFixAll} className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md shadow-sm transition-colors">
+                        <MagicWandIcon /> Auto-Fix All
+                    </button>
+                )}
+
                 <div className="relative w-full sm:w-auto">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                         <SearchIcon />
@@ -206,7 +221,7 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                                     {playingAudioUrl === card.audioSrc ? <LoadingIcon /> : <SpeakerIcon />}
                                 </button>
                             )}
-                            <button onClick={() => handleComplete(card.id)} disabled={completingCardId === card.id} aria-label={`Complete details for ${card.front}`} className={`${actionButtonClasses} text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 disabled:opacity-50 disabled:cursor-wait`}>
+                            <button onClick={() => handleComplete(card.id)} disabled={completingCardId === card.id || !!autoFixProgress} aria-label={`Complete details for ${card.front}`} className={`${actionButtonClasses} text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 disabled:opacity-50 disabled:cursor-wait`}>
                                 {completingCardId === card.id ? <LoadingIcon /> : <CompleteIcon />}
                             </button>
                             <button onClick={() => onEdit(card)} aria-label={`Edit ${card.front}`} className={`${actionButtonClasses} text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300`}><EditIcon /></button>
