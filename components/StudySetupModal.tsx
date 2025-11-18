@@ -19,9 +19,12 @@ export const StudySetupModal: React.FC<StudySetupModalProps> = ({ isOpen, onClos
 
     switch (filter) {
       case 'new':
-        return cards.filter(c => c.repetition === 0);
+        // Fix: Only show truly new cards (never studied).
+        // Cards rated 'Again' have repetition 0 but interval 1. We exclude those.
+        return cards.filter(c => c.repetition === 0 && c.interval === 0);
       case 'review':
-        return cards.filter(c => c.repetition > 0 && c.dueDate <= todayISOString);
+        // Show cards that are due AND have been studied before (interval > 0 or repetition > 0)
+        return cards.filter(c => (c.repetition > 0 || c.interval > 0) && c.dueDate <= todayISOString);
       case 'all-cards':
         return cards; // No filter, return all cards
       case 'all-due':

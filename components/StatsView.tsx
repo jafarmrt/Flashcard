@@ -75,50 +75,62 @@ const getCardAnalytics = (logs: StudyLog[], allCards: Flashcard[]): { difficultC
     };
 };
 
-const ActivityHeatmap: React.FC<{ activity: Map<string, number> }> = ({ activity }) => {
+const WeeklyActivityChart: React.FC<{ activity: Map<string, number> }> = ({ activity }) => {
+    const days = 7;
     const today = new Date();
-    const days = 90;
-    const weeks = Math.ceil(days / 7);
-    const dayCells = [];
-    const maxActivity = Math.max(...activity.values(), 1);
+    const barData = [];
+    let maxCount = 1; // Avoid division by zero
 
-    const getIntensityClass = (count: number) => {
-        if (count === 0) return 'bg-slate-100 dark:bg-slate-700/50';
-        const intensity = count / maxActivity;
-        if (intensity > 0.7) return 'bg-indigo-600';
-        if (intensity > 0.4) return 'bg-indigo-500';
-        if (intensity > 0.1) return 'bg-indigo-400';
-        return 'bg-indigo-300';
-    };
-
-    const startDate = new Date();
-    startDate.setDate(today.getDate() - days + 1);
-    const startDayOfWeek = startDate.getDay();
-
-    // Add empty cells for padding at the start
-    for (let i = 0; i < startDayOfWeek; i++) {
-        dayCells.push(<div key={`pad-${i}`} className="w-4 h-4 rounded-sm"></div>);
-    }
-    
-    for (let i = 0; i < days; i++) {
+    // Prepare data for the last 7 days in reverse (Today is last)
+    for (let i = days - 1; i >= 0; i--) {
         const date = new Date();
         date.setDate(today.getDate() - i);
         const dateStr = date.toISOString().split('T')[0];
         const count = activity.get(dateStr) || 0;
-        dayCells.push(
-            <div 
-                key={dateStr}
-                className={`w-4 h-4 rounded-sm ${getIntensityClass(count)}`}
-                title={`${date.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}: ${count} review${count !== 1 ? 's' : ''}`}
-            />
-        );
+        maxCount = Math.max(maxCount, count);
+        
+        // Format label: "M", "T", "W" etc.
+        const dayLabel = date.toLocaleDateString('en-US', { weekday: 'narrow' });
+        const fullDate = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        const isToday = i === 0;
+        
+        barData.push({ dayLabel, count, fullDate, isToday });
     }
 
     return (
         <div className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-sm">
-            <h3 className="text-lg font-medium text-slate-500 dark:text-slate-400 mb-4">Study Habits (Last 90 Days)</h3>
-            <div className="grid grid-cols-7 sm:grid-cols-15 md:grid-cols-20 lg:grid-cols-30 gap-1 justify-start">
-                {dayCells.reverse()}
+             <div className="flex items-center justify-between mb-6">
+                <h3 className="text-lg font-medium text-slate-500 dark:text-slate-400">Weekly Activity</h3>
+                <span className="text-xs font-medium bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300 px-2 py-1 rounded-full">Last 7 Days</span>
+            </div>
+            
+            <div className="flex items-end justify-between h-40 gap-2">
+                {barData.map((data, index) => {
+                    const heightPercentage = Math.max(10, (data.count / maxCount) * 100);
+                    
+                    return (
+                        <div key={index} className="flex-1 flex flex-col items-center gap-2 group cursor-default">
+                             <div className="relative w-full flex justify-center items-end h-full">
+                                {/* Bar */}
+                                <div 
+                                    className={`w-full max-w-[24px] rounded-t-md transition-all duration-500 ${data.isToday ? 'bg-indigo-600 dark:bg-indigo-500' : 'bg-slate-300 dark:bg-slate-700 group-hover:bg-indigo-400 dark:group-hover:bg-indigo-600'}`}
+                                    style={{ height: `${heightPercentage}%` }}
+                                ></div>
+                                
+                                {/* Tooltip */}
+                                <div className="absolute bottom-full mb-2 hidden group-hover:block z-10">
+                                     <div className="bg-slate-800 text-white text-xs rounded py-1 px-2 whitespace-nowrap shadow-lg">
+                                        {data.count} cards on {data.fullDate}
+                                     </div>
+                                     <div className="w-2 h-2 bg-slate-800 rotate-45 mx-auto -mt-1"></div>
+                                </div>
+                             </div>
+                             <span className={`text-xs font-medium ${data.isToday ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-500'}`}>
+                                {data.dayLabel}
+                             </span>
+                        </div>
+                    );
+                })}
             </div>
         </div>
     );
@@ -143,10 +155,12 @@ const StatsSkeleton: React.FC = () => {
                 </div>
             </SkeletonCard>
             <SkeletonCard>
-                <SkeletonPlaceholder className="h-6 w-1/3 mb-4" />
-                <div className="grid grid-cols-7 sm:grid-cols-15 md:grid-cols-20 lg:grid-cols-30 gap-1 justify-start">
-                    {Array.from({ length: 90 }).map((_, i) => (
-                        <SkeletonPlaceholder key={i} className="w-4 h-4 rounded-sm" />
+                <div className="flex justify-between mb-6">
+                     <SkeletonPlaceholder className="h-6 w-32" />
+                </div>
+                <div className="flex items-end justify-between h-40 gap-2">
+                    {Array.from({ length: 7 }).map((_, i) => (
+                        <SkeletonPlaceholder key={i} className="w-full max-w-[24px] h-24" />
                     ))}
                 </div>
             </SkeletonCard>
@@ -186,7 +200,7 @@ export const StatsView: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       const allCards = await db.flashcards.filter(card => !card.isDeleted).toArray();
       
       const streak = calculateStreak(allLogs);
-      const activity = calculateActivity(allLogs, 90);
+      const activity = calculateActivity(allLogs, 90); // Keep 90 for calculations if needed later, but display 7
       const { difficultCards, reviewSoonCards, masteredCards } = getCardAnalytics(allLogs, allCards);
       
       setStats({ streak, activity, difficultCards, reviewSoonCards, masteredCards });
@@ -228,7 +242,7 @@ export const StatsView: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             <p className="text-5xl font-bold text-indigo-500 mt-2">{stats.streak} <span className="text-3xl font-medium text-slate-600 dark:text-slate-300">day{stats.streak !== 1 && 's'}</span></p>
         </div>
 
-        <ActivityHeatmap activity={stats.activity} />
+        <WeeklyActivityChart activity={stats.activity} />
       
         <div className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-sm">
             <h3 className="text-lg font-medium text-slate-500 dark:text-slate-400 mb-4">Knowledge Breakdown</h3>

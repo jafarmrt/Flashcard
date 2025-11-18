@@ -615,10 +615,19 @@ export const useAppLogic = () => {
       : visibleFlashcards;
 
     switch (options.filter) {
-      case 'new': cardsToStudy = cardsToStudy.filter(c => c.repetition === 0); break;
-      case 'review': cardsToStudy = cardsToStudy.filter(c => c.repetition > 0 && c.dueDate <= todayISOString); break;
-      case 'all-cards': break;
-      case 'all-due': default: cardsToStudy = cardsToStudy.filter(c => c.dueDate <= todayISOString); break;
+      case 'new': 
+        // Fix: Stricter check for new cards
+        cardsToStudy = cardsToStudy.filter(c => c.repetition === 0 && c.interval === 0); 
+        break;
+      case 'review': 
+        cardsToStudy = cardsToStudy.filter(c => (c.repetition > 0 || c.interval > 0) && c.dueDate <= todayISOString); 
+        break;
+      case 'all-cards': 
+        break;
+      case 'all-due': 
+      default: 
+        cardsToStudy = cardsToStudy.filter(c => c.dueDate <= todayISOString); 
+        break;
     }
     
     for (let i = cardsToStudy.length - 1; i > 0; i--) {
