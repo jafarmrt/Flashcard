@@ -16,6 +16,7 @@ const DeleteIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" heig
 const SpeakerIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>;
 const CompleteIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m5 3 2.5 5L10 3l2.5 5L15 3l2.5 5L20 3"/><path d="M10 13a2.5 2.5 0 0 0-2.5 2.5V21h5v-5.5A2.5 2.5 0 0 0 10 13Z"/><path d="M5 21h14"/></svg>;
 const LoadingIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg>;
+const SearchIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-400"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>;
 
 const MissingInfoIndicator: React.FC<{ card: Flashcard }> = ({ card }) => {
     const missing = [];
@@ -41,6 +42,7 @@ const MissingInfoIndicator: React.FC<{ card: Flashcard }> = ({ card }) => {
 const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onDelete, onBackToDecks, onCompleteCard }) => {
   const [sortKey, setSortKey] = useState<string>('front-asc');
   const [selectedDeckId, setSelectedDeckId] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [completingCardId, setCompletingCardId] = useState<string | null>(null);
   const [playingAudioUrl, setPlayingAudioUrl] = useState<string | null>(null);
@@ -49,9 +51,24 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
   const decksById = useMemo(() => new Map(decks.map(deck => [deck.id, deck.name])), [decks]);
 
   const filteredCards = useMemo(() => {
-    if (selectedDeckId === 'all') return cards;
-    return cards.filter(card => card.deckId === selectedDeckId);
-  }, [cards, selectedDeckId]);
+    let result = cards;
+    
+    // 1. Deck Filter
+    if (selectedDeckId !== 'all') {
+        result = result.filter(card => card.deckId === selectedDeckId);
+    }
+    
+    // 2. Search Filter
+    if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase();
+        result = result.filter(card => 
+            card.front.toLowerCase().includes(query) || 
+            card.back.toLowerCase().includes(query)
+        );
+    }
+    
+    return result;
+  }, [cards, selectedDeckId, searchQuery]);
 
   const sortedCards = useMemo(() => {
     let sortableCards = [...filteredCards];
@@ -85,6 +102,12 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
 
   const totalPages = Math.ceil(sortedCards.length / CARDS_PER_PAGE);
   
+  // Reset page when filters change
+  useMemo(() => {
+      setCurrentPage(1);
+  }, [selectedDeckId, searchQuery, sortKey]);
+
+
   const playAudio = async (audioUrl: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (playingAudioUrl) return; 
@@ -126,12 +149,26 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
                 Back to Decks
             </button>
-            <div className="flex items-center gap-2 w-full md:w-auto">
-                <select id="deck-filter" value={selectedDeckId} onChange={e => {setSelectedDeckId(e.target.value); setCurrentPage(1);}} className="block w-full max-w-xs pl-3 pr-10 py-2 text-base border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md">
-                    <option value="all">All Cards ({cards.length})</option>
+            
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto">
+                <div className="relative w-full sm:w-auto">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <SearchIcon />
+                    </div>
+                    <input
+                        type="text"
+                        placeholder="Search cards..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="block w-full pl-10 pr-3 py-2 text-base border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
+                    />
+                </div>
+                
+                <select id="deck-filter" value={selectedDeckId} onChange={e => setSelectedDeckId(e.target.value)} className="block w-full sm:w-auto pl-3 pr-10 py-2 text-base border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md">
+                    <option value="all">All Decks</option>
                     {decks.map(deck => <option key={deck.id} value={deck.id}>{deck.name}</option>)}
                 </select>
-                <select id="sort-order" value={sortKey} onChange={e => {setSortKey(e.target.value); setCurrentPage(1);}} className="block w-full max-w-xs pl-3 pr-10 py-2 text-base border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md">
+                <select id="sort-order" value={sortKey} onChange={e => setSortKey(e.target.value)} className="block w-full sm:w-auto pl-3 pr-10 py-2 text-base border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md">
                     <option value="front-asc">English (A-Z)</option>
                     <option value="front-desc">English (Z-A)</option>
                     <option value="back-asc">Persian (A-Z)</option>
@@ -141,38 +178,45 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                 </select>
             </div>
         </div>
-
-        <div className="space-y-3">
-            {paginatedCards.map((card) => (
-                <div key={card.id} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-4 flex justify-between items-center transition-all hover:shadow-md hover:bg-slate-50 dark:hover:bg-slate-700/50">
-                    <div className="flex-1 overflow-hidden min-w-0">
-                        <p className="text-lg font-semibold text-slate-800 dark:text-slate-100 truncate">{card.front}</p>
-                        <p className="text-slate-600 dark:text-slate-400 truncate">{card.back}</p>
-                        <div className="flex items-center gap-4 text-xs text-slate-500 dark:text-slate-400 mt-2">
-                             <span title={decksById.get(card.deckId) || 'Unknown'} className="bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-full truncate max-w-32">{decksById.get(card.deckId) || 'Unknown'}</span>
-                             <MissingInfoIndicator card={card} />
+        
+        {paginatedCards.length === 0 ? (
+            <div className="text-center py-10">
+                <p className="text-slate-500 dark:text-slate-400">No cards match your search.</p>
+            </div>
+        ) : (
+            <div className="space-y-3">
+                {paginatedCards.map((card) => (
+                    <div key={card.id} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-4 flex justify-between items-center transition-all hover:shadow-md hover:bg-slate-50 dark:hover:bg-slate-700/50">
+                        <div className="flex-1 overflow-hidden min-w-0">
+                            <p className="text-lg font-semibold text-slate-800 dark:text-slate-100 truncate">{card.front}</p>
+                            <p className="text-slate-600 dark:text-slate-400 truncate">{card.back}</p>
+                            <div className="flex items-center gap-4 text-xs text-slate-500 dark:text-slate-400 mt-2">
+                                <span title={decksById.get(card.deckId) || 'Unknown'} className="bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-full truncate max-w-32">{decksById.get(card.deckId) || 'Unknown'}</span>
+                                <MissingInfoIndicator card={card} />
+                            </div>
+                        </div>
+                        <div className="flex flex-shrink-0 gap-1 sm:gap-2 pl-2 items-center">
+                            {card.audioSrc && (
+                                <button 
+                                    onClick={(e) => playAudio(card.audioSrc!, e)} 
+                                    disabled={!!playingAudioUrl}
+                                    aria-label={`Play audio for ${card.front}`} 
+                                    className={`${actionButtonClasses} text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-300 disabled:opacity-50`}
+                                >
+                                    {playingAudioUrl === card.audioSrc ? <LoadingIcon /> : <SpeakerIcon />}
+                                </button>
+                            )}
+                            <button onClick={() => handleComplete(card.id)} disabled={completingCardId === card.id} aria-label={`Complete details for ${card.front}`} className={`${actionButtonClasses} text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 disabled:opacity-50 disabled:cursor-wait`}>
+                                {completingCardId === card.id ? <LoadingIcon /> : <CompleteIcon />}
+                            </button>
+                            <button onClick={() => onEdit(card)} aria-label={`Edit ${card.front}`} className={`${actionButtonClasses} text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300`}><EditIcon /></button>
+                            <button onClick={() => onDelete(card.id)} aria-label={`Delete ${card.front}`} className={`${actionButtonClasses} text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300`}><DeleteIcon /></button>
                         </div>
                     </div>
-                    <div className="flex flex-shrink-0 gap-1 sm:gap-2 pl-2 items-center">
-                        {card.audioSrc && (
-                             <button 
-                                onClick={(e) => playAudio(card.audioSrc!, e)} 
-                                disabled={!!playingAudioUrl}
-                                aria-label={`Play audio for ${card.front}`} 
-                                className={`${actionButtonClasses} text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-300 disabled:opacity-50`}
-                            >
-                                {playingAudioUrl === card.audioSrc ? <LoadingIcon /> : <SpeakerIcon />}
-                            </button>
-                        )}
-                        <button onClick={() => handleComplete(card.id)} disabled={completingCardId === card.id} aria-label={`Complete details for ${card.front}`} className={`${actionButtonClasses} text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 disabled:opacity-50 disabled:cursor-wait`}>
-                            {completingCardId === card.id ? <LoadingIcon /> : <CompleteIcon />}
-                        </button>
-                        <button onClick={() => onEdit(card)} aria-label={`Edit ${card.front}`} className={`${actionButtonClasses} text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300`}><EditIcon /></button>
-                        <button onClick={() => onDelete(card.id)} aria-label={`Delete ${card.front}`} className={`${actionButtonClasses} text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300`}><DeleteIcon /></button>
-                    </div>
-                </div>
-            ))}
-        </div>
+                ))}
+            </div>
+        )}
+        
         {totalPages > 1 && (
             <div className="flex justify-center items-center gap-4 mt-6">
                 <button disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)} className="px-4 py-2 text-sm font-medium rounded-md bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-50">Previous</button>

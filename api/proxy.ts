@@ -1,6 +1,7 @@
 // File: /api/proxy.ts
 // This Vercel Serverless Function acts as a secure proxy and router.
 // It handles requests for user authentication, cloud sync, and external APIs.
+import { Buffer } from 'buffer';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 // --- TYPE DEFINITIONS (mirrored from client) ---

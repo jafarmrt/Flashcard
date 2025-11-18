@@ -9,6 +9,12 @@ export interface PersianDetails {
   notes: string;
 }
 
+export interface PronunciationResult {
+  score: number; // 0-100
+  feedback: string; // Persian feedback
+  correction?: string; // Optional IPA or phonetic correction
+}
+
 const parseJsonFromAiResponse = (text: string) => {
     let cleanText = text.trim();
     // Fix: The AI model sometimes wraps its JSON output in markdown.
@@ -83,6 +89,15 @@ export const blobToBase64 = (blob: Blob): Promise<string> => {
 
 export const getPronunciationFeedback = async (word: string, audioBase64: string, mimeType: string): Promise<string> => {
     try {
+        const result = await evaluatePronunciation(word, audioBase64, mimeType);
+        return result.feedback;
+    } catch(error) {
+        return "Sorry, I couldn't analyze the pronunciation at this time.";
+    }
+};
+
+export const evaluatePronunciation = async (word: string, audioBase64: string, mimeType: string): Promise<PronunciationResult> => {
+    try {
         const audioPart = {
             inlineData: {
                 mimeType: mimeType,
@@ -91,17 +106,32 @@ export const getPronunciationFeedback = async (word: string, audioBase64: string
         };
         const textPart = {
             text: `I am a Persian speaker learning English. This is my attempt at pronouncing the word "${word}".
-            Please listen to the audio and provide simple, concise, and encouraging feedback in Persian.
-            For example: "تلفظ عالی بود!" or "خوب بود، اما سعی کن صدای 'r' را واضح‌تر بگویی."`
+            Please listen to the audio and evaluate it. Return a JSON object with:
+            1. "score": A number between 0 and 100.
+            2. "feedback": Concise, encouraging feedback in Persian.
+            3. "correction": Optional IPA correction if needed.`
         };
         const response = await callProxy('gemini-generate', {
-            model: 'gemini-2.5-pro',
+            model: 'gemini-2.5-pro', // Using Pro for better audio analysis
             contents: { parts: [textPart, audioPart] },
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: 'OBJECT',
+                    properties: {
+                        score: { type: 'INTEGER' },
+                        feedback: { type: 'STRING' },
+                        correction: { type: 'STRING' }
+                    },
+                    required: ["score", "feedback"]
+                }
+            }
         });
-        return response.text;
+        
+        return parseJsonFromAiResponse(response.text);
     } catch(error) {
-        console.error("Error generating pronunciation feedback:", error);
-        return "Sorry, I couldn't analyze the pronunciation at this time.";
+        console.error("Error evaluating pronunciation:", error);
+        throw error;
     }
 };
 
