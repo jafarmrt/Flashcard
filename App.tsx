@@ -20,6 +20,7 @@ import { ProfileView } from './components/ProfileView';
 import { AuthView } from './components/AuthView';
 import { FloatingActionButton } from './components/common/FloatingActionButton';
 import { BottomNav } from './components/common/BottomNav';
+import { AutoFixReportModal } from './components/AutoFixReportModal';
 
 const StatusIndicator: React.FC<{ status: HealthStatus, label: string }> = ({ status, label }) => {
     const color = status === 'ok' ? 'bg-green-500' : status === 'error' ? 'bg-red-500' : 'bg-yellow-500';
@@ -32,7 +33,7 @@ const App: React.FC = () => {
         // State
         flashcards, decks, view, editingCard, toastMessage, isLoggedIn, currentUser, authLoading, appLoading,
         studyDeckId, isStudySetupModalOpen, dbStatus, apiStatus, freeDictApiStatus, mwDictApiStatus,
-        settings, userProfile, streak, earnedAchievements,
+        settings, userProfile, streak, earnedAchievements, autoFixReport,
         // Handlers
         setView, showToast, handleAddCard, handleEditCard, handleDeleteCard, handleSaveCard,
         handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV,
@@ -40,7 +41,7 @@ const App: React.FC = () => {
         handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
         updateSettings, handleCheckAchievements, handleGoalUpdate, studyCards,
         handleCompleteCardDetails, handleAutoFixCards, handleStopAutoFix, autoFixProgress,
-        previousViewRef
+        handleCloseAutoFixReport, previousViewRef
     } = useAppLogic();
 
     const visibleFlashcards = flashcards.filter(c => !c.isDeleted);
@@ -127,7 +128,7 @@ const App: React.FC = () => {
                     onEdit={handleEditCard} 
                     onDelete={handleDeleteCard} 
                     onBackToDecks={() => setView('DECKS')} 
-                    onCompleteCard={handleCompleteCardDetails}
+                    onCompleteCard={async (id) => { await handleCompleteCardDetails(id); }}
                     onAutoFixAll={handleAutoFixCards}
                     onStopAutoFix={handleStopAutoFix}
                     autoFixProgress={autoFixProgress}
@@ -164,6 +165,12 @@ const App: React.FC = () => {
                 onClose={() => setIsStudySetupModalOpen(false)}
                 onStart={handleStartStudySession}
                 cards={cardsForSetupModal}
+            />
+            
+            <AutoFixReportModal 
+                isOpen={!!autoFixReport}
+                onClose={handleCloseAutoFixReport}
+                stats={autoFixReport}
             />
 
             {['LIST', 'DECKS'].includes(view) && <FloatingActionButton onClick={handleAddCard} />}

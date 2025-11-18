@@ -15,6 +15,7 @@ import {
   fetchAudioData,
   DictionaryResult
 } from '../services/dictionaryService';
+import { AutoFixStats } from '../components/AutoFixReportModal';
 
 // Types used within the hook and exported for the App component
 export type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS' | 'PROFILE';
@@ -56,6 +57,7 @@ export const useAppLogic = () => {
   
   // Auto-Fix State
   const [autoFixProgress, setAutoFixProgress] = useState<{ current: number, total: number } | null>(null);
+  const [autoFixReport, setAutoFixReport] = useState<AutoFixStats | null>(null);
   const cancelAutoFixRef = useRef(false);
 
   // Health & Settings
@@ -242,12 +244,12 @@ export const useAppLogic = () => {
         
         const { data: mergedData } = response;
         if (mergedData) {
-            await db.transaction('rw', [db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements], async () => {
-                await db.decks.clear();
-                await db.flashcards.clear();
-                await db.studyHistory.clear();
-                await db.userProfile.clear();
-                await db.userAchievements.clear();
+            await (db as any).transaction('rw', [db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements], async () => {
+                // Bug Fix: Do NOT clear tables here. Clearing tables wipes out any changes made locally 
+                // while the network request was in flight (the "Reversion" bug).
+                // We use bulkPut which updates existing items and adds new ones.
+                // Since 'sync-merge' handles the logic of what is deleted (via isDeleted flags),
+                // this is safe and prevents data loss.
                 
                 if (mergedData.decks) await db.decks.bulkPut(mergedData.decks);
                 if (mergedData.cards) await db.flashcards.bulkPut(mergedData.cards);
@@ -268,12 +270,12 @@ export const useAppLogic = () => {
     if (!username) return;
     setSyncStatus('syncing');
     try {
-      await db.delete().then(() => db.open());
+      await (db as any).delete().then(() => (db as any).open());
       
       const response = await callProxy('sync-load', { username });
       if (response.data) {
         const { decks, cards, studyHistory, userProfile, userAchievements } = response.data;
-        await db.transaction('rw', [db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements], async () => {
+        await (db as any).transaction('rw', [db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements], async () => {
             if (decks) await db.decks.bulkPut(decks);
             if (cards) await db.flashcards.bulkPut(cards);
             if (studyHistory) await db.studyHistory.bulkPut(studyHistory);
@@ -298,7 +300,7 @@ export const useAppLogic = () => {
             const user: User = JSON.parse(savedUser);
             setCurrentUser(user);
             setIsLoggedIn(true);
-            await db.open();
+            await (db as any).open();
             await fetchData();
         }
         setAppLoading(false);
@@ -317,7 +319,7 @@ export const useAppLogic = () => {
         try { await callProxy('ping-mw', {}); setMwDictApiStatus('ok'); } catch (e) { setMwDictApiStatus('error'); }
     }
     checkApis();
-    db.open().then(() => setDbStatus('ok')).catch(() => setDbStatus('error'));
+    (db as any).open().then(() => setDbStatus('ok')).catch(() => setDbStatus('error'));
   }, []);
 
   useEffect(() => {
@@ -341,10 +343,17 @@ export const useAppLogic = () => {
         isInitialMount.current = false;
         return;
     };
+    
+    // Fix: Do NOT trigger auto-sync if Auto-Fix is currently running.
+    // This prevents the sync logic from interfering with the rapid local DB updates.
+    if (autoFixProgress) {
+        return;
+    }
+
     setSyncStatus('syncing'); 
     const handler = setTimeout(() => handleSync(), 2000);
     return () => clearTimeout(handler);
-  }, [flashcards, decks, userProfile, earnedAchievements, isLoggedIn]);
+  }, [flashcards, decks, userProfile, earnedAchievements, isLoggedIn, autoFixProgress]); // Added autoFixProgress dependency
 
 
   const updateSettings = (newSettings: Partial<Settings>) => {
@@ -592,7 +601,7 @@ export const useAppLogic = () => {
   
   const handleResetApp = async () => {
       if(confirm("Are you sure you want to reset the application? All local decks and cards for this account will be permanently deleted. This action cannot be undone.")) {
-          await db.delete();
+          await (db as any).delete();
           localStorage.removeItem('appSettings');
           window.location.reload();
       }
@@ -676,7 +685,7 @@ export const useAppLogic = () => {
       const cardsInDeck = await db.flashcards.where('deckId').equals(deckId).toArray();
       const cardIdsToSoftDelete = cardsInDeck.map(card => card.id);
       const now = new Date().toISOString();
-      await db.transaction('rw', db.flashcards, db.decks, async () => {
+      await (db as any).transaction('rw', db.flashcards, db.decks, async () => {
           if (cardIdsToSoftDelete.length > 0) {
               await db.flashcards.where('id').anyOf(cardIdsToSoftDelete).modify({ isDeleted: true, updatedAt: now });
           }
@@ -714,7 +723,7 @@ export const useAppLogic = () => {
           const user = { username };
           setCurrentUser(user);
           sessionStorage.setItem('currentUser', JSON.stringify(user));
-          await db.delete().then(() => db.open());
+          await (db as any).delete().then(() => (db as any).open());
           await fetchData();
           setIsLoggedIn(true);
           showToast(`Account created! Welcome, ${username}!`);
@@ -732,11 +741,17 @@ export const useAppLogic = () => {
     }
   };
 
-  const handleCompleteCardDetails = async (cardId: string, options: { silent?: boolean } = {}) => {
+  // Return type used to aggregate stats
+  const handleCompleteCardDetails = async (cardId: string, options: { silent?: boolean } = {}): Promise<{
+    success: boolean;
+    updates: { audio: boolean; def: boolean; ex: boolean; pron: boolean; trans: boolean };
+  }> => {
     const cardToComplete = await db.flashcards.get(cardId);
+    const updates = { audio: false, def: false, ex: false, pron: false, trans: false };
+    
     if (!cardToComplete) {
         if (!options.silent) showToast("Card not found.");
-        return;
+        return { success: false, updates };
     }
 
     try {
@@ -748,16 +763,22 @@ export const useAppLogic = () => {
         let audioUrl: string | undefined = cardToComplete.audioSrc;
         if (details.audioUrl && !audioUrl) {
            audioUrl = details.audioUrl;
+           updates.audio = true;
         }
         
         let persianDetails = { back: cardToComplete.back, notes: cardToComplete.notes };
         if (!cardToComplete.back || !cardToComplete.notes) {
              try {
                 persianDetails = await generatePersianDetails(cardToComplete.front);
+                if (persianDetails.back && persianDetails.back !== cardToComplete.back) updates.trans = true;
              } catch (e) {
                  console.error("AI Generation failed during complete:", e);
              }
         }
+
+        if (!cardToComplete.pronunciation && details.pronunciation) updates.pron = true;
+        if ((!cardToComplete.definition || cardToComplete.definition.length === 0) && details.definitions.length > 0) updates.def = true;
+        if ((!cardToComplete.exampleSentenceTarget || cardToComplete.exampleSentenceTarget.length === 0) && details.exampleSentences.length > 0) updates.ex = true;
 
         const updatedCard: Flashcard = {
             ...cardToComplete,
@@ -777,10 +798,12 @@ export const useAppLogic = () => {
         setFlashcards(prev => prev.map(c => c.id === updatedCard.id ? updatedCard : c));
 
         if (!options.silent) showToast(`Card "${cardToComplete.front}" updated!`);
+        return { success: true, updates };
 
     } catch (error) {
         console.error("Failed to complete card details:", error);
         if (!options.silent) showToast(`Could not complete details for "${cardToComplete.front}".`);
+        return { success: false, updates };
     }
   };
 
@@ -804,36 +827,66 @@ export const useAppLogic = () => {
 
     setAutoFixProgress({ current: 0, total: incompleteCards.length });
 
+    const stats: AutoFixStats = {
+        totalChecked: incompleteCards.length,
+        totalUpdated: 0,
+        audioAdded: 0,
+        definitionsAdded: 0,
+        examplesAdded: 0,
+        pronunciationsAdded: 0,
+        translationsAdded: 0,
+    };
+
     for (let i = 0; i < incompleteCards.length; i++) {
         if (cancelAutoFixRef.current) {
             break;
         }
         const card = incompleteCards[i];
-        await handleCompleteCardDetails(card.id, { silent: true });
+        const result = await handleCompleteCardDetails(card.id, { silent: true });
+        
+        if (result.success) {
+            const u = result.updates;
+            if (u.audio || u.def || u.ex || u.pron || u.trans) {
+                stats.totalUpdated++;
+                if (u.audio) stats.audioAdded++;
+                if (u.def) stats.definitionsAdded++;
+                if (u.ex) stats.examplesAdded++;
+                if (u.pron) stats.pronunciationsAdded++;
+                if (u.trans) stats.translationsAdded++;
+            }
+        }
         setAutoFixProgress({ current: i + 1, total: incompleteCards.length });
     }
 
     setAutoFixProgress(null);
-    const message = cancelAutoFixRef.current ? "Auto-fix stopped." : "All cards checked and updated!";
-    showToast(message);
+    // Set report to trigger modal
+    if (!cancelAutoFixRef.current) {
+        setAutoFixReport(stats);
+    } else {
+        showToast("Auto-fix stopped.");
+    }
   };
 
   const handleStopAutoFix = () => {
       cancelAutoFixRef.current = true;
   };
+  
+  const handleCloseAutoFixReport = () => {
+      setAutoFixReport(null);
+  }
 
   return {
       // State
       flashcards, decks, view, editingCard, toastMessage, isLoggedIn, currentUser, authLoading, appLoading,
       syncStatus, studyDeckId, studyCards, isStudySetupModalOpen, dbStatus, apiStatus,
       freeDictApiStatus, mwDictApiStatus, settings, userProfile, streak, earnedAchievements,
-      previousViewRef, autoFixProgress,
+      previousViewRef, autoFixProgress, autoFixReport,
       // Handlers
       setView, showToast, handleAddCard, handleEditCard, handleDeleteCard, handleSaveCard,
       handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV,
       handleResetApp, handleStudyDeck, handleStartStudySession, setIsStudySetupModalOpen,
       handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
       updateSettings, handleCheckAchievements, handleGoalUpdate, handleCompleteCardDetails,
-      handleAutoFixCards, handleStopAutoFix
+      handleAutoFixCards, handleStopAutoFix, handleCloseAutoFixReport
   };
 };
