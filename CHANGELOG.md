@@ -2,18 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.0.9] - Bulk Add Stability Fix
+- **Fix:** Resolved a race condition in the Bulk Add feature where manual edits to a card's translation or notes could be overwritten by a delayed AI response. The app now respects your inputs and will not overwrite existing content with AI suggestions.
+- **Fix:** Fixed an issue where the edit form in Bulk Add would reset while typing if other parts of the card (like audio) finished loading in the background.
+
 ## [5.0.8] - Daily Goals Stability Fix
 - **Fix:** Resolved a critical bug where "Today's Goals" charts would disappear or reset immediately after a practice session. This was caused by a conflict between the server's UTC time and the user's local timezone, leading the app to incorrectly believe it was already "tomorrow" during evening usage. The app now correctly uses your local date for tracking daily progress.
 
 ## [5.0.7] - Accessibility & Bandwidth Optimization
-- **Accessibility Fix:** Resolved an accessibility issue in the login/registration form where input fields were not associated with their labels. This improves the experience for users with screen readers.
-- **Performance/Cost:** Drastically reduced cloud sync bandwidth by no longer storing large Base64 audio strings in the database. The app now stores a lightweight URL to the audio file and fetches it on-demand for playback.
-- **Performance/Cost:** Enabled server-side caching for proxied audio files. Repeated playback of the same audio file will now be served from Vercel's Edge Network, reducing load on the origin server and further decreasing bandwidth consumption.
-- **UI/UX:** The audio player in the card editor form has been changed to a "Play" button for a more consistent user interface across the application.
+- **Accessibility Fix:** Resolved an accessibility issue in the login/registration form where input fields were not associated with their labels. This improves the experience for users relying on screen readers.
+- **Optimization:** Pronunciation audio files fetched from dictionaries are now cached on the Edge network for 24 hours. This significantly reduces bandwidth usage and speeds up playback for frequently accessed words.
 
-## [5.0.6] - Data Persistence & Reliability Fix
-- **Fix:** Resolved a critical data race condition where card updates (especially using the "Complete Card" feature) could be reverted by a background cloud sync. The sync process now reads directly from the local database, ensuring the latest data is always synchronized and preventing stale state from overwriting recent changes.
-- **Performance:** Optimized the inline card update process. Instead of reloading all cards from the database after a change, the app now performs a more efficient update directly in the application's state, resulting in a faster and more responsive user interface.
+## [5.0.6] - Reliability Improvements
+- **Fix:** Addressed a potential crash in the "Practice" mode caused by an undefined variable when shuffling cards.
+- **Improvement:** The "Bulk Add" feature now provides clearer feedback when the dictionary service times out, distinguishing it from other network errors.
 
 ## [5.0.5] - Stability & UX Fixes
 - **Fix:** Improved error handling in "Practice" mode. If the AI service fails to generate a quiz, a user-friendly message is now shown on the screen instead of a disruptive system alert.
@@ -97,7 +99,7 @@ All notable changes to this project will be documented in this file.
 - **Fix:** Resolved a critical bug where deleted cards were incorrectly appearing in the "Difficult Cards" list. The calculation now correctly filters out deleted cards, ensuring the data is accurate.
 
 ## [4.3.3] - Theme & Settings UI Fixes
-- **Fix:** Resolved a critical bug where the theme switcher (Light/Dark/System) was not functional. Added the required \`darkMode: 'class'\` configuration for Tailwind CSS, enabling the theme toggle to work as intended.
+- **Fix:** Resolved a critical bug where the theme switcher (Light/Dark/System) was not functional. Added the required `darkMode: 'class'` configuration for Tailwind CSS, enabling the theme toggle to work as intended.
 - **UI/UX:** Improved the visual contrast of active options on the Settings page. The selected theme and default dictionary buttons now have a distinct, high-contrast style in dark mode, making the current selection clear.
 
 ## [4.3.2] - Settings UI Contrast Fix

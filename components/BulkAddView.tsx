@@ -89,10 +89,12 @@ const ReviewItem = memo(({
     const [editData, setEditData] = useState({ back: '', notes: '' });
 
     useEffect(() => {
-        if (item.card) {
+        // CRITICAL FIX: Only sync if we are NOT editing. 
+        // This prevents background updates (like audio finishing) from wiping out text while the user is typing.
+        if (item.card && !isEditing) {
             setEditData({ back: item.card.back || '', notes: item.card.notes || '' });
         }
-    }, [item.card]);
+    }, [item.card, isEditing]);
 
     const handleSaveEdit = () => {
         onUpdateCard(item.word, { ...item.card, ...editData });
@@ -214,7 +216,16 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                     timeoutPromise(aiTimeout * 1000, `AI timed out.`)
                 ]);
                 updateWordState(word, draft => {
-                    draft.card = { ...draft.card, back: details.back, notes: details.notes };
+                    // CRITICAL FIX: Check if the user has already manually entered values.
+                    // If existing values are present and not empty, prioritize user input over delayed AI response.
+                    const currentBack = draft.card.back;
+                    const currentNotes = draft.card.notes;
+                    
+                    // Use the user's manual input if available, otherwise use AI result
+                    const finalBack = (currentBack && currentBack.trim() !== '') ? currentBack : details.back;
+                    const finalNotes = (currentNotes && currentNotes.trim() !== '') ? currentNotes : details.notes;
+
+                    draft.card = { ...draft.card, back: finalBack, notes: finalNotes };
                     draft.details.ai = { status: 'done', source: 'Gemini' };
                 });
             } else if (part === 'audio') {

@@ -1,8 +1,4 @@
-// Fix: Use a named import for Dexie to ensure TypeScript correctly recognizes the class for extension. The default import was failing in this project's module resolution setup.
-// Fix: Using default import for Dexie class as per standard usage and documentation, while keeping Table as a named type import. 
-// This resolves 'Property ... does not exist on type LinguaCardsDB' errors.
-import { Dexie } from 'dexie';
-import type { Table } from 'dexie';
+import Dexie, { type Table } from 'dexie';
 import { Flashcard, Deck, StudyLog, UserProfile, UserAchievement } from '../types';
 
 export class LinguaCardsDB extends Dexie {
