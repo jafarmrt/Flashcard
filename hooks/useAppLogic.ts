@@ -74,7 +74,10 @@ export const useAppLogic = () => {
   };
 
   const checkAndRefreshDailyGoals = async (profile: UserProfile, currentStreak: number) => {
-    const today = new Date().toISOString().split('T')[0];
+    // Fix: Use local date string (YYYY-MM-DD) instead of UTC to prevent goals from resetting
+    // when the user is in a timezone where it is still today, but UTC is tomorrow.
+    const today = new Date().toLocaleDateString('en-CA'); // 'en-CA' gives YYYY-MM-DD format locally
+    
     if (!profile.dailyGoals || profile.dailyGoals.date !== today) {
         const newGoals = generateNewDailyGoals(currentStreak);
         const updatedProfile: UserProfile = {
@@ -193,7 +196,8 @@ export const useAppLogic = () => {
 
   const checkStreakBonus = async () => {
       if (!userProfile) return;
-      const today = new Date().toISOString().split('T')[0];
+      // Fix: Use local date for streak check as well to maintain consistency with daily goals
+      const today = new Date().toLocaleDateString('en-CA'); 
       if (userProfile.lastStreakCheck === today) return;
 
       const logs = await db.studyHistory.toArray();
@@ -373,6 +377,8 @@ export const useAppLogic = () => {
     }
     
     const allDecks = await db.decks.toArray();
+    // Explicitly use Map/Set to avoid array inference issues in loops/complex logic if needed,
+    // but for simple lookup find() is fine.
     let deck = allDecks.find(d => d.name.toLowerCase() === trimmedDeckName.toLowerCase() && !d.isDeleted);
 
     if (!deck) {
@@ -519,7 +525,10 @@ export const useAppLogic = () => {
         }
 
         const allDecks = await db.decks.toArray();
-        const deckNameMap = new Map(allDecks.map(d => [d.name.toLowerCase(), d]));
+        // Explicitly type the Map to ensure deck retrieval is strongly typed and avoid 'unknown' errors
+        const deckNameMap = new Map<string, Deck>();
+        allDecks.forEach(d => deckNameMap.set(d.name.toLowerCase(), d));
+        
         const newDecks: Deck[] = [];
         const newCards: Flashcard[] = [];
         let rowCount = 0;
@@ -536,7 +545,7 @@ export const useAppLogic = () => {
             let deck = deckNameMap.get(lowerDeckName);
 
             if (!deck) {
-                const newDeck = { id: `${Date.now()}-${rowCount}`, name: deckName };
+                const newDeck: Deck = { id: `${Date.now()}-${rowCount}`, name: deckName };
                 deckNameMap.set(lowerDeckName, newDeck);
                 newDecks.push(newDeck);
                 deck = newDeck;

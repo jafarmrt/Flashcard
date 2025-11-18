@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.0.8] - Daily Goals Stability Fix
+- **Fix:** Resolved a critical bug where "Today's Goals" charts would disappear or reset immediately after a practice session. This was caused by a conflict between the server's UTC time and the user's local timezone, leading the app to incorrectly believe it was already "tomorrow" during evening usage. The app now correctly uses your local date for tracking daily progress.
+
 ## [5.0.7] - Accessibility & Bandwidth Optimization
 - **Accessibility Fix:** Resolved an accessibility issue in the login/registration form where input fields were not associated with their labels. This improves the experience for users with screen readers.
 - **Performance/Cost:** Drastically reduced cloud sync bandwidth by no longer storing large Base64 audio strings in the database. The app now stores a lightweight URL to the audio file and fetches it on-demand for playback.
