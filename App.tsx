@@ -3,7 +3,6 @@ import ReactDOM from 'react-dom/client';
 import { useAppLogic, View, HealthStatus } from './hooks/useAppLogic';
 
 import { Flashcard, Deck } from './types';
-import Header from './components/Header';
 import FlashcardList from './components/FlashcardList';
 import FlashcardForm from './components/FlashcardForm';
 import { StudyView } from './components/StudyView';
@@ -18,16 +17,16 @@ import { StudySetupModal } from './components/StudySetupModal';
 import { AchievementsView } from './components/AchievementsView';
 import { ProfileView } from './components/ProfileView';
 import { AuthView } from './components/AuthView';
-import { FloatingActionButton } from './components/common/FloatingActionButton';
-import { BottomNav } from './components/common/BottomNav';
+import { Sidebar, BottomTabs, AddFab } from './components/layout/Navigation';
+import { TodayView } from './components/TodayView';
+import { MeView } from './components/MeView';
+import { TextsView } from './components/TextsView';
+import { ChunkReaderView } from './components/ChunkReaderView';
+import { isNewCard } from './services/srsService';
+import { dayString } from './services/streakService';
+import { DEFAULT_DAILY_REVIEW_GOAL } from './services/xpRules';
 import { AutoFixReportModal } from './components/AutoFixReportModal';
 import { AiTextExtractorView } from './components/AiTextExtractorView';
-
-const StatusIndicator: React.FC<{ status: HealthStatus, label: string }> = ({ status, label }) => {
-    const color = status === 'ok' ? 'bg-green-500' : status === 'error' ? 'bg-red-500' : 'bg-yellow-500';
-    const pulse = status === 'checking' ? 'animate-pulse' : '';
-    return <div className="flex items-center gap-1.5" title={`${label}: ${status}`}><div className={`w-2 h-2 rounded-full ${color} ${pulse}`}></div><span>{label}</span></div>
-};
 
 const App: React.FC = () => {
     const {
@@ -42,19 +41,92 @@ const App: React.FC = () => {
         handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
         updateSettings, handleCheckAchievements, handleGoalUpdate, studyCards,
         handleCompleteCardDetails, handleAutoFixCards, handleStopAutoFix, autoFixProgress,
-        handleCloseAutoFixReport, handleSaveExtractedCards, previousViewRef
+        handleCloseAutoFixReport, handleSaveExtractedCards, previousViewRef,
+        syncStatus, studyMode, studyLogs, texts, activeTextId, activeChunk,
+        startQuickReview, openStudySetup, handleCreateText, handleOpenText, handleOpenChunk,
+        handleDeleteText, handleCompleteChunk
     } = useAppLogic();
 
     const visibleFlashcards = flashcards.filter(c => !c.isDeleted);
     const visibleDecks = decks.filter(d => !d.isDeleted);
+    const endOfToday = new Date();
+    endOfToday.setHours(23, 59, 59, 999);
+    const dueCards = visibleFlashcards.filter(c => new Date(c.dueDate) <= endOfToday);
+    const health = [
+        { label: 'DB', status: dbStatus },
+        { label: 'AI', status: apiStatus },
+        { label: 'Free Dict.', status: freeDictApiStatus },
+        { label: 'MW', status: mwDictApiStatus },
+    ];
+    const todayUtc = dayString(new Date());
+    const studyGoal = userProfile?.dailyGoals?.goals.find(g => g.type === 'STUDY');
+    const activeText = texts.find(t => t.id === activeTextId && !t.isDeleted);
+
     const cardsForSetupModal = studyDeckId
         ? visibleFlashcards.filter(c => c.deckId === studyDeckId)
         : visibleFlashcards;
 
     const renderContent = () => {
         switch (view) {
+            case 'TODAY':
+                return <TodayView
+                    userProfile={userProfile}
+                    username={currentUser?.username}
+                    streak={streak}
+                    cards={visibleFlashcards}
+                    studyLogs={studyLogs}
+                    texts={texts}
+                    dueCount={dueCards.length}
+                    newDueCount={dueCards.filter(isNewCard).length}
+                    onStartReview={mode => startQuickReview(mode)}
+                    onOpenSetup={() => openStudySetup()}
+                    onNavigate={handleNavigate}
+                    onOpenText={handleOpenText}
+                />;
+            case 'ME':
+                return <MeView
+                    userProfile={userProfile}
+                    username={currentUser?.username}
+                    streak={streak}
+                    earnedAchievements={earnedAchievements}
+                    syncStatus={syncStatus}
+                    health={health}
+                    hasCards={visibleFlashcards.length > 0}
+                    onNavigate={handleNavigate}
+                />;
+            case 'TEXTS':
+                return <TextsView
+                    texts={texts}
+                    activeTextId={activeTextId}
+                    onCreateText={handleCreateText}
+                    onOpenText={handleOpenText}
+                    onOpenChunk={handleOpenChunk}
+                    onDeleteText={handleDeleteText}
+                    onNavigate={handleNavigate}
+                />;
+            case 'READER':
+                if (!activeText) return null;
+                return <ChunkReaderView
+                    key={`${activeText.id}-${activeChunk}`}
+                    doc={activeText}
+                    index={activeChunk}
+                    settings={settings}
+                    existingFronts={visibleFlashcards.map(c => c.front)}
+                    onSaveCards={(cards, deckName) => handleSaveExtractedCards(cards, deckName, { stay: true })}
+                    onComplete={() => handleCompleteChunk(activeText.id, activeChunk)}
+                    onBack={() => handleOpenText(activeText.id)}
+                    onOpenChunk={i => handleOpenChunk(activeText.id, i)}
+                    showToast={showToast}
+                />;
             case 'STUDY':
-                return <StudyView cards={studyCards} onExit={handleSessionEnd} awardXP={userProfile ? (points) => handleGoalUpdate('STUDY', points, true) : () => {}} />;
+                return <StudyView
+                    cards={studyCards}
+                    initialMode={studyMode}
+                    streak={streak}
+                    studiedToday={studyLogs.some(l => l.date === todayUtc)}
+                    goal={{ progress: studyGoal?.progress || 0, target: studyGoal?.target || DEFAULT_DAILY_REVIEW_GOAL }}
+                    onExit={handleSessionEnd}
+                />;
             case 'PRACTICE':
                 return <PracticeView cards={visibleFlashcards} awardXP={userProfile ? (points) => handleGoalUpdate('QUIZ', points, true) : () => {}} onQuizComplete={(score) => {
                     handleCheckAchievements(score);
@@ -67,7 +139,7 @@ const App: React.FC = () => {
                     onUpdateSettings={updateSettings}
                     onSaveExtractedCards={handleSaveExtractedCards}
                     existingFronts={visibleFlashcards.map(c => c.front)}
-                    onCancel={() => setView('DECKS')}
+                    onCancel={() => setView('TEXTS')}
                     showToast={showToast}
                 />;
             case 'SETTINGS':
@@ -160,44 +232,51 @@ const App: React.FC = () => {
         return <AuthView onLogin={handleLogin} onRegister={handleRegister} isLoading={authLoading} />
     }
 
+    // New screens are Persian (right to left); the older screens keep their
+    // English, left-to-right layout inside the same shell.
+    const PERSIAN_VIEWS = ['TODAY', 'ME', 'TEXTS', 'READER', 'STUDY'];
+    const isStudy = view === 'STUDY';
+
     return (
-        <div className="min-h-screen font-sans flex flex-col">
-            <Header
-                onNavigate={handleNavigate}
-                onAddCard={handleAddCard}
-                isStudyDisabled={visibleFlashcards.length === 0}
-                currentView={view}
-            />
-            <main className="flex-grow max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full pb-24 md:pb-8">
-                {renderContent()}
+        <div dir="rtl" className="min-h-screen flex bg-[#F5F6FA] dark:bg-slate-950 font-fa">
+            {!isStudy && (
+                <Sidebar
+                    view={view}
+                    dueCount={dueCards.length}
+                    userProfile={userProfile}
+                    username={currentUser?.username}
+                    syncStatus={syncStatus}
+                    health={health}
+                    hasCards={visibleFlashcards.length > 0}
+                    onNavigate={handleNavigate}
+                    onStartReview={() => startQuickReview('flip')}
+                    onAddCard={handleAddCard}
+                />
+            )}
+            <main className={`flex-1 min-w-0 w-full ${isStudy ? 'px-3 md:px-0' : 'px-4 md:px-8 py-6 md:py-8 pb-28 md:pb-10'}`}>
+                {PERSIAN_VIEWS.includes(view)
+                    ? renderContent()
+                    : <div dir="ltr" className="font-sans max-w-6xl mx-auto">{renderContent()}</div>}
             </main>
 
-            <StudySetupModal
-                isOpen={isStudySetupModalOpen}
-                onClose={() => setIsStudySetupModalOpen(false)}
-                onStart={handleStartStudySession}
-                cards={cardsForSetupModal}
-            />
-            
-            <AutoFixReportModal 
-                isOpen={!!autoFixReport}
-                onClose={handleCloseAutoFixReport}
-                stats={autoFixReport}
-            />
+            <div dir="ltr">
+                <StudySetupModal
+                    isOpen={isStudySetupModalOpen}
+                    onClose={() => setIsStudySetupModalOpen(false)}
+                    onStart={options => handleStartStudySession(options)}
+                    cards={cardsForSetupModal}
+                />
+                <AutoFixReportModal
+                    isOpen={!!autoFixReport}
+                    onClose={handleCloseAutoFixReport}
+                    stats={autoFixReport}
+                />
+            </div>
 
-            {['LIST', 'DECKS'].includes(view) && <FloatingActionButton onClick={handleAddCard} />}
-            <BottomNav currentView={view} onNavigate={handleNavigate} isStudyDisabled={visibleFlashcards.length === 0} />
+            {['TODAY', 'LIST', 'DECKS'].includes(view) && <AddFab onClick={handleAddCard} />}
+            {!isStudy && <BottomTabs view={view} onNavigate={handleNavigate} />}
 
             {toastMessage && <Toast message={toastMessage} />}
-            <footer className="text-center py-4 pb-20 md:pb-4 text-xs text-slate-400 dark:text-slate-500">
-                <div className="flex justify-center items-center gap-4 mb-2">
-                    <StatusIndicator status={dbStatus} label="DB" />
-                    <StatusIndicator status={apiStatus} label="AI API" />
-                    <StatusIndicator status={freeDictApiStatus} label="Free Dict." />
-                    <StatusIndicator status={mwDictApiStatus} label="MW Dict." />
-                </div>
-                <p>&copy; {new Date().getFullYear()} Lingua Cards. All Rights Reserved.</p>
-            </footer>
         </div>
     );
 };

@@ -1,332 +1,442 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Flashcard } from '../types';
-import { calculateSrs, previewIntervals, formatInterval, PerformanceRating } from '../services/srsService';
+import type { SessionSummary, StudyMode } from '../hooks/useAppLogic';
+import { calculateSrs, previewIntervals, PerformanceRating } from '../services/srsService';
+import { masteryStage, stageChanges, STAGE_NAMES } from '../services/masteryService';
+import { nextCombo, reviewXp } from '../services/xpRules';
 import { db } from '../services/localDBService';
 import { levenshtein } from '../services/stringSimilarity';
 import { fetchAudioData } from '../services/dictionaryService';
 import { isSpeechSupported, speakText } from '../services/ttsService';
+import { fa, Icon, Kbd, StageDots } from './common/ui';
 
-const RATING_BUTTONS: { rating: PerformanceRating; label: string; className: string }[] = [
-  { rating: 'AGAIN', label: 'Again', className: 'bg-red-500 hover:bg-red-600' },
-  { rating: 'HARD', label: 'Hard', className: 'bg-amber-500 hover:bg-amber-600' },
-  { rating: 'GOOD', label: 'Good', className: 'bg-blue-500 hover:bg-blue-600' },
-  { rating: 'EASY', label: 'Easy', className: 'bg-green-500 hover:bg-green-600' },
+const RATINGS: { rating: PerformanceRating; label: string; key: string; className: string }[] = [
+  { rating: 'AGAIN', label: 'دوباره', key: '1', className: 'bg-red-100 text-red-900 hover:bg-red-200 dark:bg-red-900/50 dark:text-red-100' },
+  { rating: 'HARD', label: 'سخت', key: '2', className: 'bg-amber-100 text-amber-900 hover:bg-amber-200 dark:bg-amber-900/50 dark:text-amber-100' },
+  { rating: 'GOOD', label: 'خوب', key: '3', className: 'bg-sky-100 text-sky-900 hover:bg-sky-200 dark:bg-sky-900/50 dark:text-sky-100' },
+  { rating: 'EASY', label: 'آسان', key: '4', className: 'bg-emerald-100 text-emerald-900 hover:bg-emerald-200 dark:bg-emerald-900/50 dark:text-emerald-100' },
 ];
+
+// "1 روز", "3 ماه": when the card comes back for each answer.
+const intervalLabel = (days: number): string => {
+  if (days < 30) return `${fa(days)} روز`;
+  if (days < 365) return `${fa(Math.round(days / 30))} ماه`;
+  return `${fa(Math.round((days / 365) * 10) / 10)} سال`;
+};
 
 interface StudyViewProps {
   cards: Flashcard[];
-  onExit: (updatedCards: Flashcard[]) => void;
-  awardXP: (points: number) => void;
+  initialMode: StudyMode;
+  streak: number;
+  studiedToday: boolean;
+  goal: { progress: number; target: number };
+  onExit: (updatedCards: Flashcard[], summary: SessionSummary, next?: 'home' | 'more') => void;
 }
 
-const SpeakerIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>;
-
 // Reads a word, phrase or sentence aloud with the browser's speech synthesis.
-const SpeakButton: React.FC<{ text: string; className?: string; size?: number }> = ({ text, className = '', size = 16 }) => {
+const SpeakButton: React.FC<{ text: string; size?: number }> = ({ text, size = 16 }) => {
   if (!isSpeechSupported() || !text.trim()) return null;
   return (
-    <button
-      type="button"
-      onClick={e => { e.stopPropagation(); speakText(text, { rate: 0.95 }); }}
-      aria-label={`Listen: ${text}`}
-      className={`shrink-0 opacity-70 hover:opacity-100 transition-opacity ${className}`}
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+    <button type="button" onClick={e => { e.stopPropagation(); speakText(text, { rate: 0.95 }); }} aria-label={`گوش دادن: ${text}`}
+      className="shrink-0 p-1 rounded-full text-slate-400 hover:text-brand-500 hover:bg-brand-50 dark:hover:bg-slate-700">
+      <Icon.Speaker size={size} />
     </button>
   );
 };
 
-const FlashcardComponent: React.FC<{ card: Flashcard; isFlipped: boolean; }> = ({ card, isFlipped }) => {
-  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
-  const playAudio = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!card.audioSrc) {
-      speakText(card.front, { rate: 0.9 }); // no recorded audio: use speech synthesis
-      return;
-    }
-    if (!isAudioPlaying) {
-      setIsAudioPlaying(true);
-      try {
-        const dataUrl = await fetchAudioData(card.audioSrc);
-        const audio = new Audio(dataUrl);
-        audio.play().catch(error => {
-            console.error("Audio playback failed:", error);
-            setIsAudioPlaying(false);
-        });
-        audio.onended = () => setIsAudioPlaying(false);
-      } catch (error) {
-        console.error("Failed to play audio:", error);
-        setIsAudioPlaying(false);
-      }
-    }
-  };
+const asList = (v: string[] | string | undefined): string[] => (Array.isArray(v) ? v : v ? [String(v)] : []);
 
-  // Fix: Defensively handle legacy data where definition or example could be a string.
-  const definitions = Array.isArray(card.definition) ? card.definition : (card.definition ? [String(card.definition)] : []);
-  const exampleSentences = Array.isArray(card.exampleSentenceTarget) ? card.exampleSentenceTarget : (card.exampleSentenceTarget ? [String(card.exampleSentenceTarget)] : []);
+const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+  <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl p-4 flex flex-col gap-2 min-w-0">
+    <p dir="rtl" className="text-xs text-ink-muted dark:text-slate-400">{title}</p>
+    {children}
+  </div>
+);
 
+// The answer side: meaning, sentences, expressions and notes.
+const CardAnswer: React.FC<{ card: Flashcard }> = ({ card }) => {
+  const definitions = asList(card.definition);
+  const examples = asList(card.exampleSentenceTarget);
   return (
-    <div className="w-full h-full" style={{ perspective: '1000px' }}>
-      <div className="relative w-full h-full transition-transform duration-500" style={{ transformStyle: 'preserve-3d', transform: isFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)' }}>
-        {/* Front */}
-        <div className="absolute w-full h-full bg-white dark:bg-slate-800 rounded-lg shadow-xl flex flex-col justify-center items-center p-6" style={{ backfaceVisibility: 'hidden' }}>
-          {(card.audioSrc || isSpeechSupported()) && card.kind !== 'grammar' && (
-            <button onClick={playAudio} disabled={isAudioPlaying} aria-label="Play pronunciation" className="absolute top-4 right-4 text-slate-400 hover:text-indigo-500 transition-colors disabled:opacity-50">
-              {isAudioPlaying ? (
-                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
-                      <line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
-                  </svg>
-              ) : (
-                  <SpeakerIcon />
-              )}
-            </button>
-          )}
-          <p className="text-sm text-slate-500 dark:text-slate-400 mb-2">{card.pronunciation}</p>
-          <h2 className="text-4xl md:text-5xl font-bold text-center text-slate-800 dark:text-slate-100 break-words">{card.front}</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">{card.partOfSpeech}</p>
-          {card.kind === 'grammar' ? (
-            <div className="mt-4 text-center space-y-2">
-              {card.grammarPattern && <p className="font-mono text-rose-600 dark:text-rose-300">{card.grammarPattern}</p>}
-              {card.practicePrompt && <p dir="rtl" className="text-sm text-slate-600 dark:text-slate-300">✍️ {card.practicePrompt}</p>}
-            </div>
-          ) : card.sourceSentence ? (
-            <div className="mt-4 flex items-start gap-2 max-w-full text-sm text-slate-500 dark:text-slate-400 italic text-center">
-              <span className="line-clamp-3">"{card.sourceSentence}"</span>
-              <SpeakButton text={card.sourceSentence} className="text-slate-400 hover:text-indigo-500 not-italic" />
-            </div>
-          ) : null}
-        </div>
-        {/* Back */}
-        <div 
-          className="absolute w-full h-full bg-indigo-500 dark:bg-indigo-600 rounded-lg shadow-xl flex flex-col p-6 text-white overflow-hidden" 
-          style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
-        >
-          {/* Main Translation */}
-          <div className="text-center mb-4 shrink-0">
-            <h2 className="text-4xl md:text-5xl font-bold break-words">{card.back}</h2>
-            {card.partOfSpeech && <p className="text-lg text-indigo-200 mt-1">{card.partOfSpeech}</p>}
-          </div>
-
-          {/* Details Section */}
-          <div className="w-full space-y-4 text-left border-t border-indigo-400/50 pt-4 overflow-y-auto">
-            {definitions.length > 0 && (
-                <div>
-                    <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wider">Definition(s)</p>
-                    <ol className="list-decimal list-inside space-y-1 mt-1">
-                      {definitions.map((def, i) => <li key={i} className="text-md text-indigo-50">{def}</li>)}
-                    </ol>
-                </div>
-            )}
-
-            {card.sourceSentence && card.kind === 'grammar' && (
-                <div>
-                    <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wider">From your text</p>
-                    <p className="mt-1 flex items-start gap-2 italic text-indigo-50">"{card.sourceSentence}" <SpeakButton text={card.sourceSentence} /></p>
-                </div>
-            )}
-
-            {exampleSentences && exampleSentences.length > 0 && (
-                <div>
-                    <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wider">Example(s)</p>
-                     <ul className="space-y-1 mt-1">
-                      {exampleSentences.map((ex, i) => (
-                        <li key={i} className="flex items-start gap-2 italic text-indigo-50">"{ex}" <SpeakButton text={ex} /></li>
-                      ))}
-                    </ul>
-                </div>
-            )}
-
-            {card.collocations && card.collocations.length > 0 && (
-                <div>
-                    <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wider">Common expressions</p>
-                    <ul className="space-y-1 mt-1">
-                      {card.collocations.map((c, i) => (
-                        <li key={i} className="flex items-center gap-2 text-indigo-50">
-                          <SpeakButton text={c.phrase} size={14} />
-                          <span className="font-medium">{c.phrase}</span>
-                          {c.meaning && <span dir="rtl" className="text-indigo-200">{c.meaning}</span>}
-                        </li>
-                      ))}
-                    </ul>
-                </div>
-            )}
-
-            {card.notes && (
-                <div>
-                    <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wider">Notes</p>
-                    <p className="mt-1 text-indigo-50">{card.notes}</p>
-                </div>
-            )}
-          </div>
-        </div>
+    <div className="flex flex-col gap-4 animate-reveal">
+      <div className="h-px bg-slate-200 dark:bg-slate-700" />
+      <p dir="rtl" className="text-2xl md:text-3xl font-extrabold text-center text-ink dark:text-white break-words">{card.back}</p>
+      <div className="grid gap-3 md:grid-cols-2">
+        {card.sourceSentence && (
+          <Section title="در متن خودت">
+            <p dir="ltr" className="flex items-start gap-1 text-[15px] leading-7 text-slate-700 dark:text-slate-200">
+              <span className="flex-1">{card.sourceSentence}</span><SpeakButton text={card.sourceSentence} />
+            </p>
+          </Section>
+        )}
+        {card.collocations && card.collocations.length > 0 && (
+          <Section title="ترکیب‌های رایج">
+            <ul dir="ltr" className="flex flex-col gap-1">
+              {card.collocations.map((c, i) => (
+                <li key={i} className="flex items-center gap-1.5 text-sm">
+                  <SpeakButton text={c.phrase} size={14} />
+                  <span className="font-medium text-slate-800 dark:text-slate-100">{c.phrase}</span>
+                  {c.meaning && <span dir="rtl" className="text-ink-muted dark:text-slate-400">{c.meaning}</span>}
+                </li>
+              ))}
+            </ul>
+          </Section>
+        )}
+        {definitions.length > 0 && (
+          <Section title="تعریف">
+            <ol dir="ltr" className="list-decimal list-inside text-sm flex flex-col gap-1 text-slate-700 dark:text-slate-200">
+              {definitions.map((d, i) => <li key={i}>{d}</li>)}
+            </ol>
+          </Section>
+        )}
+        {examples.length > 0 && (
+          <Section title="مثال">
+            <ul dir="ltr" className="flex flex-col gap-1 text-sm text-slate-700 dark:text-slate-200">
+              {examples.map((ex, i) => <li key={i} className="flex items-start gap-1"><span className="flex-1 italic">{ex}</span><SpeakButton text={ex} size={14} /></li>)}
+            </ul>
+          </Section>
+        )}
+        {card.notes && (
+          <Section title="یادداشت">
+            <p dir="auto" className="text-sm text-slate-700 dark:text-slate-200 whitespace-pre-line">{card.notes}</p>
+          </Section>
+        )}
       </div>
     </div>
   );
 };
 
-export const StudyView: React.FC<StudyViewProps> = ({ cards, onExit, awardXP }) => {
-  const [sessionQueue, setSessionQueue] = useState<Flashcard[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [isFlipped, setIsFlipped] = useState(false);
-  const [updatedCards, setUpdatedCards] = useState<Map<string, Flashcard>>(new Map());
-  const [sessionComplete, setSessionComplete] = useState(false);
-  const [initialCardCount, setInitialCardCount] = useState(0);
-  const [studyMode, setStudyMode] = useState<'flip' | 'type'>('flip');
-  const [typedAnswer, setTypedAnswer] = useState('');
+const Confetti: React.FC = () => {
+  const pieces = useMemo(() => Array.from({ length: 28 }, (_, i) => ({
+    left: `${(i * 37) % 100}%`,
+    delay: `${(i % 7) * 0.12}s`,
+    color: ['#FFC857', '#6CC18E', '#A9C7F5', '#F28B82', '#FFFFFF'][i % 5],
+    shape: i % 3 === 0 ? 'rounded-full' : '',
+  })), []);
+  return (
+    <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
+      {pieces.map((p, i) => (
+        <span key={i} className={`absolute top-0 w-2 h-3 animate-fall ${p.shape}`} style={{ left: p.left, animationDelay: p.delay, background: p.color }} />
+      ))}
+    </div>
+  );
+};
+
+interface Snapshot {
+  queue: Flashcard[];
+  index: number;
+  updated: Map<string, Flashcard>;
+  combo: number;
+  xp: number;
+  reviews: number;
+  firstAnswers: Map<string, boolean>;
+  logId?: number;
+}
+
+export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak, studiedToday, goal, onExit }) => {
+  const [queue, setQueue] = useState<Flashcard[]>([]);
+  const [index, setIndex] = useState(0);
+  const [revealed, setRevealed] = useState(false);
+  const [updated, setUpdated] = useState<Map<string, Flashcard>>(new Map());
+  const [done, setDone] = useState(false);
+  const [mode, setMode] = useState<StudyMode>(initialMode);
+  const [typed, setTyped] = useState('');
   const [answerState, setAnswerState] = useState<'correct' | 'incorrect' | null>(null);
-  const answerInputRef = useRef<HTMLInputElement>(null);
-  
+  const [combo, setCombo] = useState(0);
+  const [xp, setXp] = useState(0);
+  const [reviews, setReviews] = useState(0);
+  const [firstAnswers, setFirstAnswers] = useState<Map<string, boolean>>(new Map());
+  const [gain, setGain] = useState<{ value: number; id: number } | null>(null);
+  const [history, setHistory] = useState<Snapshot[]>([]);
+  const [audioBusy, setAudioBusy] = useState(false);
+  const startedAt = useRef(Date.now());
+  const busy = useRef(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
-    if (cards.length > 0) {
-        setSessionQueue(cards);
-        setInitialCardCount(cards.length);
-        setCurrentIndex(0);
-        setIsFlipped(false);
-        setSessionComplete(false);
-        setTypedAnswer('');
-        setAnswerState(null);
-    } else {
-        setSessionComplete(true);
-    }
+    setQueue(cards);
+    setIndex(0);
+    setRevealed(false);
+    setDone(cards.length === 0);
+    startedAt.current = Date.now();
   }, [cards]);
 
+  const card = queue[index];
+  const current = card ? updated.get(card.id) || card : undefined;
+  const intervals = useMemo(() => (current ? previewIntervals(current) : null), [current]);
 
   useEffect(() => {
-    if (studyMode === 'type' && !isFlipped) {
-      answerInputRef.current?.focus();
+    if (mode === 'type' && !revealed) inputRef.current?.focus();
+  }, [index, mode, revealed]);
+
+  const summary = (): SessionSummary => ({ xp, reviews });
+  const finish = (next: 'home' | 'more') => onExit(Array.from(updated.values()), summary(), next);
+  const exitEarly = () => (reviews > 0 ? setDone(true) : onExit([], { xp: 0, reviews: 0 }, 'home'));
+
+  const playAudio = useCallback(async () => {
+    if (!card || audioBusy) return;
+    if (!card.audioSrc) {
+      speakText(card.front, { rate: 0.9 });
+      return;
     }
-  }, [currentIndex, studyMode, isFlipped]);
+    setAudioBusy(true);
+    try {
+      const audio = new Audio(await fetchAudioData(card.audioSrc));
+      audio.onended = () => setAudioBusy(false);
+      await audio.play();
+    } catch (error) {
+      console.error('Failed to play audio:', error);
+      speakText(card.front, { rate: 0.9 });
+      setAudioBusy(false);
+    }
+  }, [card, audioBusy]);
 
+  const rate = async (rating: PerformanceRating) => {
+    if (!card || !current || busy.current) return;
+    busy.current = true;
+    const snapshot: Snapshot = { queue, index, updated, combo, xp, reviews, firstAnswers };
 
-  const handleRating = async (rating: PerformanceRating) => {
-    if (!currentCard) return;
+    const logId = await db.studyHistory.add({ cardId: card.id, date: new Date().toISOString().split('T')[0], rating }) as number;
+    const next = calculateSrs(current, rating);
+    const gained = reviewXp(rating, combo);
 
-    // Award XP for successful reviews
-    if (rating === 'EASY') awardXP(10);
-    if (rating === 'GOOD') awardXP(5);
-    if (rating === 'HARD') awardXP(3);
+    setHistory(h => [...h.slice(-20), { ...snapshot, logId }]);
+    setUpdated(prev => new Map(prev).set(next.id, next));
+    setCombo(nextCombo(rating, combo));
+    setXp(v => v + gained);
+    setReviews(v => v + 1);
+    setGain({ value: gained, id: Date.now() });
+    if (!firstAnswers.has(card.id)) setFirstAnswers(prev => new Map(prev).set(card.id, rating !== 'AGAIN'));
 
-    await db.studyHistory.add({
-      cardId: currentCard.id,
-      date: new Date().toISOString().split('T')[0],
-      rating: rating,
-    });
-
-    // A card seen again in this session continues from its latest state.
-    const updatedCard = calculateSrs(updatedCards.get(currentCard.id) || currentCard, rating);
-    setUpdatedCards(prev => new Map(prev).set(updatedCard.id, updatedCard));
-    
-    let finalQueue = [...sessionQueue];
+    let nextQueue = queue;
     if (rating === 'AGAIN') {
-      const reAddIndex = Math.min(currentIndex + 5, finalQueue.length);
-      finalQueue.splice(reAddIndex, 0, updatedCard);
-      setSessionQueue(finalQueue);
+      nextQueue = [...queue];
+      nextQueue.splice(Math.min(index + 5, nextQueue.length), 0, next);
+      setQueue(nextQueue);
     }
+    setRevealed(false);
+    setTyped('');
+    setAnswerState(null);
+    if (index + 1 < nextQueue.length) setIndex(index + 1);
+    else setDone(true);
+    busy.current = false;
+  };
 
-    setIsFlipped(false);
-    setTimeout(() => {
-      if (currentIndex + 1 < finalQueue.length) {
-        setCurrentIndex(prev => prev + 1);
-        setTypedAnswer('');
-        setAnswerState(null);
-      } else {
-        setSessionComplete(true);
+  const undo = async () => {
+    const last = history[history.length - 1];
+    if (!last || busy.current) return;
+    if (last.logId !== undefined) await db.studyHistory.delete(last.logId);
+    setHistory(h => h.slice(0, -1));
+    setQueue(last.queue);
+    setIndex(last.index);
+    setUpdated(last.updated);
+    setCombo(last.combo);
+    setXp(last.xp);
+    setReviews(last.reviews);
+    setFirstAnswers(last.firstAnswers);
+    setRevealed(true);
+    setDone(false);
+  };
+
+  const checkTyped = () => {
+    if (!card) return;
+    const ok = levenshtein(typed.toLowerCase().trim(), card.back.toLowerCase().trim()) <= 2; // small typos allowed
+    setAnswerState(ok ? 'correct' : 'incorrect');
+    setRevealed(true);
+  };
+
+  // Keyboard: Space/Enter shows the answer, 1-4 rate, P plays, Z undoes, Esc leaves.
+  useEffect(() => {
+    if (done) return;
+    const onKey = (e: KeyboardEvent) => {
+      const typing = (e.target as HTMLElement).closest('input, textarea');
+      if (e.key === 'Escape') { exitEarly(); return; }
+      if (typing && !revealed) return;
+      if (!revealed && (e.code === 'Space' || e.key === 'Enter') && mode === 'flip') { e.preventDefault(); setRevealed(true); return; }
+      if (revealed) {
+        const r = RATINGS.find(x => x.key === e.key);
+        if (r) { e.preventDefault(); rate(r.rating); return; }
       }
-    }, 150);
-  };
+      if (e.key === 'p' || e.key === 'P') { playAudio(); return; }
+      if ((e.key === 'z' || e.key === 'Z') && !e.ctrlKey && !e.metaKey) { undo(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
 
-  const handleCheckAnswer = () => {
-    const distance = levenshtein(typedAnswer.toLowerCase().trim(), currentCard.back.toLowerCase().trim());
-    const isCorrect = distance <= 2; // Allow for small typos
-    setAnswerState(isCorrect ? 'correct' : 'incorrect');
-    setIsFlipped(true);
-  };
-
-  const currentCard = useMemo(() => sessionQueue[currentIndex], [sessionQueue, currentIndex]);
-  const intervals = useMemo(
-    () => (currentCard ? previewIntervals(updatedCards.get(currentCard.id) || currentCard) : { AGAIN: 1, HARD: 1, GOOD: 1, EASY: 1 }),
-    [currentCard, updatedCards]
-  );
-
-  if (sessionComplete) {
-     return (
-      <div className="text-center py-20 bg-white dark:bg-slate-800 rounded-lg shadow-sm">
-        <h2 className="text-2xl font-semibold text-slate-700 dark:text-slate-200">
-            Session Complete!
-        </h2>
-        <p className="mt-2 text-slate-500 dark:text-slate-400">
-            {`You reviewed ${initialCardCount} card${initialCardCount > 1 ? 's' : ''}.`}
-        </p>
-        <div className="mt-6 flex justify-center gap-4">
-            <button onClick={() => onExit(Array.from(updatedCards.values()))} className="px-6 py-2 rounded-lg bg-indigo-600 text-white font-semibold shadow-md hover:bg-indigo-700 transition-colors">
-              Finish Session
-            </button>
+  if (done) {
+    const correct = Array.from(firstAnswers.values()).filter(Boolean).length;
+    const accuracy = firstAnswers.size > 0 ? Math.round((correct / firstAnswers.size) * 100) : 0;
+    const minutes = Math.max(1, Math.round((Date.now() - startedAt.current) / 60000));
+    const grown = stageChanges(cards, Array.from(updated.values()));
+    const goalReached = goal.progress < goal.target && goal.progress + reviews >= goal.target;
+    const goalLeft = Math.max(0, goal.target - goal.progress - reviews);
+    const streakNow = reviews > 0 && !studiedToday ? streak + 1 : streak;
+    return (
+      <div dir="rtl" className="font-fa relative overflow-hidden max-w-xl mx-auto w-full bg-ink text-white rounded-[28px] p-6 md:p-8 flex flex-col gap-5">
+        {goalReached && <Confetti />}
+        <div className="flex flex-col items-center gap-2 text-center pt-2 animate-pop">
+          <span className="w-20 h-20 rounded-[26px] bg-flame-500 flex items-center justify-center"><Icon.Flame size={46} /></span>
+          <h2 className="text-2xl md:text-3xl font-extrabold">{streakNow > 1 ? `زنجیرهٔ ${fa(streakNow)} روزه` : 'آفرین، شروع شد'}</h2>
+          <p className="text-slate-300">
+            {goalReached ? 'هدف امروز کامل شد.' : goalLeft > 0 ? `${fa(goalLeft)} مرور دیگر تا هدف امروز.` : 'هدف امروز را قبلاً زده بودی.'}
+          </p>
+        </div>
+        <div className="grid grid-cols-3 gap-2.5 text-center">
+          <div className="bg-ink-soft rounded-2xl py-3"><p className="text-2xl font-extrabold text-amber-300">+{fa(xp)}</p><p className="text-xs text-slate-300">امتیاز</p></div>
+          <div className="bg-ink-soft rounded-2xl py-3"><p className="text-2xl font-extrabold">{fa(accuracy)}٪</p><p className="text-xs text-slate-300">دقت بار اول</p></div>
+          <div className="bg-ink-soft rounded-2xl py-3"><p className="text-2xl font-extrabold">{fa(minutes)}</p><p className="text-xs text-slate-300">دقیقه</p></div>
+        </div>
+        {grown.length > 0 && (
+          <div className="bg-ink-soft rounded-2xl p-4 flex flex-col gap-2.5">
+            <h3 className="font-bold">{fa(grown.length)} واژه بزرگ‌تر شد</h3>
+            {grown.slice(0, 6).map(g => (
+              <div key={g.card.id} className="flex justify-between items-center gap-3">
+                <span dir="ltr" className="font-en truncate">{g.card.front}</span>
+                <span className="text-sm text-emerald-200 whitespace-nowrap">{STAGE_NAMES[g.from]} ← {STAGE_NAMES[g.to]}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex flex-col gap-2 pt-2">
+          <button type="button" onClick={() => finish('more')} className="min-h-[56px] rounded-2xl bg-white text-ink font-extrabold text-lg hover:bg-brand-50">۱۰ کارت دیگر</button>
+          <button type="button" onClick={() => finish('home')} className="min-h-[48px] rounded-2xl font-bold hover:bg-white/10">برگشت به خانه</button>
+          {history.length > 0 && (
+            <button type="button" onClick={undo} className="text-sm text-slate-300 hover:text-white">واگرد آخرین امتیاز</button>
+          )}
         </div>
       </div>
     );
   }
 
-  if (!currentCard) {
-    return (
-      <div className="text-center py-20">
-        <p className="text-slate-500 dark:text-slate-400">Loading study session...</p>
-      </div>
-    );
+  if (!card || !current || !intervals) {
+    return <p dir="rtl" className="font-fa text-center py-20 text-ink-muted">در حال آماده‌سازی…</p>;
   }
+
+  const stage = masteryStage(current);
+  const progress = Math.round((index / queue.length) * 100);
 
   return (
-    <div className="max-w-3xl mx-auto flex flex-col items-center">
-      <div className="w-full flex justify-between items-center mb-4">
-        <p className="text-slate-500 dark:text-slate-400">Card {currentIndex + 1} of {sessionQueue.length}</p>
-        <div className="flex items-center gap-2 p-1 bg-slate-200 dark:bg-slate-700 rounded-lg">
-            <button onClick={() => setStudyMode('flip')} className={`px-3 py-1 text-sm rounded-md ${studyMode === 'flip' ? 'bg-white dark:bg-slate-600 shadow' : ''}`}>Flip</button>
-            <button onClick={() => setStudyMode('type')} className={`px-3 py-1 text-sm rounded-md ${studyMode === 'type' ? 'bg-white dark:bg-slate-600 shadow' : ''}`}>Type</button>
+    <div dir="rtl" className="font-fa flex flex-col min-h-[calc(100vh-2rem)] md:min-h-screen">
+      <header className="flex items-center gap-2 md:gap-4 px-1 md:px-8 py-3 md:py-4 md:bg-white md:dark:bg-slate-900 md:border-b border-slate-200 dark:border-slate-800">
+        <button type="button" onClick={exitEarly} aria-label="خروج از جلسه" className="flex items-center gap-1.5 min-h-[44px] min-w-[44px] px-2 rounded-xl text-ink-muted hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800">
+          <Icon.Close size={20} /><span className="hidden md:inline text-sm">خروج</span><Kbd>Esc</Kbd>
+        </button>
+        <div className="flex-1 min-w-0 flex items-center gap-2">
+          <div className="flex-1 h-2.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden flex">
+            <div className="bg-brand-500 rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />
+          </div>
+          <span className="text-sm text-ink-muted dark:text-slate-400 whitespace-nowrap">{fa(index + 1)} از {fa(queue.length)}</span>
         </div>
-      </div>
-      <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2.5">
-          <div className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300" style={{ width: `${((currentIndex + 1) / sessionQueue.length) * 100}%` }}></div>
-      </div>
-      
-      <div className="w-full h-80 max-w-2xl cursor-pointer mt-4" onClick={() => studyMode === 'flip' && setIsFlipped(true)}>
-        <FlashcardComponent card={currentCard} isFlipped={isFlipped} />
+        <div role="group" aria-label="حالت مرور" className="hidden sm:flex gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
+          {(['flip', 'type'] as StudyMode[]).map(m => (
+            <button key={m} type="button" onClick={() => { setMode(m); setRevealed(false); setAnswerState(null); }} aria-pressed={mode === m}
+              className={`min-h-[36px] px-3.5 rounded-lg text-sm ${mode === m ? 'bg-white dark:bg-slate-700 font-bold shadow-sm' : 'text-ink-muted dark:text-slate-400'}`}>
+              {m === 'flip' ? 'برگرداندن' : 'نوشتنی'}
+            </button>
+          ))}
+        </div>
+        <span title="جواب‌های درست پشت سر هم" className={`relative shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 sm:px-3 py-1.5 text-sm font-extrabold ${combo >= 3 ? 'bg-flame-50 text-flame-800 dark:bg-orange-900/40 dark:text-orange-200' : 'bg-slate-100 text-ink-muted dark:bg-slate-800 dark:text-slate-400'}`}>
+          <Icon.Bolt className={combo >= 3 ? 'text-flame-500' : ''} />{fa(combo)}<span className="hidden sm:inline"> پیاپی</span>
+        </span>
+        <span title="امتیاز این جلسه" className="relative shrink-0 inline-flex rounded-full bg-brand-100 text-brand-700 dark:bg-brand-900/60 dark:text-brand-200 px-3 py-1.5 text-sm font-extrabold">
+          +{fa(xp)}<span className="hidden sm:inline">&nbsp;امتیاز</span>
+          {gain && <span key={gain.id} className="absolute -top-1 left-1/2 -translate-x-1/2 text-brand-500 font-extrabold animate-rise">+{fa(gain.value)}</span>}
+        </span>
+      </header>
+
+      <div className="flex-1 flex flex-wrap items-start justify-center gap-6 py-4 md:p-8">
+        <section className="flex-[999_1_34rem] max-w-3xl min-w-0 bg-white dark:bg-slate-800 rounded-[28px] shadow-[0_10px_30px_rgba(23,26,51,0.08)] p-5 md:p-8 flex flex-col gap-5">
+          <div className="flex justify-between items-center gap-2 text-xs text-ink-muted dark:text-slate-400">
+            <span className="flex items-center gap-2"><StageDots stage={stage} />{STAGE_NAMES[stage]}</span>
+            {card.kind && card.kind !== 'word' && <span>{{ phrase: 'عبارت', idiom: 'اصطلاح', grammar: 'ساختار دستوری' }[card.kind]}</span>}
+          </div>
+
+          <div dir="ltr" className="flex flex-col items-center gap-2 text-center pt-2">
+            <h2 className="font-en font-bold text-4xl md:text-6xl tracking-tight text-ink dark:text-white break-words max-w-full">{card.front}</h2>
+            <div className="flex items-center gap-3 text-ink-muted dark:text-slate-400">
+              {(card.pronunciation || card.partOfSpeech) && <span>{[card.pronunciation, card.partOfSpeech].filter(Boolean).join(' · ')}</span>}
+              {card.kind !== 'grammar' && (card.audioSrc || isSpeechSupported()) && (
+                <button type="button" onClick={playAudio} disabled={audioBusy} aria-label="پخش تلفظ"
+                  className="w-11 h-11 rounded-full bg-brand-100 text-brand-500 dark:bg-brand-900/60 dark:text-brand-200 flex items-center justify-center disabled:opacity-50">
+                  <Icon.Speaker size={20} />
+                </button>
+              )}
+            </div>
+            {card.kind === 'grammar' && (
+              <div className="flex flex-col gap-2 mt-1">
+                {card.grammarPattern && <p className="font-mono text-rose-700 dark:text-rose-300">{card.grammarPattern}</p>}
+                {card.practicePrompt && <p dir="rtl" className="text-sm text-slate-600 dark:text-slate-300">{card.practicePrompt}</p>}
+              </div>
+            )}
+            {!revealed && card.kind !== 'grammar' && card.sourceSentence && (
+              <p className="mt-1 max-w-xl text-sm italic text-ink-muted dark:text-slate-400 line-clamp-3">{card.sourceSentence}</p>
+            )}
+          </div>
+
+          {revealed ? (
+            <>
+              {answerState && (
+                <p className={`text-center font-bold ${answerState === 'correct' ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
+                  {answerState === 'correct' ? 'درست نوشتی.' : `نوشتی: «${typed}»`}
+                </p>
+              )}
+              <CardAnswer card={card} />
+            </>
+          ) : mode === 'flip' ? (
+            <button type="button" onClick={() => setRevealed(true)}
+              className="self-center inline-flex items-center gap-2 min-h-[56px] px-10 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold text-lg">
+              نمایش پاسخ <Kbd className="text-white">Space</Kbd>
+            </button>
+          ) : (
+            <form onSubmit={e => { e.preventDefault(); checkTyped(); }} className="flex flex-col items-center gap-3 w-full max-w-md self-center">
+              <label htmlFor="typed-answer" className="text-sm text-ink-muted dark:text-slate-400">معنی فارسی را بنویس</label>
+              <input id="typed-answer" ref={inputRef} dir="rtl" value={typed} onChange={e => setTyped(e.target.value)} autoComplete="off"
+                className="w-full text-center text-lg px-4 py-3 rounded-2xl border-2 border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 focus:border-brand-500 focus:outline-none" />
+              <button type="submit" className="min-h-[52px] px-10 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold">بررسی</button>
+            </form>
+          )}
+
+          {revealed && (
+            <div className="grid grid-cols-4 gap-2 md:gap-2.5">
+              {RATINGS.map(r => (
+                <button key={r.rating} type="button" onClick={() => rate(r.rating)}
+                  className={`min-h-[64px] rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-colors ${r.className}`}>
+                  <span className="font-extrabold">{r.label} <Kbd>{r.key}</Kbd></span>
+                  <span className="text-xs">{intervalLabel(intervals[r.rating])}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <aside className="hidden lg:flex flex-[1_1_15rem] max-w-xs flex-col gap-4">
+          <div className="bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-2.5 text-sm text-slate-700 dark:text-slate-300">
+            <h3 className="font-bold text-ink dark:text-white">میانبرها</h3>
+            <p className="flex justify-between"><span>نمایش پاسخ</span><span dir="ltr" className="font-en text-ink-muted">Space</span></p>
+            <p className="flex justify-between"><span>امتیازدهی</span><span dir="ltr" className="font-en text-ink-muted">1 2 3 4</span></p>
+            <p className="flex justify-between"><span>پخش تلفظ</span><span dir="ltr" className="font-en text-ink-muted">P</span></p>
+            <p className="flex justify-between"><span>واگرد آخرین امتیاز</span><span dir="ltr" className="font-en text-ink-muted">Z</span></p>
+            <p className="flex justify-between"><span>پایان جلسه</span><span dir="ltr" className="font-en text-ink-muted">Esc</span></p>
+          </div>
+          <div className="bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-2 text-sm text-slate-700 dark:text-slate-300">
+            <h3 className="font-bold text-ink dark:text-white">این جلسه</h3>
+            <p className="flex justify-between"><span>مرورها</span><span>{fa(reviews)}</span></p>
+            <p className="flex justify-between"><span>امتیاز</span><span>{fa(xp)}</span></p>
+            <p className="text-xs text-ink-muted dark:text-slate-400 pt-1">هر ۵ جواب درست پشت سر هم، امتیاز هر جواب را یکی بیشتر می‌کند.</p>
+            {history.length > 0 && (
+              <button type="button" onClick={undo} className="mt-1 min-h-[40px] rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600">واگرد آخرین امتیاز</button>
+            )}
+          </div>
+        </aside>
       </div>
 
-      <div className="mt-8 flex flex-col justify-center items-center gap-4 w-full h-20">
-        {isFlipped ? (
-            <div className="flex justify-center items-center gap-2 sm:gap-3 w-full animate-flip-in">
-                {RATING_BUTTONS.map(({ rating, label, className }) => (
-                    <button key={rating} onClick={() => handleRating(rating)} className={`px-2 sm:px-5 py-2 w-1/4 max-w-[10rem] rounded-lg text-white font-semibold shadow-md transition-colors flex flex-col items-center ${className}`}>
-                        <span>{label}</span>
-                        <span className="text-xs font-normal opacity-80">{formatInterval(intervals[rating])}</span>
-                    </button>
-                ))}
-            </div>
-        ) : studyMode === 'flip' ? (
-             <button onClick={() => setIsFlipped(true)} className="px-10 py-3 rounded-lg bg-indigo-600 text-white font-semibold shadow-md hover:bg-indigo-700 transition-colors">
-                Show Answer
-            </button>
-        ) : (
-            <form onSubmit={e => { e.preventDefault(); handleCheckAnswer(); }} className="w-full max-w-md flex flex-col items-center">
-              <input 
-                ref={answerInputRef}
-                type="text" 
-                value={typedAnswer}
-                onChange={e => setTypedAnswer(e.target.value)}
-                placeholder="Type the Persian translation..."
-                className="w-full text-center px-4 py-3 border-2 rounded-lg bg-white dark:bg-slate-700 border-slate-300 dark:border-slate-600 focus:ring-indigo-500 focus:border-indigo-500 transition"
-              />
-               <button type="submit" className="mt-4 px-10 py-3 rounded-lg bg-indigo-600 text-white font-semibold shadow-md hover:bg-indigo-700 transition-colors">
-                Check Answer
-              </button>
-            </form>
-        )}
+      <div className="sm:hidden flex justify-center gap-4 pb-4 text-sm">
+        <button type="button" onClick={() => { setMode(mode === 'flip' ? 'type' : 'flip'); setRevealed(false); setAnswerState(null); }} className="text-brand-500 dark:text-brand-300">
+          {mode === 'flip' ? 'حالت نوشتنی' : 'حالت برگرداندن'}
+        </button>
+        {history.length > 0 && <button type="button" onClick={undo} className="text-ink-muted dark:text-slate-400">واگرد</button>}
       </div>
-        {isFlipped && answerState && (
-            <div className={`mt-2 text-lg font-bold ${answerState === 'correct' ? 'text-green-500' : 'text-red-500'}`}>
-                {answerState === 'correct' ? 'Correct!' : 'Incorrect.'}
-            </div>
-        )}
-      <button onClick={() => onExit(Array.from(updatedCards.values()))} className="mt-8 text-sm text-slate-500 hover:underline">Exit Study Session</button>
     </div>
   );
 };
