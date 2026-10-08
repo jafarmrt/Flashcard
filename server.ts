@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import { newerSettings } from './services/settingsSync';
 import { fetchDictionaryEntries, freeEnrich, freeTranslate, lookupFrequencies } from './server/freeLookup';
 import {
   PUBLIC_ACTIONS, USERNAME_PATTERN, MIN_PASSWORD_LENGTH, registrationAllowed,
@@ -556,6 +557,7 @@ app.post('/api/proxy', async (req: Request, res: Response) => {
           userProfile: mergedUserProfile,
           userAchievements: mergedUserAchievements,
           texts: mergedTexts,
+          settings: newerSettings(clientData.settings, cloudData.settings),
         };
 
         user.data = mergedData;
