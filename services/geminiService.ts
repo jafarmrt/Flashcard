@@ -98,11 +98,9 @@ Please provide the following:
       notes: parsed.notes || '',
     };
   } catch (error) {
+    // Never return a message as if it were a translation: it would be saved on the card.
     console.error("Error generating Persian details via proxy:", error);
-    return {
-      back: "Could not generate translation.",
-      notes: "Could not generate notes.",
-    };
+    throw error;
   }
 };
 
@@ -240,27 +238,33 @@ export interface ExtractVocabularyParams {
   text: string;
   level: string; // 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2' | 'IELTS' | 'TOEFL' | string
   count?: number;
+  exclude?: string[]; // terms that already have a card
+  includeGrammar?: boolean;
   options?: AiRequestOptions;
 }
 
-export const extractVocabularyFromText = async (
-  params: ExtractVocabularyParams
-): Promise<ExtractedWordCard[]> => {
-  const { text, level, count = 10, options } = params;
-  
-  const prompt = `You are an expert linguistics tutor helping a Persian-speaking student learn English.
-Analyze the following text and extract up to ${count} valuable, high-impact vocabulary items, phrasal verbs, or idioms tailored specifically for a learner at level: "${level}".
+const KINDS = ['word', 'phrase', 'idiom', 'grammar'] as const;
+
+export const buildExtractionPrompt = ({ text, level, count = 10, exclude = [], includeGrammar = true }: ExtractVocabularyParams): string => `You are an expert linguistics tutor helping a Persian-speaking student learn English.
+Analyze the following text and extract up to ${count} valuable, high-impact items for a learner at level: "${level}".
+Items can be single words ("word"), multi-word phrases such as phrasal verbs and collocations ("phrase"), idioms ("idiom")${includeGrammar ? ', and at most 2 notable grammar structures ("grammar")' : ''}.
 
 CRITICAL INSTRUCTIONS:
-1. Target level: "${level}". Focus on words that are neither too trivial nor overwhelmingly difficult for this specific level.
-2. For each extracted word:
-   - "front": The base English word or phrase (e.g. "reluctant", "take into account", "resilient").
-   - "back": Accurate, natural Persian translation(s).
-   - "pronunciation": Standard IPA pronunciation (e.g. "/rɪˈlʌk.tənt/").
-   - "partOfSpeech": Part of speech in English (e.g. "adj.", "v.", "phrasal verb", "n.").
-   - "definition": An array containing 1-2 concise, clear English definitions.
-   - "exampleSentenceTarget": An array with 1-2 example sentences, prioritizing the exact or adapted sentence from the provided text where the word appears.
-   - "notes": A brief, engaging Persian memory aid, mnemonic tip, Persian phonetic similarity, or root explanation to help remember the word.
+1. Target level: "${level}". Skip items that are trivial for this level or far beyond it.
+2. Give meanings for the sense used IN THIS TEXT, not the most common sense of the word.
+3. ${exclude.length ? `The student already has cards for these; do NOT include them: ${JSON.stringify(exclude)}.` : 'Do not repeat the same item twice.'}
+4. For each item:
+   - "kind": one of ${JSON.stringify(includeGrammar ? KINDS : KINDS.filter(k => k !== 'grammar'))}.
+   - "front": the base form ("reluctant", "take into account"). For grammar, a short name of the structure ("Past perfect").
+   - "back": accurate, natural Persian translation of the item as used in the text.
+   - "pronunciation": IPA ("/rɪˈlʌk.tənt/"); empty for grammar.
+   - "partOfSpeech": "adj.", "v.", "n.", "phrasal verb", "idiom" or "grammar".
+   - "definition": 1-2 concise English definitions (for grammar: what the structure expresses).
+   - "sourceSentence": the EXACT sentence of the text where the item appears, copied verbatim.
+   - "exampleSentenceTarget": 1-2 NEW example sentences (not the source sentence).
+   - "collocations": 3-5 other common expressions that use this item, each with "phrase" and its Persian "meaning" (e.g. for "decision": "make a decision", "tough decision"). Empty for grammar.
+   - "notes": a brief Persian memory aid, root explanation or usage tip.${includeGrammar ? `
+   - For grammar only: "grammarPattern" (the form, e.g. "had + past participle") and "practicePrompt" (a short Persian instruction asking the student to write their own English sentence with this structure).` : ''}
 
 Input Text:
 """
@@ -268,6 +272,36 @@ ${text}
 """
 
 Return a JSON object containing a "words" array.`;
+
+const toStringArray = (v: unknown): string[] =>
+  Array.isArray(v) ? v.map(String).filter(Boolean) : (v ? [String(v)] : []);
+
+export const parseExtractedItems = (parsed: any): ExtractedWordCard[] =>
+  (Array.isArray(parsed?.words) ? parsed.words : [])
+    .filter((w: any) => w && typeof w.front === 'string' && w.front.trim())
+    .map((w: any): ExtractedWordCard => ({
+      front: w.front.trim(),
+      back: w.back || '',
+      pronunciation: w.pronunciation || '',
+      partOfSpeech: w.partOfSpeech || '',
+      definition: toStringArray(w.definition),
+      exampleSentenceTarget: toStringArray(w.exampleSentenceTarget),
+      notes: w.notes || '',
+      kind: KINDS.includes(w.kind) ? w.kind : (String(w.front).trim().includes(' ') ? 'phrase' : 'word'),
+      sourceSentence: typeof w.sourceSentence === 'string' && w.sourceSentence.trim() ? w.sourceSentence.trim() : undefined,
+      collocations: (Array.isArray(w.collocations) ? w.collocations : [])
+        .map((c: any) => (typeof c === 'string' ? { phrase: c } : { phrase: String(c?.phrase || ''), meaning: c?.meaning ? String(c.meaning) : undefined }))
+        .filter((c: { phrase: string }) => c.phrase.trim()),
+      grammarPattern: w.grammarPattern || undefined,
+      practicePrompt: w.practicePrompt || undefined,
+      selected: true,
+    }));
+
+export const extractVocabularyFromText = async (
+  params: ExtractVocabularyParams
+): Promise<ExtractedWordCard[]> => {
+  const { options } = params;
+  const prompt = buildExtractionPrompt(params);
 
   try {
     const response = await callProxy('gemini-generate', {
@@ -286,23 +320,30 @@ Return a JSON object containing a "words" array.`;
               items: {
                 type: 'OBJECT',
                 properties: {
-                  front: { type: 'STRING', description: 'English target word or phrase' },
+                  kind: { type: 'STRING', enum: [...KINDS], description: 'word, phrase, idiom or grammar' },
+                  front: { type: 'STRING', description: 'English target word, phrase or structure name' },
                   back: { type: 'STRING', description: 'Persian translation' },
                   pronunciation: { type: 'STRING', description: 'IPA pronunciation' },
                   partOfSpeech: { type: 'STRING', description: 'Part of speech' },
-                  definition: { 
-                    type: 'ARRAY', 
-                    items: { type: 'STRING' },
-                    description: 'English definitions' 
-                  },
-                  exampleSentenceTarget: { 
-                    type: 'ARRAY', 
-                    items: { type: 'STRING' },
-                    description: 'Contextual example sentences' 
+                  definition: { type: 'ARRAY', items: { type: 'STRING' }, description: 'English definitions' },
+                  sourceSentence: { type: 'STRING', description: 'Exact sentence of the input text' },
+                  exampleSentenceTarget: { type: 'ARRAY', items: { type: 'STRING' }, description: 'New example sentences' },
+                  collocations: {
+                    type: 'ARRAY',
+                    items: {
+                      type: 'OBJECT',
+                      properties: {
+                        phrase: { type: 'STRING' },
+                        meaning: { type: 'STRING', description: 'Persian meaning' },
+                      },
+                      required: ['phrase'],
+                    },
                   },
                   notes: { type: 'STRING', description: 'Persian mnemonic or tip' },
+                  grammarPattern: { type: 'STRING', description: 'Grammar only: the form' },
+                  practicePrompt: { type: 'STRING', description: 'Grammar only: Persian practice instruction' },
                 },
-                required: ['front', 'back']
+                required: ['kind', 'front', 'back']
               }
             }
           },
@@ -311,19 +352,7 @@ Return a JSON object containing a "words" array.`;
       }
     });
 
-    const parsed = parseJsonFromAiResponse(response.text);
-    const words: ExtractedWordCard[] = (parsed.words || []).map((w: any) => ({
-      front: w.front || '',
-      back: w.back || '',
-      pronunciation: w.pronunciation || '',
-      partOfSpeech: w.partOfSpeech || '',
-      definition: Array.isArray(w.definition) ? w.definition : (w.definition ? [String(w.definition)] : []),
-      exampleSentenceTarget: Array.isArray(w.exampleSentenceTarget) ? w.exampleSentenceTarget : (w.exampleSentenceTarget ? [String(w.exampleSentenceTarget)] : []),
-      notes: w.notes || '',
-      selected: true,
-    }));
-
-    return words;
+    return parseExtractedItems(parseJsonFromAiResponse(response.text));
   } catch (error) {
     console.error('Error extracting vocabulary from text with AI:', error);
     throw error;
