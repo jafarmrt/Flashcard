@@ -28,7 +28,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
     onLogout
 }) => {
     const importFileRef = useRef<HTMLInputElement>(null);
-    const APP_VERSION = '5.4.0';
+    const APP_VERSION = '6.0.0';
 
     const handleImportClick = () => {
         importFileRef.current?.click();
@@ -97,6 +97,18 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                                 onClick={() => onUpdateSettings({ theme: theme.toLowerCase() as Settings['theme'] })} 
                                 className={`px-3 py-1 rounded-md transition-colors ${settings.theme === theme.toLowerCase() ? 'bg-white dark:bg-slate-600 shadow font-semibold text-indigo-700 dark:text-white' : 'hover:bg-slate-200/70 dark:hover:bg-slate-600/70'}`}>
                                 {theme}
+                            </button>
+                        ))}
+                    </div>
+                </SettingRow>
+                <SettingRow title="Daily Review Goal" description="Reviews per day for the goal ring on the Today screen. A change applies today unless today's goal is already done.">
+                    <div className="flex items-center gap-1 p-1 bg-slate-200 dark:bg-slate-700 rounded-lg text-sm">
+                        {[10, 20, 30, 50].map(goal => (
+                            <button
+                                key={goal}
+                                onClick={() => onUpdateSettings({ dailyReviewGoal: goal })}
+                                className={`px-3 py-1 rounded-md transition-colors ${(settings.dailyReviewGoal || 20) === goal ? 'bg-white dark:bg-slate-600 shadow font-semibold text-indigo-700 dark:text-white' : 'hover:bg-slate-200/70 dark:hover:bg-slate-600/70'}`}>
+                                {goal}
                             </button>
                         ))}
                     </div>

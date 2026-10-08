@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile, UserAchievement, ExtractedWordCard } from '../types';
+import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile, UserAchievement, ExtractedWordCard, StudyLog, TextDoc } from '../types';
 import { db } from '../services/localDBService';
 import { calculateLevel, calculateStreak, checkAndAwardAchievements } from '../services/gamificationService';
-import { generateNewDailyGoals, updateGoalProgress } from '../services/dailyGoalsService';
+import { generateNewDailyGoals, updateGoalProgress, reviewGoalId } from '../services/dailyGoalsService';
+import { availableFreezes, dayString, daysToFreeze, MAX_HELD_FREEZES } from '../services/streakService';
+import { CHUNK_COMPLETE_XP, DEFAULT_DAILY_REVIEW_GOAL, isChestSection } from '../services/xpRules';
+import { completeChunk, createTextDoc } from '../services/textLibrary';
 import { ALL_ACHIEVEMENTS } from '../services/achievements';
 import { AUTH_REQUIRED_EVENT, callProxy } from '../services/apiService';
 import { convertToCSV, parseCSV } from '../services/csvService';
@@ -19,11 +22,26 @@ import {
 import { AutoFixStats } from '../components/AutoFixReportModal';
 
 // Types used within the hook and exported for the App component
-export type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS' | 'PROFILE' | 'AI_EXTRACT';
+export type View = 'TODAY' | 'ME' | 'TEXTS' | 'READER' | 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS' | 'PROFILE' | 'AI_EXTRACT';
 export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 export type HealthStatus = 'ok' | 'error' | 'checking';
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted' | 'createdAt' | 'updatedAt'>;
 type User = { username: string };
+
+export type StudyMode = 'flip' | 'type';
+export interface SessionSummary { xp: number; reviews: number }
+
+// Settings are kept in localStorage; read the review goal straight from there so
+// it is right even before the settings state has loaded.
+const savedReviewGoal = (): number => {
+  try {
+    const saved = JSON.parse(localStorage.getItem('appSettings') || '{}');
+    const goal = Number(saved.dailyReviewGoal);
+    return goal > 0 ? goal : DEFAULT_DAILY_REVIEW_GOAL;
+  } catch {
+    return DEFAULT_DAILY_REVIEW_GOAL;
+  }
+};
 
 const defaultSettings: Settings = {
     theme: 'system',
@@ -31,16 +49,17 @@ const defaultSettings: Settings = {
     bulkAddConcurrency: 3,
     bulkAddAiTimeout: 15,
     bulkAddDictTimeout: 5,
+    dailyReviewGoal: DEFAULT_DAILY_REVIEW_GOAL,
 };
 
 export const useAppLogic = () => {
   // App State
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
   const [decks, setDecks] = useState<Deck[]>([]);
-  const [view, setView] = useState<View>('DECKS');
+  const [view, setView] = useState<View>('TODAY');
   const [editingCard, setEditingCard] = useState<Flashcard | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const previousViewRef = useRef<View>('DECKS');
+  const previousViewRef = useRef<View>('TODAY');
   
   // Auth State
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -55,6 +74,13 @@ export const useAppLogic = () => {
   const [studyDeckId, setStudyDeckId] = useState<string | null>(null);
   const [studyCards, setStudyCards] = useState<Flashcard[]>([]);
   const [isStudySetupModalOpen, setIsStudySetupModalOpen] = useState(false);
+  const [studyMode, setStudyMode] = useState<StudyMode>('flip');
+  const [studyLogs, setStudyLogs] = useState<StudyLog[]>([]);
+
+  // Reading path State
+  const [texts, setTexts] = useState<TextDoc[]>([]);
+  const [activeTextId, setActiveTextId] = useState<string | null>(null);
+  const [activeChunk, setActiveChunk] = useState(0);
   
   // Auto-Fix State
   const [autoFixProgress, setAutoFixProgress] = useState<{ current: number, total: number } | null>(null);
@@ -74,6 +100,9 @@ export const useAppLogic = () => {
   const [earnedAchievements, setEarnedAchievements] = useState<UserAchievement[]>([]);
   
   const isInitialMount = useRef(true);
+  // Set while a sync reloads the merged data, so that reload does not start
+  // another sync (which used to repeat every 2 seconds).
+  const reloadingFromSync = useRef(false);
 
   const showToast = (message: string) => {
     setToastMessage(message);
@@ -85,8 +114,16 @@ export const useAppLogic = () => {
     // when the user is in a timezone where it is still today, but UTC is tomorrow.
     const today = new Date().toLocaleDateString('en-CA'); // 'en-CA' gives YYYY-MM-DD format locally
     
-    if (!profile.dailyGoals || profile.dailyGoals.date !== today) {
-        const newGoals = generateNewDailyGoals(currentStreak);
+    const target = savedReviewGoal();
+    const goals = profile.dailyGoals;
+    const sameDay = goals?.date === today;
+    // A changed goal applies at once unless today's goal is already done.
+    const goalChanged = sameDay && goals!.goals[0]?.id !== reviewGoalId(target) && !goals!.goals[0]?.isComplete;
+    if (!goals || !sameDay || goalChanged) {
+        const newGoals = generateNewDailyGoals(currentStreak, target);
+        if (goalChanged && goals!.goals[0]?.type === 'STUDY') {
+            newGoals[0].progress = Math.min(goals!.goals[0].progress, target);
+        }
         const updatedProfile: UserProfile = {
             ...profile,
             dailyGoals: {
@@ -105,6 +142,8 @@ export const useAppLogic = () => {
     const allCards = await db.flashcards.toArray();
     const allDecks = await db.decks.toArray();
     const allAchievements = await db.userAchievements.toArray();
+    const allTexts = await db.texts.toArray();
+    setTexts(allTexts);
     setFlashcards(allCards);
     setDecks(allDecks);
     setEarnedAchievements(allAchievements);
@@ -116,7 +155,22 @@ export const useAppLogic = () => {
     }
     
     const allLogs = await db.studyHistory.toArray();
-    const currentStreak = calculateStreak(allLogs);
+    setStudyLogs(allLogs);
+
+    // Spend held streak freezes on days missed since the last study day.
+    const frozen = profile.frozenDates || [];
+    const toFreeze = daysToFreeze(
+      new Set(allLogs.map(l => l.date)), new Set(frozen),
+      availableFreezes(profile.streakFreezesEarned, frozen), dayString(new Date()),
+    );
+    if (toFreeze.length > 0) {
+      profile = { ...profile, frozenDates: [...frozen, ...toFreeze], profileLastUpdated: new Date().toISOString() };
+      await db.userProfile.put(profile);
+      const days = toFreeze.length;
+      setTimeout(() => showToast(days === 1 ? 'محافظ زنجیره یک روز غیبت را پوشاند.' : `محافظ زنجیره ${days} روز غیبت را پوشاند.`), 800);
+    }
+
+    const currentStreak = calculateStreak(allLogs, profile.frozenDates);
     setStreak(currentStreak);
     
     if (profile) {
@@ -208,7 +262,7 @@ export const useAppLogic = () => {
       if (userProfile.lastStreakCheck === today) return;
 
       const logs = await db.studyHistory.toArray();
-      const newStreak = calculateStreak(logs);
+      const newStreak = calculateStreak(logs, userProfile.frozenDates);
 
       if (newStreak > streak) {
           await awardXP(newStreak * 10, `Streak Bonus: ${newStreak} days! 🔥`);
@@ -232,8 +286,10 @@ export const useAppLogic = () => {
         const allStudyHistory = await db.studyHistory.toArray();
         const profile = await db.userProfile.get(1);
         const allAchievements = await db.userAchievements.toArray();
+        const allTexts = await db.texts.toArray();
 
         const localData = {
+            texts: allTexts,
             decks: allDecks,
             cards: allCards,
             studyHistory: allStudyHistory,
@@ -245,7 +301,7 @@ export const useAppLogic = () => {
         
         const { data: mergedData } = response;
         if (mergedData) {
-            await (db as any).transaction('rw', [db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements], async () => {
+            await (db as any).transaction('rw', [db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements, db.texts], async () => {
                 // Bug Fix: Do NOT clear tables here. Clearing tables wipes out any changes made locally 
                 // while the network request was in flight (the "Reversion" bug).
                 // We use bulkPut which updates existing items and adds new ones.
@@ -257,7 +313,9 @@ export const useAppLogic = () => {
                 if (mergedData.studyHistory) await db.studyHistory.bulkPut(mergedData.studyHistory);
                 if (mergedData.userProfile) await db.userProfile.put(mergedData.userProfile);
                 if (mergedData.userAchievements) await db.userAchievements.bulkPut(mergedData.userAchievements);
+                if (mergedData.texts) await db.texts.bulkPut(mergedData.texts);
             });
+            reloadingFromSync.current = true;
             await fetchData();
         }
         setSyncStatus('synced');
@@ -275,8 +333,9 @@ export const useAppLogic = () => {
       
       const response = await callProxy('sync-load', {});
       if (response.data) {
-        const { decks, cards, studyHistory, userProfile, userAchievements } = response.data;
-        await (db as any).transaction('rw', [db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements], async () => {
+        const { decks, cards, studyHistory, userProfile, userAchievements, texts } = response.data;
+        await (db as any).transaction('rw', [db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements, db.texts], async () => {
+            if (texts) await db.texts.bulkPut(texts);
             if (decks) await db.decks.bulkPut(decks);
             if (cards) await db.flashcards.bulkPut(cards);
             if (studyHistory) await db.studyHistory.bulkPut(studyHistory);
@@ -363,13 +422,24 @@ export const useAppLogic = () => {
         return;
     }
 
+    if (reloadingFromSync.current) {
+        reloadingFromSync.current = false;
+        return;
+    }
+
     setSyncStatus('syncing'); 
     const handler = setTimeout(() => handleSync(), 2000);
     return () => clearTimeout(handler);
-  }, [flashcards, decks, userProfile, earnedAchievements, isLoggedIn, autoFixProgress]); // Added autoFixProgress dependency
+  }, [flashcards, decks, userProfile, earnedAchievements, texts, isLoggedIn, autoFixProgress]); // Added autoFixProgress dependency
 
 
   const updateSettings = (newSettings: Partial<Settings>) => {
+      if (newSettings.dailyReviewGoal !== undefined) {
+          // Save first so the goal refresh below already sees the new value.
+          const saved = JSON.parse(localStorage.getItem('appSettings') || '{}');
+          localStorage.setItem('appSettings', JSON.stringify({ ...saved, ...newSettings }));
+          if (isLoggedIn) fetchData();
+      }
       setSettings(prev => {
           const updated = { ...prev, ...newSettings };
           localStorage.setItem('appSettings', JSON.stringify(updated));
@@ -436,7 +506,6 @@ export const useAppLogic = () => {
         dueDate: now,
       };
       await db.flashcards.add(newCard);
-      await awardXP(2, 'New Card Added!');
       showToast('Card added successfully!');
     }
     await fetchData();
@@ -488,7 +557,6 @@ export const useAppLogic = () => {
 
     if (newCards.length > 0) {
         await db.flashcards.bulkAdd(newCards);
-        await awardXP(newCards.length * 2);
     }
     
     await fetchData();
@@ -497,7 +565,7 @@ export const useAppLogic = () => {
     setView('DECKS');
   };
 
-  const handleSaveExtractedCards = async (cardsToSave: ExtractedWordCard[], deckName: string) => {
+  const handleSaveExtractedCards = async (cardsToSave: ExtractedWordCard[], deckName: string, options: { stay?: boolean } = {}) => {
     const trimmedDeckName = deckName.trim();
     if (!trimmedDeckName) {
       showToast('Deck name cannot be empty.');
@@ -540,26 +608,34 @@ export const useAppLogic = () => {
 
     if (newCards.length > 0) {
       await db.flashcards.bulkAdd(newCards);
-      await awardXP(newCards.length * 3, `Extracted ${newCards.length} AI Cards! (+${newCards.length * 3} XP)`);
     }
 
     await fetchData();
     handleCheckAchievements();
+    if (options.stay) {
+      showToast(`${newCards.length} کارت به «${trimmedDeckName}» اضافه شد.`);
+      return;
+    }
     showToast(`${newCards.length} cards added to "${trimmedDeckName}"!`);
     setView('DECKS');
   };
 
-  const handleSessionEnd = async (updatedCardsFromSession: Flashcard[]) => {
+  const handleSessionEnd = async (updatedCardsFromSession: Flashcard[], summary: SessionSummary = { xp: 0, reviews: 0 }, next: 'home' | 'more' = 'home') => {
     if (updatedCardsFromSession.length > 0) {
       const now = new Date().toISOString();
       const cardsToUpdate = updatedCardsFromSession.map(c => ({ ...c, updatedAt: now }));
       await db.flashcards.bulkPut(cardsToUpdate);
-      handleGoalUpdate('STUDY', updatedCardsFromSession.length);
     }
-    await fetchData();
+    // XP is added once per session so an undone answer never counts.
+    if (summary.xp > 0) await awardXP(summary.xp);
+    if (summary.reviews > 0) await handleGoalUpdate('STUDY', summary.reviews);
+    const fresh = await fetchData();
     handleCheckAchievements();
-    setView('DECKS');
-    showToast('Study session complete. Progress saved!');
+    if (next === 'more') {
+      startQuickReview(studyMode, 10, fresh.cards);
+      return;
+    }
+    setView('TODAY');
   };
 
   const handleExportCSV = () => {
@@ -677,14 +753,15 @@ export const useAppLogic = () => {
     setIsStudySetupModalOpen(true);
   };
   
-  const handleStartStudySession = (options: StudySessionOptions) => {
+  const handleStartStudySession = (options: StudySessionOptions, deckIdOverride?: string | null, sourceCards: Flashcard[] = flashcards) => {
     checkStreakBonus();
+    const deckId = deckIdOverride !== undefined ? deckIdOverride : studyDeckId;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayISOString = today.toISOString();
 
-    const visibleFlashcards = flashcards.filter(c => !c.isDeleted);
-    let cardsToStudy = studyDeckId
+    const visibleFlashcards = sourceCards.filter(c => !c.isDeleted);
+    let cardsToStudy = deckId
       ? visibleFlashcards.filter(card => card.deckId === studyDeckId)
       : visibleFlashcards;
 
@@ -715,12 +792,94 @@ export const useAppLogic = () => {
     
     if (cardsToStudy.length === 0) {
         showToast("No cards match your selected criteria.");
-        return;
+        return false;
     }
 
     setStudyCards(cardsToStudy);
     setIsStudySetupModalOpen(false);
     setView('STUDY');
+    return true;
+  };
+
+  // "Start review" on the Today screen: every due card, no setup dialog.
+  const startQuickReview = (mode: StudyMode = 'flip', limit = 0, sourceCards: Flashcard[] = flashcards) => {
+    setStudyMode(mode);
+    const endOfToday = new Date();
+    endOfToday.setHours(23, 59, 59, 999);
+    const due = sourceCards.filter(c => !c.isDeleted && new Date(c.dueDate) <= endOfToday);
+    if (due.length === 0) {
+      showToast('امروز کارت موعددار نداری. می‌توانی مرور آزاد را انتخاب کنی.');
+      setStudyDeckId(null);
+      setIsStudySetupModalOpen(true);
+      setView('TODAY');
+      return;
+    }
+    setStudyDeckId(null);
+    handleStartStudySession({ filter: 'all-due', limit }, null, sourceCards);
+  };
+
+  const openStudySetup = (mode: StudyMode = 'flip') => {
+    setStudyMode(mode);
+    setStudyDeckId(null);
+    setIsStudySetupModalOpen(true);
+  };
+
+  // --- Reading path ---
+
+  const saveText = async (doc: TextDoc) => {
+    await db.texts.put(doc);
+    setTexts(prev => [...prev.filter(t => t.id !== doc.id), doc]);
+  };
+
+  const handleCreateText = async (title: string, text: string) => {
+    const doc = createTextDoc(title, text);
+    if (doc.chunks.length === 0) {
+      showToast('متن خالی است.');
+      return;
+    }
+    await saveText(doc);
+    setActiveTextId(doc.id);
+    setView('TEXTS');
+  };
+
+  const handleOpenText = (textId: string | null) => {
+    setActiveTextId(textId);
+    setView('TEXTS');
+  };
+
+  const handleOpenChunk = (textId: string, index: number) => {
+    setActiveTextId(textId);
+    setActiveChunk(index);
+    setView('READER');
+  };
+
+  const handleDeleteText = async (textId: string) => {
+    const doc = texts.find(t => t.id === textId);
+    if (!doc) return;
+    await saveText({ ...doc, isDeleted: true, updatedAt: new Date().toISOString() });
+    setActiveTextId(null);
+  };
+
+  const handleCompleteChunk = async (textId: string, index: number) => {
+    const doc = texts.find(t => t.id === textId);
+    if (!doc) return;
+    const { doc: updated, firstTime } = completeChunk(doc, index);
+    if (!firstTime) {
+      setView('TEXTS');
+      return;
+    }
+    await saveText(updated);
+    await awardXP(CHUNK_COMPLETE_XP, `بخش ${index + 1} تمام شد. +${CHUNK_COMPLETE_XP} امتیاز`);
+    if (isChestSection(index)) {
+      const profile = await db.userProfile.get(1);
+      if (profile && availableFreezes(profile.streakFreezesEarned, profile.frozenDates) < MAX_HELD_FREEZES) {
+        const withFreeze = { ...profile, streakFreezesEarned: (profile.streakFreezesEarned || 0) + 1, profileLastUpdated: new Date().toISOString() };
+        await db.userProfile.put(withFreeze);
+        setUserProfile(withFreeze);
+        setTimeout(() => showToast('صندوق جایزه: یک محافظ زنجیره گرفتی.'), 1200);
+      }
+    }
+    setView('TEXTS');
   };
 
   const handleNavigate = (newView: View) => {
@@ -958,7 +1117,7 @@ export const useAppLogic = () => {
   return {
       // State
       flashcards, decks, view, editingCard, toastMessage, isLoggedIn, currentUser, authLoading, appLoading,
-      syncStatus, studyDeckId, studyCards, isStudySetupModalOpen, dbStatus, apiStatus,
+      syncStatus, studyDeckId, studyCards, isStudySetupModalOpen, studyMode, studyLogs, texts, activeTextId, activeChunk, dbStatus, apiStatus,
       freeDictApiStatus, mwDictApiStatus, settings, userProfile, streak, earnedAchievements,
       previousViewRef, autoFixProgress, autoFixReport,
       // Handlers
@@ -967,6 +1126,8 @@ export const useAppLogic = () => {
       handleResetApp, handleStudyDeck, handleStartStudySession, setIsStudySetupModalOpen,
       handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
       updateSettings, handleCheckAchievements, handleGoalUpdate, handleCompleteCardDetails,
-      handleAutoFixCards, handleStopAutoFix, handleCloseAutoFixReport, handleSaveExtractedCards
+      handleAutoFixCards, handleStopAutoFix, handleCloseAutoFixReport, handleSaveExtractedCards,
+      startQuickReview, openStudySetup, setStudyMode, handleCreateText, handleOpenText, handleOpenChunk,
+      handleDeleteText, handleCompleteChunk
   };
 };

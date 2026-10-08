@@ -472,6 +472,8 @@ app.post('/api/proxy', async (req: Request, res: Response) => {
 
         const mergedDecks = mergeDecks(cloudData.decks, clientData.decks);
         const mergedCards = mergeFlashcards(cloudData.cards, clientData.cards);
+        // Texts on the reading path merge like cards: newest updatedAt wins.
+        const mergedTexts = mergeFlashcards(cloudData.texts || [], clientData.texts || []);
 
         const studyHistoryMap = new Map<string, any>();
         (cloudData.studyHistory || []).forEach((log: any) => studyHistoryMap.set(`${log.cardId}-${log.date}-${log.rating}`, log));
@@ -529,6 +531,8 @@ app.post('/api/proxy', async (req: Request, res: Response) => {
             bio: newerProfile.bio,
             profileLastUpdated: newerProfile.profileLastUpdated,
             dailyGoals: mergedDailyGoals || undefined,
+            streakFreezesEarned: Math.max(clientP.streakFreezesEarned || 0, cloudP.streakFreezesEarned || 0),
+            frozenDates: Array.from(new Set([...(clientP.frozenDates || []), ...(cloudP.frozenDates || [])])).sort(),
           };
         } else {
           mergedUserProfile = clientP || cloudP;
@@ -545,6 +549,7 @@ app.post('/api/proxy', async (req: Request, res: Response) => {
           studyHistory: mergedStudyHistory,
           userProfile: mergedUserProfile,
           userAchievements: mergedUserAchievements,
+          texts: mergedTexts,
         };
 
         user.data = mergedData;

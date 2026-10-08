@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.0.0] - New Look: Today Screen, Reading Path & Fairer Rewards
+- **Design:** A Persian, right-to-left interface with the Vazirmatn font; English words and texts stay left-to-right. Older screens (decks, card list, settings, stats, practice) keep their English layout inside the new frame.
+- **Design:** On a computer a side menu lists every section (Today, Review, Practice, Texts, Words, Stats, Settings) with quick-add buttons and the sync status. On a phone there are four tabs (Today, Texts, Words, Me) and an add button.
+- **Feature:** The Today screen is the new home: a daily goal ring with one Start Review button for all due cards, typing and practice shortcuts, this week's streak days, a "word garden" of mastery stages, and the text you are reading.
+- **Feature:** The review screen shows the word, its pronunciation and your source sentence, then the meaning, expressions, definitions and examples on the same card. Each of the four FSRS buttons shows when the card comes back. Keyboard: Space shows the answer, 1-4 rate, P plays, Z undoes the last answer, Esc ends.
+- **Feature:** A session summary shows XP, first-try accuracy, time, your streak and the words that moved up a stage, with "10 more cards" and confetti when the daily goal is reached.
+- **Feature:** Texts are kept as a path of 300-word sections. Each section opens in a reader where you find its hard words (AI or free dictionaries), tap any word to look it up, make cards into the text's deck, and finish the section. Texts sync like cards. The one-shot extractor is still there as "استخراج یکجا".
+- **Gamification:** XP now comes from reviews (more for a correct answer, plus a bonus for 5 right in a row) and from finishing text sections, not from adding cards. The daily goal is a fixed number of reviews you choose in Settings (default 20) instead of random goals.
+- **Gamification:** Streak freezes: every third finished section gives one (you can hold two), and a freeze covers a missed day automatically so the streak survives.
+- **Words:** Each card has a mastery stage from its FSRS stability: seed, sprout, sapling, tree, rooted.
+
 ## [5.4.0] - FSRS Scheduling
 - **Feature:** Reviews are now scheduled with FSRS-5, which tracks how well you know each card (stability and difficulty) and shows it again just before you are likely to forget it, aiming for 90% recall. It needs noticeably fewer reviews than the old SM-2 rule for the same retention.
 - **Feature:** A fourth answer button, **Hard**, sits between Again and Good. Each button shows when the card will come back (for example `3d`, `2mo`).

@@ -37,6 +37,10 @@ export interface UserProfile {
     goals: DailyGoal[];
     allCompleteAwarded: boolean;
   };
+  // Streak freezes: one covers a missed day. Earned grows only while fewer
+  // than MAX_HELD_FREEZES are unused; every covered day is kept in frozenDates.
+  streakFreezesEarned?: number;
+  frozenDates?: string[]; // YYYY-MM-DD (UTC, like StudyLog.date)
 }
 
 export interface Achievement {
@@ -110,6 +114,19 @@ export interface Settings {
     aiModel?: string;
     userLevel?: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2' | 'IELTS' | 'TOEFL';
     extractionSource?: 'ai' | 'free';
+    dailyReviewGoal?: number; // reviews per day for the daily goal
+}
+
+// A long text the user reads section by section (the "path").
+export interface TextDoc {
+  id: string;
+  title: string;
+  chunks: string[]; // sections of at most 300 words
+  completed: number[]; // indexes of finished sections
+  deckName: string; // cards made from this text go to this deck
+  createdAt: string;
+  updatedAt: string;
+  isDeleted?: boolean;
 }
 
 export interface ExtractedWordCard {

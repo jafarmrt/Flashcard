@@ -1,6 +1,7 @@
 import { StudyLog, UserAchievement, Flashcard, Deck, UserProfile } from '../types';
 import { ALL_ACHIEVEMENTS } from './achievements';
 import { db } from './localDBService';
+import { computeStreak, dayString } from './streakService';
 
 const XP_PER_LEVEL_BASE = 150;
 
@@ -34,44 +35,11 @@ export const calculateLevel = (xp: number) => {
 
 
 /**
- * Calculates the current study streak from study logs.
- * @param logs An array of study log entries.
- * @returns The number of consecutive days of study.
+ * Calculates the current study streak from study logs. Days covered by a
+ * streak freeze keep the streak alive without adding to it.
  */
-export const calculateStreak = (logs: StudyLog[]): number => {
-  if (logs.length === 0) return 0;
-
-  const uniqueDates = [...new Set(logs.map(log => log.date))].sort().reverse();
-  const today = new Date();
-  const yesterday = new Date();
-  yesterday.setDate(today.getDate() - 1);
-
-  const todayStr = today.toISOString().split('T')[0];
-  const yesterdayStr = yesterday.toISOString().split('T')[0];
-
-  let streak = 0;
-  let currentDate: Date;
-
-  // Check if today or yesterday is the last study day
-  if (uniqueDates[0] === todayStr || uniqueDates[0] === yesterdayStr) {
-    currentDate = new Date(`${uniqueDates[0]}T12:00:00Z`); // Use midday to avoid timezone issues
-    streak = 1;
-  } else {
-    return 0; // Streak is broken
-  }
-  
-  for (let i = 1; i < uniqueDates.length; i++) {
-    const prevDate = new Date(currentDate);
-    prevDate.setDate(prevDate.getDate() - 1);
-    if (uniqueDates[i] === prevDate.toISOString().split('T')[0]) {
-      streak++;
-      currentDate = prevDate;
-    } else {
-      break;
-    }
-  }
-  return streak;
-};
+export const calculateStreak = (logs: StudyLog[], frozenDates: string[] = []): number =>
+  computeStreak(new Set(logs.map(log => log.date)), new Set(frozenDates), dayString(new Date()));
 
 
 interface AchievementContext {
@@ -112,7 +80,7 @@ export const checkAndAwardAchievements = async (context: AchievementContext): Pr
 
   // 2. Study Habits
   if (studyLogs.length > 0) award('first-study');
-  const streak = calculateStreak(studyLogs);
+  const streak = calculateStreak(studyLogs, userProfile.frozenDates);
   if (streak >= 7) award('streak-7');
   if (streak >= 30) award('streak-30');
   
