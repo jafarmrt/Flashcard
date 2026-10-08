@@ -1,8 +1,13 @@
 import express, { Request, Response } from 'express';
-import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import {
+  PUBLIC_ACTIONS, USERNAME_PATTERN, MIN_PASSWORD_LENGTH, registrationAllowed,
+  hashPassword, verifyPassword, getSessionSecret, createSessionToken, sessionUser,
+  sessionCookieHeader, clearSessionCookieHeader, loginLockMinutes, recordLoginFailure,
+  clearLoginFailures, isAllowedAudioUrl,
+} from './server/auth';
 
 dotenv.config();
 
@@ -12,7 +17,10 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = 3000;
 
-app.use(cors());
+// The app and its API share one origin, so no CORS headers are sent: other
+// sites cannot call the API from a browser. Behind nginx, trust its
+// X-Forwarded-* headers so req.secure and req.ip are right.
+app.set('trust proxy', 'loopback');
 app.use(express.json({ limit: '50mb' }));
 
 import fs from 'fs';
@@ -36,7 +44,8 @@ function persistStore() {
   try {
     const obj: Record<string, any> = {};
     inMemoryStore.forEach((v, k) => { obj[k] = v; });
-    fs.writeFileSync(DATA_FILE, JSON.stringify(obj, null, 2), 'utf-8');
+    fs.writeFileSync(DATA_FILE, JSON.stringify(obj, null, 2), { encoding: 'utf-8', mode: 0o600 });
+    fs.chmodSync(DATA_FILE, 0o600); // user data and password hashes: owner only
   } catch (e) {
     console.warn('Could not persist local data store to file:', e);
   }
@@ -202,6 +211,14 @@ async function handleOpenAiGenerate(payload: any, res: Response, apiKey: string,
 // --- PROXY ENDPOINT ---
 app.post('/api/proxy', async (req: Request, res: Response) => {
   const { action, ...payload } = req.body || {};
+
+  // Every action except the pings and sign-in needs a valid session cookie;
+  // the signed-in user comes from the cookie, never from the request body.
+  const secret = getSessionSecret(__dirname);
+  const signedInUser = sessionUser(req.headers.cookie, secret);
+  if (!PUBLIC_ACTIONS.has(action) && !signedInUser) {
+    return res.status(401).json({ error: 'Please sign in again.', code: 'AUTH_REQUIRED' });
+  }
 
   try {
     switch (action) {
@@ -373,7 +390,8 @@ app.post('/api/proxy', async (req: Request, res: Response) => {
       case 'fetch-audio': {
         const { url } = payload;
         if (!url) return res.status(400).json({ error: 'URL is required.' });
-        const audioResponse = await fetch(url);
+        if (!isAllowedAudioUrl(url)) return res.status(400).json({ error: 'Audio is only fetched from dictionary sites.' });
+        const audioResponse = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(10000) });
         if (!audioResponse.ok) {
           const errorText = await audioResponse.text();
           return res.status(audioResponse.status).json({ error: 'Failed to fetch audio from source.', details: errorText });
@@ -387,9 +405,10 @@ app.post('/api/proxy', async (req: Request, res: Response) => {
 
       case 'auth-register': {
         const { username, password } = payload;
-        if (!username || !password) return res.status(400).json({ error: 'Username and password are required.' });
-        if (username.length < 3) return res.status(400).json({ error: 'Username must be at least 3 characters.' });
-        if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+        if (!registrationAllowed()) return res.status(403).json({ error: 'Registration is closed on this server.' });
+        if (typeof username !== 'string' || typeof password !== 'string') return res.status(400).json({ error: 'Username and password are required.' });
+        if (!USERNAME_PATTERN.test(username)) return res.status(400).json({ error: 'Username must be 3-32 letters, digits, dots, dashes or underscores.' });
+        if (password.length < MIN_PASSWORD_LENGTH) return res.status(400).json({ error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` });
 
         const existingUser = await getUser(username);
         if (existingUser) {
@@ -398,7 +417,7 @@ app.post('/api/proxy', async (req: Request, res: Response) => {
 
         const newUser = {
           username,
-          password,
+          password: await hashPassword(password),
           data: {
             decks: [],
             cards: [],
@@ -409,54 +428,58 @@ app.post('/api/proxy', async (req: Request, res: Response) => {
         };
 
         await setUser(newUser);
-        return res.status(201).json({ message: 'User registered successfully.' });
+        res.setHeader('Set-Cookie', sessionCookieHeader(createSessionToken(username, secret), req.secure));
+        return res.status(201).json({ message: 'User registered successfully.', username: username.toLowerCase() });
       }
 
       case 'auth-login': {
         const { username, password } = payload;
-        if (!username || !password) return res.status(400).json({ error: 'Username and password are required.' });
+        if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
+          return res.status(400).json({ error: 'Username and password are required.' });
+        }
+        const ip = req.ip || 'unknown';
+        const lockedMinutes = loginLockMinutes(ip, username);
+        if (lockedMinutes > 0) {
+          return res.status(429).json({ error: `Too many failed attempts. Try again in ${lockedMinutes} minute(s).` });
+        }
 
         const user = await getUser(username);
-        if (!user) {
-          return res.status(404).json({ error: 'Invalid username or password.' });
-        }
-
-        if (user.password !== password) {
+        const check = await verifyPassword(password, user?.password);
+        if (!user || !check.ok) {
+          recordLoginFailure(ip, username);
           return res.status(401).json({ error: 'Invalid username or password.' });
         }
+        clearLoginFailures(ip, username);
+        if (check.needsRehash) {
+          user.password = await hashPassword(password); // replace a legacy plain-text password
+          await setUser(user);
+        }
 
-        return res.status(200).json({ message: 'Login successful.' });
+        res.setHeader('Set-Cookie', sessionCookieHeader(createSessionToken(username, secret), req.secure));
+        return res.status(200).json({ message: 'Login successful.', username: username.toLowerCase() });
+      }
+
+      case 'auth-session': {
+        if (!signedInUser || !(await getUser(signedInUser))) return res.status(200).json({ username: null });
+        return res.status(200).json({ username: signedInUser });
+      }
+
+      case 'auth-logout': {
+        res.setHeader('Set-Cookie', clearSessionCookieHeader(req.secure));
+        return res.status(200).json({ message: 'Logged out.' });
       }
 
       case 'sync-load': {
-        const { username } = payload;
-        if (!username) return res.status(400).json({ error: 'Username is required.' });
-
-        const user = await getUser(username);
-        if (user) {
-          return res.status(200).json({ data: user.data });
-        } else {
-          return res.status(200).json({ data: null });
-        }
+        const user = await getUser(signedInUser!);
+        return res.status(200).json({ data: user ? user.data : null });
       }
 
       case 'sync-merge': {
-        const { username, data: clientData } = payload;
-        if (!username || !clientData) return res.status(400).json({ error: 'Username and data are required.' });
+        const { data: clientData } = payload;
+        if (!clientData || typeof clientData !== 'object') return res.status(400).json({ error: 'Data is required.' });
 
-        let user = await getUser(username);
-        if (!user) {
-          user = {
-            username,
-            password: '',
-            data: clientData,
-          };
-          await setUser(user);
-          return res.status(200).json({
-            message: 'Data merged successfully.',
-            data: clientData,
-          });
-        }
+        const user = await getUser(signedInUser!);
+        if (!user) return res.status(401).json({ error: 'Please sign in again.', code: 'AUTH_REQUIRED' });
 
         const cloudData = user.data || { decks: [], cards: [], studyHistory: [], userProfile: null, userAchievements: [] };
 

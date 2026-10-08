@@ -4,7 +4,7 @@ import { db } from '../services/localDBService';
 import { calculateLevel, calculateStreak, checkAndAwardAchievements } from '../services/gamificationService';
 import { generateNewDailyGoals, updateGoalProgress } from '../services/dailyGoalsService';
 import { ALL_ACHIEVEMENTS } from '../services/achievements';
-import { callProxy } from '../services/apiService';
+import { AUTH_REQUIRED_EVENT, callProxy } from '../services/apiService';
 import { convertToCSV, parseCSV } from '../services/csvService';
 import { 
   generatePersianDetails,
@@ -240,7 +240,7 @@ export const useAppLogic = () => {
             userAchievements: allAchievements,
         };
 
-        const response = await callProxy('sync-merge', { username: currentUser.username, data: localData });
+        const response = await callProxy('sync-merge', { data: localData });
         
         const { data: mergedData } = response;
         if (mergedData) {
@@ -272,7 +272,7 @@ export const useAppLogic = () => {
     try {
       await (db as any).delete().then(() => (db as any).open());
       
-      const response = await callProxy('sync-load', { username });
+      const response = await callProxy('sync-load', {});
       if (response.data) {
         const { decks, cards, studyHistory, userProfile, userAchievements } = response.data;
         await (db as any).transaction('rw', [db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements], async () => {
@@ -294,19 +294,30 @@ export const useAppLogic = () => {
   };
   
   useEffect(() => {
+    // The server knows who is signed in from its HttpOnly session cookie.
     const checkSession = async () => {
-        const savedUser = sessionStorage.getItem('currentUser');
-        if (savedUser) {
-            const user: User = JSON.parse(savedUser);
-            setCurrentUser(user);
-            setIsLoggedIn(true);
-            await (db as any).open();
-            await fetchData();
+        try {
+            const { username } = await callProxy('auth-session', {});
+            if (username) {
+                setCurrentUser({ username });
+                setIsLoggedIn(true);
+                await (db as any).open();
+                await fetchData();
+            }
+        } catch (e) {
+            console.error('Could not check the session:', e);
         }
         setAppLoading(false);
     };
 
     checkSession();
+
+    const onAuthRequired = () => {
+        setIsLoggedIn(false);
+        setCurrentUser(null);
+        showToast('Your session has expired. Please sign in again.');
+    };
+    window.addEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
     
     const savedSettings = localStorage.getItem('appSettings');
     if (savedSettings) {
@@ -320,6 +331,7 @@ export const useAppLogic = () => {
     }
     checkApis();
     (db as any).open().then(() => setDbStatus('ok')).catch(() => setDbStatus('error'));
+    return () => window.removeEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
   }, []);
 
   useEffect(() => {
@@ -748,11 +760,10 @@ export const useAppLogic = () => {
   const handleLogin = async (username: string, password: string) => {
       setAuthLoading(true);
       try {
-          await callProxy('auth-login', { username, password });
-          const user = { username };
+          const res = await callProxy('auth-login', { username, password });
+          const user = { username: res.username || username };
           setCurrentUser(user);
-          sessionStorage.setItem('currentUser', JSON.stringify(user));
-          await loadDataFromCloud(username);
+          await loadDataFromCloud(user.username);
           setIsLoggedIn(true);
           showToast(`Welcome back, ${username}!`);
       } catch(e) {
@@ -765,10 +776,9 @@ export const useAppLogic = () => {
   const handleRegister = async (username: string, password: string) => {
       setAuthLoading(true);
       try {
-          await callProxy('auth-register', { username, password });
-          const user = { username };
+          const res = await callProxy('auth-register', { username, password });
+          const user = { username: res.username || username };
           setCurrentUser(user);
-          sessionStorage.setItem('currentUser', JSON.stringify(user));
           await (db as any).delete().then(() => (db as any).open());
           await fetchData();
           setIsLoggedIn(true);
@@ -780,9 +790,9 @@ export const useAppLogic = () => {
       }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     if(confirm("Are you sure you want to log out?")) {
-        sessionStorage.removeItem('currentUser');
+        await callProxy('auth-logout', {}).catch(e => console.error('Logout request failed:', e));
         window.location.reload();
     }
   };
