@@ -6,6 +6,7 @@ import { generateNewDailyGoals, updateGoalProgress } from '../services/dailyGoal
 import { ALL_ACHIEVEMENTS } from '../services/achievements';
 import { callProxy } from '../services/apiService';
 import { convertToCSV, parseCSV } from '../services/csvService';
+import { freeEnrich, FreeEnrichment } from '../services/freeExtractionService';
 import { 
   generatePersianDetails,
 } from '../services/geminiService';
@@ -501,8 +502,8 @@ export const useAppLogic = () => {
     }
 
     const now = new Date().toISOString();
-    const newCards: Flashcard[] = cardsToSave.map((cardData, index) => ({
-      id: `${Date.now()}-${index}`,
+    const newCards: Flashcard[] = cardsToSave.map((cardData) => ({
+      id: crypto.randomUUID(),
       deckId: deck!.id,
       front: cardData.front,
       back: cardData.back,
@@ -511,6 +512,12 @@ export const useAppLogic = () => {
       definition: cardData.definition || [],
       exampleSentenceTarget: cardData.exampleSentenceTarget || [],
       notes: cardData.notes || '',
+      kind: cardData.kind,
+      sourceSentence: cardData.sourceSentence,
+      collocations: cardData.collocations || [],
+      grammarPattern: cardData.grammarPattern,
+      practicePrompt: cardData.practicePrompt,
+      audioSrc: cardData.audioSrc,
       repetition: 0,
       easinessFactor: 2.5,
       interval: 0,
@@ -788,6 +795,13 @@ export const useAppLogic = () => {
   };
 
   // Return type used to aggregate stats
+  const aiRequestOptions = () => ({
+    aiProvider: settings.aiProvider || 'gemini',
+    aiBaseUrl: settings.aiBaseUrl || undefined,
+    customApiKey: settings.customApiKey || undefined,
+    model: settings.aiModel || undefined,
+  });
+
   const handleCompleteCardDetails = async (cardId: string, options: { silent?: boolean } = {}): Promise<{
     success: boolean;
     updates: { audio: boolean; def: boolean; ex: boolean; pron: boolean; trans: boolean };
@@ -812,14 +826,23 @@ export const useAppLogic = () => {
            updates.audio = true;
         }
         
+        // Common expressions and a free translation come from free dictionaries (no AI needed).
+        let enrichment: FreeEnrichment | null = null;
+        const needsCollocations = cardToComplete.kind !== 'grammar' && !(cardToComplete.collocations && cardToComplete.collocations.length > 0);
+        if (needsCollocations || !cardToComplete.back) {
+            enrichment = await freeEnrich(cardToComplete.front).catch(() => null);
+        }
+
         let persianDetails = { back: cardToComplete.back, notes: cardToComplete.notes };
         if (!cardToComplete.back || !cardToComplete.notes) {
              try {
-                persianDetails = await generatePersianDetails(cardToComplete.front);
-                if (persianDetails.back && persianDetails.back !== cardToComplete.back) updates.trans = true;
+                const ai = await generatePersianDetails(cardToComplete.front, aiRequestOptions());
+                persianDetails = { back: cardToComplete.back || ai.back, notes: cardToComplete.notes || ai.notes };
              } catch (e) {
-                 console.error("AI Generation failed during complete:", e);
+                 console.error("AI Generation failed during complete, using free translation:", e);
+                 persianDetails = { back: cardToComplete.back || enrichment?.translation || '', notes: cardToComplete.notes || '' };
              }
+             if (persianDetails.back && persianDetails.back !== cardToComplete.back) updates.trans = true;
         }
 
         if (!cardToComplete.pronunciation && details.pronunciation) updates.pron = true;
@@ -835,6 +858,7 @@ export const useAppLogic = () => {
             audioSrc: audioUrl,
             back: persianDetails.back,
             notes: persianDetails.notes || '',
+            collocations: needsCollocations && enrichment?.collocations.length ? enrichment.collocations : cardToComplete.collocations,
             updatedAt: new Date().toISOString()
         };
 

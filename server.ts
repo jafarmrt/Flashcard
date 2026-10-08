@@ -3,6 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import { fetchDictionaryEntries, freeEnrich, freeTranslate, lookupFrequencies } from './server/freeLookup';
 
 dotenv.config();
 
@@ -278,80 +279,33 @@ app.post('/api/proxy', async (req: Request, res: Response) => {
       case 'dictionary-free': {
         const { word } = payload;
         if (!word) return res.status(400).json({ error: 'Word is required.' });
-        const cleanWord = encodeURIComponent(word.trim().toLowerCase());
-        
-        // Fast fetch function for FreeDictionary
-        const fetchFreeDict = async () => {
-          try {
-            const apiResponse = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${cleanWord}`, {
-              headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) LinguaCards/1.0',
-                'Accept': 'application/json',
-              },
-              signal: AbortSignal.timeout(2500),
-            });
-            if (apiResponse.ok) {
-              return await apiResponse.json();
-            }
-          } catch {
-            return null;
-          }
-          return null;
-        };
-
-        // Fast fetch function for Datamuse (ultra-fast lexical API)
-        const fetchDatamuse = async () => {
-          try {
-            const datamuseRes = await fetch(`https://api.datamuse.com/words?sp=${cleanWord}&md=dp&max=1`, {
-              signal: AbortSignal.timeout(3000),
-            });
-            if (datamuseRes.ok) {
-              const dmData = await datamuseRes.json();
-              if (Array.isArray(dmData) && dmData.length > 0 && dmData[0].defs) {
-                const item = dmData[0];
-                const meanings: any[] = [];
-                const defs = item.defs || [];
-                const defMap: Record<string, string[]> = {};
-                defs.forEach((d: string) => {
-                  const parts = d.split('\t');
-                  const pos = parts[0] === 'n' ? 'noun' : parts[0] === 'v' ? 'verb' : parts[0] === 'adj' ? 'adjective' : parts[0] === 'adv' ? 'adverb' : 'general';
-                  const defText = parts[1] || d;
-                  if (!defMap[pos]) defMap[pos] = [];
-                  defMap[pos].push(defText);
-                });
-
-                Object.entries(defMap).forEach(([pos, list]) => {
-                  meanings.push({
-                    partOfSpeech: pos,
-                    definitions: list.map(text => ({ definition: text }))
-                  });
-                });
-
-                return [{
-                  word: item.word,
-                  phonetic: item.tags?.find((t: string) => t.startsWith('ipa:'))?.replace('ipa:', '') || '',
-                  phonetics: [],
-                  meanings,
-                }];
-              }
-            }
-          } catch {
-            return null;
-          }
-          return null;
-        };
-
-        // Attempt Free Dictionary first, fallback to Datamuse immediately
-        let data = await fetchFreeDict();
-        if (!data || !Array.isArray(data) || data.length === 0) {
-          data = await fetchDatamuse();
-        }
+        // dictionaryapi.dev first, Datamuse definitions as fallback
+        const data = await fetchDictionaryEntries(word);
 
         if (data && Array.isArray(data) && data.length > 0) {
           return res.status(200).json(data);
         }
 
         return res.status(404).json({ error: `Could not find definition for "${word}".` });
+      }
+
+      case 'word-frequencies': {
+        const { words } = payload;
+        if (!Array.isArray(words)) return res.status(400).json({ error: 'words must be an array.' });
+        const frequencies = await lookupFrequencies(words.map((w: unknown) => String(w)));
+        return res.status(200).json({ frequencies });
+      }
+
+      case 'free-enrich': {
+        const { term } = payload;
+        if (!term || typeof term !== 'string') return res.status(400).json({ error: 'term is required.' });
+        return res.status(200).json(await freeEnrich(term));
+      }
+
+      case 'free-translate': {
+        const { text } = payload;
+        if (!text || typeof text !== 'string') return res.status(400).json({ error: 'text is required.' });
+        return res.status(200).json({ translation: await freeTranslate(text) });
       }
 
       case 'dictionary-mw': {
@@ -597,7 +551,8 @@ async function startServer() {
   } else {
     const distPath = path.resolve(__dirname, 'dist');
     app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
+    // Express 5 no longer accepts '*' as a path; a regex matches every route
+    app.get(/.*/, (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

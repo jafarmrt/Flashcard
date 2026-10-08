@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Deck, Settings, ExtractedWordCard } from '../types';
-import { extractVocabularyFromText, testAiConnection } from '../services/geminiService';
+import { testAiConnection } from '../services/geminiService';
+import { extractFromLongText, ExtractionProgress, ExtractionSource } from '../services/extractionPipeline';
+import { DEFAULT_CHUNK_WORDS, splitIntoChunks, wordCount as countWords } from '../services/textChunker';
 import { speakText, stopSpeech, pauseSpeech, resumeSpeech, isSpeechSupported, getAvailableVoices } from '../services/ttsService';
 
 interface AiTextExtractorViewProps {
@@ -10,7 +12,15 @@ interface AiTextExtractorViewProps {
   onSaveExtractedCards: (cards: ExtractedWordCard[], deckName: string) => Promise<void>;
   onCancel: () => void;
   showToast: (msg: string) => void;
+  existingFronts: string[];
 }
+
+const KIND_LABELS: Record<string, { label: string; className: string }> = {
+  word: { label: 'واژه', className: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300' },
+  phrase: { label: 'عبارت', className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300' },
+  idiom: { label: 'اصطلاح', className: 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300' },
+  grammar: { label: 'ساختار دستوری', className: 'bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300' },
+};
 
 const CEFR_LEVELS = [
   { id: 'A1', label: 'A1 - Beginner' },
@@ -110,14 +120,19 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
   onSaveExtractedCards,
   onCancel,
   showToast,
+  existingFronts,
 }) => {
   const [inputText, setInputText] = useState('');
   const [targetLevel, setTargetLevel] = useState<string>(settings.userLevel || 'B2');
-  const [wordCount, setWordCount] = useState<number>(8);
+  const [wordCount, setWordCount] = useState<number>(6);
   const [selectedDeckName, setSelectedDeckName] = useState<string>(decks[0]?.name || 'AI Reading Vocabulary');
   const [isCustomDeck, setIsCustomDeck] = useState(false);
   
   const [isLoading, setIsLoading] = useState(false);
+  const [source, setSource] = useState<ExtractionSource>(settings.extractionSource || 'ai');
+  const [includeGrammar, setIncludeGrammar] = useState(true);
+  const [progress, setProgress] = useState<ExtractionProgress | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const [extractedCards, setExtractedCards] = useState<ExtractedWordCard[]>([]);
   const [step, setStep] = useState<'input' | 'review'>('input');
   
@@ -265,6 +280,17 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
     setIsConfigOpen(false);
   };
 
+  const textWordCount = useMemo(() => countWords(inputText), [inputText]);
+  const sectionCount = useMemo(
+    () => (inputText.trim() ? splitIntoChunks(inputText, DEFAULT_CHUNK_WORDS).length : 0),
+    [inputText]
+  );
+
+  const handleSelectSource = (next: ExtractionSource) => {
+    setSource(next);
+    onUpdateSettings({ extractionSource: next });
+  };
+
   const handleExtract = async () => {
     if (!inputText.trim()) {
       showToast('Please enter or paste some text first.');
@@ -272,35 +298,55 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
     }
 
     handleStopReading();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setIsLoading(true);
+    setProgress({ done: 0, total: sectionCount, found: 0, fallbackSections: 0 });
     try {
-      const cards = await extractVocabularyFromText({
+      const result = await extractFromLongText({
         text: inputText.trim(),
         level: targetLevel,
-        count: wordCount,
-        options: {
+        perSection: wordCount,
+        source,
+        existingFronts,
+        includeGrammar: source === 'ai' && includeGrammar,
+        aiOptions: {
           aiProvider: settings.aiProvider || 'gemini',
           aiBaseUrl: settings.aiBaseUrl || undefined,
           customApiKey: settings.customApiKey || undefined,
           model: settings.aiModel || 'gemini-2.5-flash',
         },
+        signal: controller.signal,
+        onProgress: setProgress,
       });
 
-      if (!cards || cards.length === 0) {
-        showToast('No suitable vocabulary could be extracted. Try a longer text or adjust level.');
-        setIsLoading(false);
+      if (result.cards.length === 0) {
+        showToast(result.failedSections > 0
+          ? 'Extraction failed. Check the AI settings or your connection.'
+          : 'No suitable vocabulary could be extracted. Try a longer text or adjust level.');
         return;
       }
 
-      setExtractedCards(cards);
+      setExtractedCards(result.cards);
       setStep('review');
-      showToast(`Extracted ${cards.length} level-appropriate words!`);
+      const notes = [
+        result.stopped ? 'stopped early' : '',
+        result.fallbackSections ? `${result.fallbackSections} section(s) used free dictionaries` : '',
+        result.failedSections ? `${result.failedSections} section(s) failed` : '',
+      ].filter(Boolean).join(', ');
+      showToast(`Found ${result.cards.length} items in ${result.sections} section(s)${notes ? ` (${notes})` : ''}.`);
     } catch (error) {
       console.error('Extraction error:', error);
-      showToast((error as Error).message || 'Failed to extract vocabulary with AI.');
+      showToast((error as Error).message || 'Failed to extract vocabulary.');
     } finally {
+      abortRef.current = null;
       setIsLoading(false);
+      setProgress(null);
     }
+  };
+
+  const handleStopExtraction = () => {
+    abortRef.current?.abort();
   };
 
   const toggleSelectCard = (index: number) => {
@@ -475,6 +521,48 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
               className="w-full p-4 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900/50 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm leading-relaxed"
             />
 
+            {textWordCount > 0 && (
+              <p className="text-xs text-slate-500 dark:text-slate-400" dir="rtl">
+                {textWordCount} کلمه؛ در {sectionCount} بخش حداکثر {DEFAULT_CHUNK_WORDS} کلمه‌ای بررسی می‌شود.
+              </p>
+            )}
+
+            {/* Extraction source */}
+            <div className="flex flex-wrap items-center gap-3 text-xs" dir="rtl">
+              <span className="font-bold text-slate-600 dark:text-slate-300">منبع استخراج:</span>
+              <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-700 rounded-lg">
+                <button
+                  type="button"
+                  onClick={() => handleSelectSource('ai')}
+                  className={`px-3 py-1 rounded-md font-semibold ${source === 'ai' ? 'bg-white dark:bg-slate-600 shadow text-indigo-700 dark:text-indigo-300' : 'text-slate-600 dark:text-slate-300'}`}
+                >
+                  هوش مصنوعی
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectSource('free')}
+                  className={`px-3 py-1 rounded-md font-semibold ${source === 'free' ? 'bg-white dark:bg-slate-600 shadow text-indigo-700 dark:text-indigo-300' : 'text-slate-600 dark:text-slate-300'}`}
+                >
+                  دیکشنری‌های رایگان (بدون هوش مصنوعی)
+                </button>
+              </div>
+              {source === 'ai' ? (
+                <label className="flex items-center gap-1.5 text-slate-600 dark:text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={includeGrammar}
+                    onChange={e => setIncludeGrammar(e.target.checked)}
+                    className="accent-indigo-600"
+                  />
+                  <span>ساختارهای دستوری هم پیدا شود</span>
+                </label>
+              ) : (
+                <span className="text-slate-500 dark:text-slate-400">
+                  واژه‌های سخت با بسامد کلمه پیدا می‌شوند؛ ساختار دستوری و نکته حفظ کردن فقط با هوش مصنوعی.
+                </span>
+              )}
+            </div>
+
             {/* Target Level & Options Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-2">
               {/* Target Level */}
@@ -505,23 +593,25 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
                 <div>
                   <div className="flex justify-between items-center mb-1">
                     <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                      Words to Extract
+                      Items per {DEFAULT_CHUNK_WORDS}-word section
                     </label>
-                    <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">{wordCount} words</span>
+                    <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">
+                      {wordCount} per section{sectionCount > 1 ? ` · up to ${wordCount * sectionCount} total` : ''}
+                    </span>
                   </div>
                   <input
                     type="range"
-                    min="3"
-                    max="25"
+                    min="2"
+                    max="15"
                     step="1"
                     value={wordCount}
                     onChange={e => setWordCount(parseInt(e.target.value, 10))}
                     className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-600"
                   />
                   <div className="flex justify-between text-[10px] text-slate-400 px-1 mt-1 font-mono">
-                    <span>3 (Quick)</span>
-                    <span>10 (Standard)</span>
-                    <span>25 (Deep)</span>
+                    <span>2 (Quick)</span>
+                    <span>6 (Standard)</span>
+                    <span>15 (Deep)</span>
                   </div>
                 </div>
 
@@ -576,8 +666,34 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
               </div>
             </div>
 
+            {progress && (
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400">
+                  <span>Section {Math.min(progress.done + 1, progress.total)} of {progress.total} · {progress.found} items found</span>
+                  {progress.fallbackSections > 0 && (
+                    <span className="text-amber-600 dark:text-amber-400">{progress.fallbackSections} section(s) via free dictionaries</span>
+                  )}
+                </div>
+                <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2">
+                  <div
+                    className="bg-indigo-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
             {/* Actions */}
             <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-100 dark:border-slate-700">
+              {isLoading && (
+                <button
+                  type="button"
+                  onClick={handleStopExtraction}
+                  className="px-4 py-2.5 rounded-xl text-sm font-semibold text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 transition"
+                >
+                  Stop
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onCancel}
@@ -602,7 +718,7 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
                 ) : (
                   <>
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-                    <span>Extract Words (Level {targetLevel})</span>
+                    <span>Extract {source === 'free' ? 'with Free Dictionaries' : 'with AI'} (Level {targetLevel})</span>
                   </>
                 )}
               </button>
@@ -675,7 +791,17 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
                           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={playingCardAudioId === `card-${idx}` ? 'text-indigo-600 animate-pulse' : ''}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
                         </button>
                       </div>
-                      <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                        {card.kind && KIND_LABELS[card.kind] && (
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${KIND_LABELS[card.kind].className}`}>
+                            {KIND_LABELS[card.kind].label}
+                          </span>
+                        )}
+                        {card.alreadyInDeck && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                            قبلاً کارت دارد
+                          </span>
+                        )}
                         {card.pronunciation && <span className="font-mono text-indigo-600 dark:text-indigo-400">{card.pronunciation}</span>}
                         {card.partOfSpeech && (
                           <span className="text-slate-400 dark:text-slate-500">
@@ -713,11 +839,43 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
                     </div>
                   )}
 
+                  {card.kind === 'grammar' && (card.grammarPattern || card.practicePrompt) && (
+                    <div className="space-y-1">
+                      {card.grammarPattern && (
+                        <p className="text-xs font-mono text-rose-700 dark:text-rose-300">{card.grammarPattern}</p>
+                      )}
+                      {card.practicePrompt && (
+                        <p dir="rtl" className="text-xs text-slate-600 dark:text-slate-300">✍️ {card.practicePrompt}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {card.sourceSentence && (
+                    <div>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                          From your text:
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handlePlayCardSnippet(card.sourceSentence!, `src-${idx}`)}
+                          className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon></svg>
+                          <span>Listen</span>
+                        </button>
+                      </div>
+                      <p className="text-xs text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700/50 p-2.5 rounded-xl font-sans leading-relaxed">
+                        "{card.sourceSentence}"
+                      </p>
+                    </div>
+                  )}
+
                   {card.exampleSentenceTarget && card.exampleSentenceTarget.length > 0 && (
                     <div>
                       <div className="flex items-center justify-between mb-0.5">
                         <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                          Context Example:
+                          Example:
                         </span>
                         <button
                           type="button"
@@ -728,9 +886,33 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
                           <span>Listen</span>
                         </button>
                       </div>
-                      <p className="text-xs text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700/50 p-2.5 rounded-xl font-sans leading-relaxed">
+                      <p className="text-xs text-slate-600 dark:text-slate-300 italic leading-relaxed">
                         "{card.exampleSentenceTarget[0]}"
                       </p>
+                    </div>
+                  )}
+
+                  {card.collocations && card.collocations.length > 0 && (
+                    <div>
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 block mb-1">
+                        Common expressions:
+                      </span>
+                      <ul className="space-y-1">
+                        {card.collocations.map((c, ci) => (
+                          <li key={ci} className="flex items-center gap-2 text-xs">
+                            <button
+                              type="button"
+                              onClick={() => handlePlayCardSnippet(c.phrase, `col-${idx}-${ci}`)}
+                              className="text-slate-400 hover:text-indigo-600"
+                              title="Listen"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={playingCardAudioId === `col-${idx}-${ci}` ? 'text-indigo-600 animate-pulse' : ''}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon></svg>
+                            </button>
+                            <span className="font-medium text-slate-800 dark:text-slate-200">{c.phrase}</span>
+                            {c.meaning && <span dir="rtl" className="text-slate-500 dark:text-slate-400 font-persian">{c.meaning}</span>}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   )}
 
