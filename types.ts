@@ -53,6 +53,16 @@ export interface UserAchievement {
 }
 
 
+// What a card teaches: a single word, a multi-word phrase (phrasal verb,
+// collocation), an idiom, or a grammar structure.
+export type CardKind = 'word' | 'phrase' | 'idiom' | 'grammar';
+
+// Another common expression the term appears in, e.g. "make a decision".
+export interface Collocation {
+  phrase: string;
+  meaning?: string; // Persian meaning of the whole expression
+}
+
 export interface Flashcard {
   id: string;
   deckId: string;
@@ -63,6 +73,11 @@ export interface Flashcard {
   definition?: string[];
   exampleSentenceTarget?: string[];
   notes?: string;
+  kind?: CardKind;
+  sourceSentence?: string; // The exact sentence of the source text the term came from
+  collocations?: Collocation[];
+  grammarPattern?: string; // Grammar cards: the structure, e.g. "had + past participle"
+  practicePrompt?: string; // Grammar cards: a sentence-building exercise
   isDeleted?: boolean;
   createdAt: string; // ISO string
   updatedAt?: string; // ISO string for timestamp-based sync
@@ -88,6 +103,7 @@ export interface Settings {
     customApiKey?: string;
     aiModel?: string;
     userLevel?: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2' | 'IELTS' | 'TOEFL';
+    extractionSource?: 'ai' | 'free';
 }
 
 export interface ExtractedWordCard {
@@ -98,7 +114,14 @@ export interface ExtractedWordCard {
   definition?: string[];
   exampleSentenceTarget?: string[];
   notes?: string;
+  kind?: CardKind;
+  sourceSentence?: string;
+  collocations?: Collocation[];
+  grammarPattern?: string;
+  practicePrompt?: string;
+  audioSrc?: string;
   selected?: boolean;
+  alreadyInDeck?: boolean; // A card with the same term already exists
 }
 
 export interface StudySessionOptions {

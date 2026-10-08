@@ -4,6 +4,7 @@ import { calculateSrs, PerformanceRating } from '../services/srsService';
 import { db } from '../services/localDBService';
 import { levenshtein } from '../services/stringSimilarity';
 import { fetchAudioData } from '../services/dictionaryService';
+import { isSpeechSupported, speakText } from '../services/ttsService';
 
 interface StudyViewProps {
   cards: Flashcard[];
@@ -13,11 +14,30 @@ interface StudyViewProps {
 
 const SpeakerIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>;
 
+// Reads a word, phrase or sentence aloud with the browser's speech synthesis.
+const SpeakButton: React.FC<{ text: string; className?: string; size?: number }> = ({ text, className = '', size = 16 }) => {
+  if (!isSpeechSupported() || !text.trim()) return null;
+  return (
+    <button
+      type="button"
+      onClick={e => { e.stopPropagation(); speakText(text, { rate: 0.95 }); }}
+      aria-label={`Listen: ${text}`}
+      className={`shrink-0 opacity-70 hover:opacity-100 transition-opacity ${className}`}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+    </button>
+  );
+};
+
 const FlashcardComponent: React.FC<{ card: Flashcard; isFlipped: boolean; }> = ({ card, isFlipped }) => {
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const playAudio = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (card.audioSrc && !isAudioPlaying) {
+    if (!card.audioSrc) {
+      speakText(card.front, { rate: 0.9 }); // no recorded audio: use speech synthesis
+      return;
+    }
+    if (!isAudioPlaying) {
       setIsAudioPlaying(true);
       try {
         const dataUrl = await fetchAudioData(card.audioSrc);
@@ -43,7 +63,7 @@ const FlashcardComponent: React.FC<{ card: Flashcard; isFlipped: boolean; }> = (
       <div className="relative w-full h-full transition-transform duration-500" style={{ transformStyle: 'preserve-3d', transform: isFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)' }}>
         {/* Front */}
         <div className="absolute w-full h-full bg-white dark:bg-slate-800 rounded-lg shadow-xl flex flex-col justify-center items-center p-6" style={{ backfaceVisibility: 'hidden' }}>
-          {card.audioSrc && (
+          {(card.audioSrc || isSpeechSupported()) && card.kind !== 'grammar' && (
             <button onClick={playAudio} disabled={isAudioPlaying} aria-label="Play pronunciation" className="absolute top-4 right-4 text-slate-400 hover:text-indigo-500 transition-colors disabled:opacity-50">
               {isAudioPlaying ? (
                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
@@ -57,6 +77,17 @@ const FlashcardComponent: React.FC<{ card: Flashcard; isFlipped: boolean; }> = (
           <p className="text-sm text-slate-500 dark:text-slate-400 mb-2">{card.pronunciation}</p>
           <h2 className="text-4xl md:text-5xl font-bold text-center text-slate-800 dark:text-slate-100 break-words">{card.front}</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">{card.partOfSpeech}</p>
+          {card.kind === 'grammar' ? (
+            <div className="mt-4 text-center space-y-2">
+              {card.grammarPattern && <p className="font-mono text-rose-600 dark:text-rose-300">{card.grammarPattern}</p>}
+              {card.practicePrompt && <p dir="rtl" className="text-sm text-slate-600 dark:text-slate-300">✍️ {card.practicePrompt}</p>}
+            </div>
+          ) : card.sourceSentence ? (
+            <div className="mt-4 flex items-start gap-2 max-w-full text-sm text-slate-500 dark:text-slate-400 italic text-center">
+              <span className="line-clamp-3">"{card.sourceSentence}"</span>
+              <SpeakButton text={card.sourceSentence} className="text-slate-400 hover:text-indigo-500 not-italic" />
+            </div>
+          ) : null}
         </div>
         {/* Back */}
         <div 
@@ -80,11 +111,35 @@ const FlashcardComponent: React.FC<{ card: Flashcard; isFlipped: boolean; }> = (
                 </div>
             )}
 
+            {card.sourceSentence && card.kind === 'grammar' && (
+                <div>
+                    <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wider">From your text</p>
+                    <p className="mt-1 flex items-start gap-2 italic text-indigo-50">"{card.sourceSentence}" <SpeakButton text={card.sourceSentence} /></p>
+                </div>
+            )}
+
             {exampleSentences && exampleSentences.length > 0 && (
                 <div>
                     <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wider">Example(s)</p>
                      <ul className="space-y-1 mt-1">
-                      {exampleSentences.map((ex, i) => <li key={i} className="italic text-indigo-50">"{ex}"</li>)}
+                      {exampleSentences.map((ex, i) => (
+                        <li key={i} className="flex items-start gap-2 italic text-indigo-50">"{ex}" <SpeakButton text={ex} /></li>
+                      ))}
+                    </ul>
+                </div>
+            )}
+
+            {card.collocations && card.collocations.length > 0 && (
+                <div>
+                    <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wider">Common expressions</p>
+                    <ul className="space-y-1 mt-1">
+                      {card.collocations.map((c, i) => (
+                        <li key={i} className="flex items-center gap-2 text-indigo-50">
+                          <SpeakButton text={c.phrase} size={14} />
+                          <span className="font-medium">{c.phrase}</span>
+                          {c.meaning && <span dir="rtl" className="text-indigo-200">{c.meaning}</span>}
+                        </li>
+                      ))}
                     </ul>
                 </div>
             )}

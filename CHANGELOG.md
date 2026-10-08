@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.3.0] - Long Texts, Richer Cards & Free Dictionary Mode
+- **Feature:** Long texts are split into sections of at most 300 words on sentence boundaries; each section is analysed on its own with a progress bar and a Stop button, and the results are merged without repeats.
+- **Feature:** Terms that already have a card are excluded from the AI request and flagged ("قبلاً کارت دارد") instead of being added again.
+- **Feature:** Cards now keep the exact sentence of your text, 3-5 common expressions that use the term (each with a listen button), a type (word, phrase, idiom, grammar) and, for grammar structures, the pattern and a sentence-building exercise. Every sentence and expression on a study card can be read aloud.
+- **Feature:** "Free dictionaries" extraction works without AI: hard words are chosen by word frequency for your level, phrasal verbs are kept when a dictionary knows them, and meaning, IPA, audio, Persian translation (MyMemory) and common expressions (Datamuse) are fetched for each. If AI fails for a section, that section falls back to this mode automatically.
+- **Fix:** A failed AI translation no longer saves "Could not generate translation." onto the card; "Complete card" now uses your AI settings and falls back to a free translation, and also adds common expressions.
+- **Fix:** The Express server crashed on start in production mode (`app.get('*')` is invalid in Express 5).
+
 ## [5.2.0] - Auto-Fix Reporting & Stability Fixes
 - **Feature:** Added a detailed report summary after the "Auto-Fix All" process completes. You can now see exactly how many cards were updated and what specific information (Audio, Definitions, Translations, etc.) was added to your collection.
 - **Fix:** Resolved a critical issue where cards updated via "Auto-Fix" would revert to their previous state after a few moments. This was caused by a race condition in the background synchronization process, which has now been fixed by pausing sync during intensive operations and improving the data merge strategy.

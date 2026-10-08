@@ -66,6 +66,7 @@ const App: React.FC = () => {
                     settings={settings}
                     onUpdateSettings={updateSettings}
                     onSaveExtractedCards={handleSaveExtractedCards}
+                    existingFronts={visibleFlashcards.map(c => c.front)}
                     onCancel={() => setView('DECKS')}
                     showToast={showToast}
                 />;
