@@ -16,7 +16,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3000;
+// PORT and HOST let the app share a server with other apps: on a VPS bind it
+// to 127.0.0.1 on a free port and let nginx in front of it face the internet.
+const PORT = Number(process.env.PORT) || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
+// User data and the session secret live here; on a VPS keep them outside the
+// code checkout so `git pull` never touches them.
+const DATA_DIR = path.resolve(process.env.DATA_DIR || __dirname);
 
 // The app and its API share one origin, so no CORS headers are sent: other
 // sites cannot call the API from a browser. Behind nginx, trust its
@@ -27,7 +33,7 @@ app.use(express.json({ limit: '50mb' }));
 import fs from 'fs';
 
 // File-backed and in-memory KV fallback store for user data and sync
-const DATA_FILE = path.join(__dirname, '.data_store.json');
+const DATA_FILE = path.join(DATA_DIR, '.data_store.json');
 const inMemoryStore = new Map<string, any>();
 
 // Load existing data from file if available
@@ -215,7 +221,7 @@ app.post('/api/proxy', async (req: Request, res: Response) => {
 
   // Every action except the pings and sign-in needs a valid session cookie;
   // the signed-in user comes from the cookie, never from the request body.
-  const secret = getSessionSecret(__dirname);
+  const secret = getSessionSecret(DATA_DIR);
   const signedInUser = sessionUser(req.headers.cookie, secret);
   if (!PUBLIC_ACTIONS.has(action) && !signedInUser) {
     return res.status(401).json({ error: 'Please sign in again.', code: 'AUTH_REQUIRED' });
@@ -585,8 +591,8 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Lingua Cards server listening on http://0.0.0.0:${PORT}`);
+  app.listen(PORT, HOST, () => {
+    console.log(`🚀 Lingua Cards server listening on http://${HOST}:${PORT}`);
   });
 }
 
