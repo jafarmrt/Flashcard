@@ -1,10 +1,17 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Flashcard } from '../types';
-import { calculateSrs, PerformanceRating } from '../services/srsService';
+import { calculateSrs, previewIntervals, formatInterval, PerformanceRating } from '../services/srsService';
 import { db } from '../services/localDBService';
 import { levenshtein } from '../services/stringSimilarity';
 import { fetchAudioData } from '../services/dictionaryService';
 import { isSpeechSupported, speakText } from '../services/ttsService';
+
+const RATING_BUTTONS: { rating: PerformanceRating; label: string; className: string }[] = [
+  { rating: 'AGAIN', label: 'Again', className: 'bg-red-500 hover:bg-red-600' },
+  { rating: 'HARD', label: 'Hard', className: 'bg-amber-500 hover:bg-amber-600' },
+  { rating: 'GOOD', label: 'Good', className: 'bg-blue-500 hover:bg-blue-600' },
+  { rating: 'EASY', label: 'Easy', className: 'bg-green-500 hover:bg-green-600' },
+];
 
 interface StudyViewProps {
   cards: Flashcard[];
@@ -197,6 +204,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, onExit, awardXP }) 
     // Award XP for successful reviews
     if (rating === 'EASY') awardXP(10);
     if (rating === 'GOOD') awardXP(5);
+    if (rating === 'HARD') awardXP(3);
 
     await db.studyHistory.add({
       cardId: currentCard.id,
@@ -204,13 +212,14 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, onExit, awardXP }) 
       rating: rating,
     });
 
-    const updatedCard = calculateSrs(currentCard, rating);
+    // A card seen again in this session continues from its latest state.
+    const updatedCard = calculateSrs(updatedCards.get(currentCard.id) || currentCard, rating);
     setUpdatedCards(prev => new Map(prev).set(updatedCard.id, updatedCard));
     
     let finalQueue = [...sessionQueue];
     if (rating === 'AGAIN') {
       const reAddIndex = Math.min(currentIndex + 5, finalQueue.length);
-      finalQueue.splice(reAddIndex, 0, currentCard);
+      finalQueue.splice(reAddIndex, 0, updatedCard);
       setSessionQueue(finalQueue);
     }
 
@@ -234,6 +243,10 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, onExit, awardXP }) 
   };
 
   const currentCard = useMemo(() => sessionQueue[currentIndex], [sessionQueue, currentIndex]);
+  const intervals = useMemo(
+    () => (currentCard ? previewIntervals(updatedCards.get(currentCard.id) || currentCard) : { AGAIN: 1, HARD: 1, GOOD: 1, EASY: 1 }),
+    [currentCard, updatedCards]
+  );
 
   if (sessionComplete) {
      return (
@@ -280,16 +293,13 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, onExit, awardXP }) 
 
       <div className="mt-8 flex flex-col justify-center items-center gap-4 w-full h-20">
         {isFlipped ? (
-            <div className="flex justify-center items-center gap-2 sm:gap-4 w-full animate-flip-in">
-                 <button onClick={() => handleRating('AGAIN')} className="px-4 sm:px-6 py-3 w-1/3 max-w-xs rounded-lg bg-red-500 text-white font-semibold shadow-md hover:bg-red-600 transition-colors">
-                    Again
-                </button>
-                <button onClick={() => handleRating('GOOD')} className="px-4 sm:px-6 py-3 w-1/3 max-w-xs rounded-lg bg-blue-500 text-white font-semibold shadow-md hover:bg-blue-600 transition-colors">
-                    Good
-                </button>
-                <button onClick={() => handleRating('EASY')} className="px-4 sm:px-6 py-3 w-1/3 max-w-xs rounded-lg bg-green-500 text-white font-semibold shadow-md hover:bg-green-600 transition-colors">
-                    Easy
-                </button>
+            <div className="flex justify-center items-center gap-2 sm:gap-3 w-full animate-flip-in">
+                {RATING_BUTTONS.map(({ rating, label, className }) => (
+                    <button key={rating} onClick={() => handleRating(rating)} className={`px-2 sm:px-5 py-2 w-1/4 max-w-[10rem] rounded-lg text-white font-semibold shadow-md transition-colors flex flex-col items-center ${className}`}>
+                        <span>{label}</span>
+                        <span className="text-xs font-normal opacity-80">{formatInterval(intervals[rating])}</span>
+                    </button>
+                ))}
             </div>
         ) : studyMode === 'flip' ? (
              <button onClick={() => setIsFlipped(true)} className="px-10 py-3 rounded-lg bg-indigo-600 text-white font-semibold shadow-md hover:bg-indigo-700 transition-colors">

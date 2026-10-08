@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.4.0] - FSRS Scheduling
+- **Feature:** Reviews are now scheduled with FSRS-5, which tracks how well you know each card (stability and difficulty) and shows it again just before you are likely to forget it, aiming for 90% recall. It needs noticeably fewer reviews than the old SM-2 rule for the same retention.
+- **Feature:** A fourth answer button, **Hard**, sits between Again and Good. Each button shows when the card will come back (for example `3d`, `2mo`).
+- **Improvement:** Existing cards keep their schedule: their current interval and easiness are converted to FSRS the first time you review them.
+- **Fix:** A card answered "Again" and repeated in the same session now continues from that answer instead of being scored twice from its old state.
+
 ## [5.3.0] - Long Texts, Richer Cards & Free Dictionary Mode
 - **Feature:** Long texts are split into sections of at most 300 words on sentence boundaries; each section is analysed on its own with a progress bar and a Stop button, and the results are merged without repeats.
 - **Feature:** Terms that already have a card are excluded from the AI request and flagged ("قبلاً کارت دارد") instead of being added again.

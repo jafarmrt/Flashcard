@@ -4,7 +4,7 @@ export interface Deck {
   isDeleted?: boolean;
 }
 
-export type PerformanceRating = 'AGAIN' | 'GOOD' | 'EASY';
+export type PerformanceRating = 'AGAIN' | 'HARD' | 'GOOD' | 'EASY';
 
 export interface StudyLog {
   id?: number; // auto-incremented primary key
@@ -90,6 +90,12 @@ export interface Flashcard {
   easinessFactor: number;
   interval: number;
   dueDate: string; // ISO string
+
+  // FSRS memory state; absent on cards not yet reviewed with FSRS
+  stability?: number; // days until recall probability falls to 90%
+  difficulty?: number; // 1 (easy) to 10 (hard)
+  lastReviewed?: string; // ISO timestamp
+  lapses?: number; // times forgotten after being learned
 }
 
 export interface Settings {
