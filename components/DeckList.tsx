@@ -12,6 +12,7 @@ interface DeckListProps {
     onDeleteDeck: (deckId: string) => Promise<void>;
     onViewAllCards: () => void;
     onBulkAdd: () => void;
+    onAiExtract?: () => void;
     userProfile: UserProfile | null;
     streak: number;
 }
@@ -102,7 +103,7 @@ const DeckCard: React.FC<{
 };
 
 
-const DeckList: React.FC<DeckListProps> = ({ decks, cards, onStudyDeck, onRenameDeck, onDeleteDeck, onViewAllCards, onBulkAdd, userProfile, streak }) => {
+const DeckList: React.FC<DeckListProps> = ({ decks, cards, onStudyDeck, onRenameDeck, onDeleteDeck, onViewAllCards, onBulkAdd, onAiExtract, userProfile, streak }) => {
     
     if (decks.length === 0) {
         return (
@@ -144,13 +145,19 @@ const DeckList: React.FC<DeckListProps> = ({ decks, cards, onStudyDeck, onRename
 
             <div className="flex flex-col sm:flex-row justify-between sm:items-center mb-6 gap-4">
                  <h2 className="text-3xl font-bold text-slate-800 dark:text-slate-100">Your Decks</h2>
-                 <div className="flex items-center gap-2">
-                    <button onClick={onViewAllCards} className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">
+                 <div className="flex flex-wrap items-center gap-2">
+                    <button onClick={onViewAllCards} className="px-3.5 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">
                         View All {totalCards} Cards
                     </button>
-                    <button onClick={onBulkAdd} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors flex items-center gap-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
-                        Bulk Add
+                    {onAiExtract && (
+                      <button onClick={onAiExtract} className="px-3.5 py-2 text-sm font-medium text-white bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 rounded-md transition-all shadow-sm flex items-center gap-1.5">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                        <span>AI Text Extractor</span>
+                      </button>
+                    )}
+                    <button onClick={onBulkAdd} className="px-3.5 py-2 text-sm font-medium text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 border border-indigo-200 dark:border-indigo-800 rounded-md transition-colors flex items-center gap-1.5">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+                        <span>Bulk Add</span>
                     </button>
                  </div>
             </div>

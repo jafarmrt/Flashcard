@@ -1,7 +1,6 @@
 import React from 'react';
 
-// Fix: Add 'ACHIEVEMENTS' to the View type to match App.tsx.
-type View = 'LIST' | 'STUDY' | 'STATS' | 'FORM' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS' | 'PROFILE';
+type View = 'LIST' | 'STUDY' | 'STATS' | 'FORM' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS' | 'PROFILE' | 'AI_EXTRACT';
 
 interface HeaderProps {
   onNavigate: (view: View) => void;
@@ -11,8 +10,8 @@ interface HeaderProps {
 }
 
 const Header: React.FC<HeaderProps> = ({ onNavigate, onAddCard, isStudyDisabled, currentView }) => {
-  const navButtonStyle = "px-3 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2";
-  const activeStyle = "bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100";
+  const navButtonStyle = "px-3 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-1.5";
+  const activeStyle = "bg-slate-100 dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 font-semibold";
   const inactiveStyle = "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700";
 
   return (
@@ -28,12 +27,19 @@ const Header: React.FC<HeaderProps> = ({ onNavigate, onAddCard, isStudyDisabled,
             <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Lingua Cards</h1>
           </div>
           {/* Desktop Navigation - Hidden on mobile */}
-          <div className="hidden md:flex items-center space-x-2 sm:space-x-4">
+          <div className="hidden md:flex items-center space-x-1 sm:space-x-3">
             <button
               onClick={() => onNavigate('DECKS')}
               className={`${navButtonStyle} ${['LIST', 'DECKS', 'FORM', 'BULK_ADD'].includes(currentView) ? activeStyle : inactiveStyle}`}
             >
               Decks
+            </button>
+            <button
+              onClick={() => onNavigate('AI_EXTRACT')}
+              className={`${navButtonStyle} ${currentView === 'AI_EXTRACT' ? activeStyle : inactiveStyle} text-indigo-600 dark:text-indigo-400 font-medium`}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+              <span>AI Extract</span>
             </button>
             <button
               onClick={() => onNavigate('STUDY')}
@@ -63,7 +69,7 @@ const Header: React.FC<HeaderProps> = ({ onNavigate, onAddCard, isStudyDisabled,
             </button>
             <button
               onClick={onAddCard}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 shadow-sm"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
               <span>Add Card</span>

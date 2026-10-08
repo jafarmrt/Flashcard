@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile, UserAchievement } from '../types';
+import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile, UserAchievement, ExtractedWordCard } from '../types';
 import { db } from '../services/localDBService';
 import { calculateLevel, calculateStreak, checkAndAwardAchievements } from '../services/gamificationService';
 import { generateNewDailyGoals, updateGoalProgress } from '../services/dailyGoalsService';
@@ -18,7 +18,7 @@ import {
 import { AutoFixStats } from '../components/AutoFixReportModal';
 
 // Types used within the hook and exported for the App component
-export type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS' | 'PROFILE';
+export type View = 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS' | 'PROFILE' | 'AI_EXTRACT';
 export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 export type HealthStatus = 'ok' | 'error' | 'checking';
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted' | 'createdAt' | 'updatedAt'>;
@@ -482,7 +482,53 @@ export const useAppLogic = () => {
     handleCheckAchievements();
     showToast(`${newCards.length} cards added to "${trimmedDeckName}"!`);
     setView('DECKS');
-};
+  };
+
+  const handleSaveExtractedCards = async (cardsToSave: ExtractedWordCard[], deckName: string) => {
+    const trimmedDeckName = deckName.trim();
+    if (!trimmedDeckName) {
+      showToast('Deck name cannot be empty.');
+      return;
+    }
+
+    const allDecks = await db.decks.toArray();
+    let deck = allDecks.find(d => d.name.toLowerCase() === trimmedDeckName.toLowerCase() && !d.isDeleted);
+
+    if (!deck) {
+      const newDeck: Deck = { id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, name: trimmedDeckName };
+      await db.decks.add(newDeck);
+      deck = newDeck;
+    }
+
+    const now = new Date().toISOString();
+    const newCards: Flashcard[] = cardsToSave.map((cardData, index) => ({
+      id: `${Date.now()}-${index}`,
+      deckId: deck!.id,
+      front: cardData.front,
+      back: cardData.back,
+      pronunciation: cardData.pronunciation || '',
+      partOfSpeech: cardData.partOfSpeech || '',
+      definition: cardData.definition || [],
+      exampleSentenceTarget: cardData.exampleSentenceTarget || [],
+      notes: cardData.notes || '',
+      repetition: 0,
+      easinessFactor: 2.5,
+      interval: 0,
+      createdAt: now,
+      updatedAt: now,
+      dueDate: now,
+    }));
+
+    if (newCards.length > 0) {
+      await db.flashcards.bulkAdd(newCards);
+      await awardXP(newCards.length * 3, `Extracted ${newCards.length} AI Cards! (+${newCards.length * 3} XP)`);
+    }
+
+    await fetchData();
+    handleCheckAchievements();
+    showToast(`${newCards.length} cards added to "${trimmedDeckName}"!`);
+    setView('DECKS');
+  };
 
   const handleSessionEnd = async (updatedCardsFromSession: Flashcard[]) => {
     if (updatedCardsFromSession.length > 0) {
@@ -887,6 +933,6 @@ export const useAppLogic = () => {
       handleResetApp, handleStudyDeck, handleStartStudySession, setIsStudySetupModalOpen,
       handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
       updateSettings, handleCheckAchievements, handleGoalUpdate, handleCompleteCardDetails,
-      handleAutoFixCards, handleStopAutoFix, handleCloseAutoFixReport
+      handleAutoFixCards, handleStopAutoFix, handleCloseAutoFixReport, handleSaveExtractedCards
   };
 };

@@ -4,21 +4,29 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "tsx server.ts",
     "build": "vite build",
+    "lint": "tsc --noEmit",
+    "start": "tsx server.ts",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@vercel/node": "^5.5.5",
+    "buffer": "^6.0.3",
+    "cors": "^2.8.6",
+    "dexie": "^4.0.7",
+    "dotenv": "^18.0.5",
+    "express": "^5.2.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "dexie": "^4.0.7",
-    "webworker": "^0.8.4",
-    "@vercel/node": "^5.5.5",
-    "buffer": "^6.0.3"
+    "webworker": "^0.8.4"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "tsx": "^4.23.15",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }

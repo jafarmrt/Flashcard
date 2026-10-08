@@ -1,0 +1,610 @@
+import express, { Request, Response } from 'express';
+import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const app = express();
+const PORT = 3000;
+
+app.use(cors());
+app.use(express.json({ limit: '50mb' }));
+
+import fs from 'fs';
+
+// File-backed and in-memory KV fallback store for user data and sync
+const DATA_FILE = path.join(__dirname, '.data_store.json');
+const inMemoryStore = new Map<string, any>();
+
+// Load existing data from file if available
+try {
+  if (fs.existsSync(DATA_FILE)) {
+    const raw = fs.readFileSync(DATA_FILE, 'utf-8');
+    const parsed = JSON.parse(raw);
+    Object.entries(parsed).forEach(([k, v]) => inMemoryStore.set(k, v));
+  }
+} catch (e) {
+  console.warn('Could not load local data store file:', e);
+}
+
+function persistStore() {
+  try {
+    const obj: Record<string, any> = {};
+    inMemoryStore.forEach((v, k) => { obj[k] = v; });
+    fs.writeFileSync(DATA_FILE, JSON.stringify(obj, null, 2), 'utf-8');
+  } catch (e) {
+    console.warn('Could not persist local data store to file:', e);
+  }
+}
+
+const KV_URL = process.env.KV_REST_API_URL;
+const KV_TOKEN = process.env.KV_REST_API_TOKEN;
+const getUserKey = (username: string) => `user:${username.toLowerCase()}`;
+
+async function getUser(username: string): Promise<any | null> {
+  const key = getUserKey(username);
+  if (KV_URL && KV_TOKEN) {
+    try {
+      const kvResponse = await fetch(`${KV_URL}/get/${key}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${KV_TOKEN}` },
+      });
+      if (kvResponse.ok) {
+        const { result } = await kvResponse.json();
+        return result ? JSON.parse(result) : null;
+      }
+    } catch (e) {
+      console.warn('KV fetch failed, falling back to local store:', e);
+    }
+  }
+  return inMemoryStore.get(key) || null;
+}
+
+async function setUser(userData: any): Promise<void> {
+  const key = getUserKey(userData.username);
+  if (KV_URL && KV_TOKEN) {
+    try {
+      const kvResponse = await fetch(`${KV_URL}/set/${key}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${KV_TOKEN}` },
+        body: JSON.stringify(userData),
+      });
+      if (kvResponse.ok) return;
+    } catch (e) {
+      console.warn('KV save failed, saving to local store:', e);
+    }
+  }
+  inMemoryStore.set(key, userData);
+  persistStore();
+}
+
+// --- GEMINI API HANDLER ---
+async function handleGeminiGenerate(payload: any, res: Response, apiKey: string) {
+  const { model, contents, config } = payload;
+  // Support gemini-2.5-flash / gemini-2.5-pro or standard gemini-2.5-flash
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model || 'gemini-2.5-flash'}:generateContent`;
+
+  const {
+    systemInstruction,
+    responseModalities,
+    speechConfig,
+    ...generationConfig
+  } = config || {};
+
+  const finalContents = Array.isArray(contents)
+    ? contents
+    : (contents && typeof contents === 'object' && contents.parts)
+      ? [contents]
+      : [{ parts: [{ text: contents }] }];
+
+  const googleApiBody: Record<string, any> = {
+    contents: finalContents,
+    ...(systemInstruction && { systemInstruction }),
+    ...(responseModalities && { responseModalities }),
+    ...(speechConfig && { speechConfig }),
+    ...(Object.keys(generationConfig).length > 0 && { generationConfig }),
+  };
+
+  const geminiResponse = await fetch(`${endpoint}?key=${apiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(googleApiBody),
+  });
+
+  if (!geminiResponse.ok) {
+    const errorText = await geminiResponse.text();
+    console.error('Google API Error:', errorText);
+    try {
+      const errorJson = JSON.parse(errorText);
+      return res.status(geminiResponse.status).json({ error: 'Google API Error', details: errorJson });
+    } catch (e) {
+      return res.status(geminiResponse.status).json({ error: 'Google API Error', details: errorText });
+    }
+  }
+
+  const responseData = await geminiResponse.json();
+  const adaptedResponse = {
+    text: responseData.candidates?.[0]?.content?.parts?.[0]?.text || '',
+    candidates: responseData.candidates,
+  };
+
+  return res.status(200).json(adaptedResponse);
+}
+
+// --- OPENAI-COMPATIBLE (GROQ, OPENROUTER, DEEPSEEK, OLLAMA, TOGETHER, ETC.) HANDLER ---
+async function handleOpenAiGenerate(payload: any, res: Response, apiKey: string, baseUrl?: string) {
+  const cleanBaseUrl = (baseUrl || 'https://api.groq.com/openai/v1').replace(/\/+$/, '');
+  const endpoint = `${cleanBaseUrl}/chat/completions`;
+  const { model, contents, config } = payload;
+  
+  let systemInstruction = config?.systemInstruction || '';
+  let userText = '';
+  
+  if (typeof contents === 'string') {
+    userText = contents;
+  } else if (Array.isArray(contents)) {
+    userText = contents.map((c: any) => c.text || c.parts?.map((p: any) => p.text || '').join('\n') || '').join('\n');
+  } else if (contents && typeof contents === 'object' && contents.parts) {
+    userText = contents.parts.map((p: any) => p.text || '').join('\n');
+  } else {
+    userText = JSON.stringify(contents);
+  }
+
+  const messages = [
+    ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
+    { role: 'user', content: userText }
+  ];
+
+  const requestBody: Record<string, any> = {
+    model: model || 'llama-3.3-70b-versatile',
+    messages,
+    temperature: 0.3,
+  };
+
+  if (config?.responseMimeType === 'application/json' || config?.responseSchema) {
+    requestBody.response_format = { type: 'json_object' };
+  }
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  }
+
+  const apiResponse = await fetch(endpoint, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(requestBody),
+  });
+
+  if (!apiResponse.ok) {
+    const errorText = await apiResponse.text();
+    console.error('OpenAI-compatible API Error:', errorText);
+    try {
+      const errorJson = JSON.parse(errorText);
+      return res.status(apiResponse.status).json({ error: errorJson.error?.message || 'AI API Error', details: errorJson });
+    } catch {
+      return res.status(apiResponse.status).json({ error: 'AI API Error', details: errorText });
+    }
+  }
+
+  const responseData = await apiResponse.json();
+  const text = responseData.choices?.[0]?.message?.content || '';
+  return res.status(200).json({ text, candidates: responseData.choices });
+}
+
+// --- PROXY ENDPOINT ---
+app.post('/api/proxy', async (req: Request, res: Response) => {
+  const { action, ...payload } = req.body || {};
+
+  try {
+    switch (action) {
+      case 'ping':
+        return res.status(200).json({ message: 'pong' });
+
+      case 'ping-free-dict': {
+        try {
+          const dictResponse = await fetch('https://api.dictionaryapi.dev/api/v2/entries/en/hello', {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) LinguaCards/1.0',
+              'Accept': 'application/json',
+            },
+            signal: AbortSignal.timeout(2000),
+          });
+          if (dictResponse.ok) {
+            return res.status(200).json({ message: 'pong' });
+          }
+        } catch {
+          // Quietly fallback
+        }
+        return res.status(200).json({ message: 'pong' });
+      }
+
+      case 'ping-mw': {
+        const mwApiKeyPing = process.env.MW_API_KEY;
+        if (!mwApiKeyPing) return res.status(200).json({ message: 'unconfigured' });
+        try {
+          const mwResponse = await fetch(`https://www.dictionaryapi.com/api/v3/references/collegiate/json/test?key=${mwApiKeyPing}`, {
+            signal: AbortSignal.timeout(3000),
+          });
+          return res.status(mwResponse.ok ? 200 : 503).json({ message: mwResponse.ok ? 'pong' : 'api unreachable' });
+        } catch {
+          return res.status(503).json({ error: 'Merriam-Webster unreachable' });
+        }
+      }
+
+      case 'gemini-generate': {
+        const isCustomOpenAi = payload.aiProvider === 'openai-compatible' || payload.aiBaseUrl;
+        if (isCustomOpenAi) {
+          const apiKey = payload.customApiKey || '';
+          return await handleOpenAiGenerate(payload, res, apiKey, payload.aiBaseUrl);
+        }
+
+        const apiKey = payload.customApiKey || process.env.GEMINI_API_KEY || process.env.API_KEY;
+        if (!apiKey) return res.status(500).json({ error: 'Gemini API key not configured. Please set GEMINI_API_KEY or configure your Custom API Key in AI Settings.' });
+        return await handleGeminiGenerate(payload, res, apiKey);
+      }
+
+      case 'test-ai-key': {
+        const isCustomOpenAi = payload.aiProvider === 'openai-compatible' || payload.aiBaseUrl;
+        if (isCustomOpenAi) {
+          const apiKey = payload.customApiKey || '';
+          const model = payload.model || 'llama-3.3-70b-versatile';
+          const testPayload = {
+            model,
+            contents: 'Say "OK" in JSON: {"status": "OK"}',
+            config: { responseMimeType: 'application/json' }
+          };
+          return await handleOpenAiGenerate(testPayload, res, apiKey, payload.aiBaseUrl);
+        }
+
+        const apiKey = payload.customApiKey || process.env.GEMINI_API_KEY || process.env.API_KEY;
+        if (!apiKey) return res.status(400).json({ error: 'No API key provided.' });
+        const model = payload.model || 'gemini-2.5-flash';
+        const testPayload = {
+          model,
+          contents: 'Say "OK" if connected.',
+          config: {}
+        };
+        return await handleGeminiGenerate(testPayload, res, apiKey);
+      }
+
+      case 'dictionary-free': {
+        const { word } = payload;
+        if (!word) return res.status(400).json({ error: 'Word is required.' });
+        const cleanWord = encodeURIComponent(word.trim().toLowerCase());
+        
+        // Fast fetch function for FreeDictionary
+        const fetchFreeDict = async () => {
+          try {
+            const apiResponse = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${cleanWord}`, {
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) LinguaCards/1.0',
+                'Accept': 'application/json',
+              },
+              signal: AbortSignal.timeout(2500),
+            });
+            if (apiResponse.ok) {
+              return await apiResponse.json();
+            }
+          } catch {
+            return null;
+          }
+          return null;
+        };
+
+        // Fast fetch function for Datamuse (ultra-fast lexical API)
+        const fetchDatamuse = async () => {
+          try {
+            const datamuseRes = await fetch(`https://api.datamuse.com/words?sp=${cleanWord}&md=dp&max=1`, {
+              signal: AbortSignal.timeout(3000),
+            });
+            if (datamuseRes.ok) {
+              const dmData = await datamuseRes.json();
+              if (Array.isArray(dmData) && dmData.length > 0 && dmData[0].defs) {
+                const item = dmData[0];
+                const meanings: any[] = [];
+                const defs = item.defs || [];
+                const defMap: Record<string, string[]> = {};
+                defs.forEach((d: string) => {
+                  const parts = d.split('\t');
+                  const pos = parts[0] === 'n' ? 'noun' : parts[0] === 'v' ? 'verb' : parts[0] === 'adj' ? 'adjective' : parts[0] === 'adv' ? 'adverb' : 'general';
+                  const defText = parts[1] || d;
+                  if (!defMap[pos]) defMap[pos] = [];
+                  defMap[pos].push(defText);
+                });
+
+                Object.entries(defMap).forEach(([pos, list]) => {
+                  meanings.push({
+                    partOfSpeech: pos,
+                    definitions: list.map(text => ({ definition: text }))
+                  });
+                });
+
+                return [{
+                  word: item.word,
+                  phonetic: item.tags?.find((t: string) => t.startsWith('ipa:'))?.replace('ipa:', '') || '',
+                  phonetics: [],
+                  meanings,
+                }];
+              }
+            }
+          } catch {
+            return null;
+          }
+          return null;
+        };
+
+        // Attempt Free Dictionary first, fallback to Datamuse immediately
+        let data = await fetchFreeDict();
+        if (!data || !Array.isArray(data) || data.length === 0) {
+          data = await fetchDatamuse();
+        }
+
+        if (data && Array.isArray(data) && data.length > 0) {
+          return res.status(200).json(data);
+        }
+
+        return res.status(404).json({ error: `Could not find definition for "${word}".` });
+      }
+
+      case 'dictionary-mw': {
+        const { word } = payload;
+        if (!word) return res.status(400).json({ error: 'Word is required.' });
+        const mwApiKey = process.env.MW_API_KEY;
+        if (!mwApiKey) return res.status(500).json({ error: 'Merriam-Webster API key not configured in .env (MW_API_KEY).' });
+        try {
+          const apiResponse = await fetch(`https://www.dictionaryapi.com/api/v3/references/collegiate/json/${encodeURIComponent(word)}?key=${mwApiKey}`, {
+            signal: AbortSignal.timeout(7000),
+          });
+          const data = await apiResponse.json();
+          return res.status(apiResponse.status).json(data);
+        } catch (mwErr: any) {
+          return res.status(503).json({ error: `Merriam-Webster service unavailable: ${mwErr.message}` });
+        }
+      }
+
+      case 'fetch-audio': {
+        const { url } = payload;
+        if (!url) return res.status(400).json({ error: 'URL is required.' });
+        const audioResponse = await fetch(url);
+        if (!audioResponse.ok) {
+          const errorText = await audioResponse.text();
+          return res.status(audioResponse.status).json({ error: 'Failed to fetch audio from source.', details: errorText });
+        }
+        const contentType = audioResponse.headers.get('content-type') || 'application/octet-stream';
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
+        const arrayBuffer = await audioResponse.arrayBuffer();
+        return res.status(200).send(Buffer.from(arrayBuffer));
+      }
+
+      case 'auth-register': {
+        const { username, password } = payload;
+        if (!username || !password) return res.status(400).json({ error: 'Username and password are required.' });
+        if (username.length < 3) return res.status(400).json({ error: 'Username must be at least 3 characters.' });
+        if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+
+        const existingUser = await getUser(username);
+        if (existingUser) {
+          return res.status(409).json({ error: 'Username is already taken.' });
+        }
+
+        const newUser = {
+          username,
+          password,
+          data: {
+            decks: [],
+            cards: [],
+            studyHistory: [],
+            userProfile: null,
+            userAchievements: [],
+          },
+        };
+
+        await setUser(newUser);
+        return res.status(201).json({ message: 'User registered successfully.' });
+      }
+
+      case 'auth-login': {
+        const { username, password } = payload;
+        if (!username || !password) return res.status(400).json({ error: 'Username and password are required.' });
+
+        const user = await getUser(username);
+        if (!user) {
+          return res.status(404).json({ error: 'Invalid username or password.' });
+        }
+
+        if (user.password !== password) {
+          return res.status(401).json({ error: 'Invalid username or password.' });
+        }
+
+        return res.status(200).json({ message: 'Login successful.' });
+      }
+
+      case 'sync-load': {
+        const { username } = payload;
+        if (!username) return res.status(400).json({ error: 'Username is required.' });
+
+        const user = await getUser(username);
+        if (user) {
+          return res.status(200).json({ data: user.data });
+        } else {
+          return res.status(200).json({ data: null });
+        }
+      }
+
+      case 'sync-merge': {
+        const { username, data: clientData } = payload;
+        if (!username || !clientData) return res.status(400).json({ error: 'Username and data are required.' });
+
+        let user = await getUser(username);
+        if (!user) {
+          user = {
+            username,
+            password: '',
+            data: clientData,
+          };
+          await setUser(user);
+          return res.status(200).json({
+            message: 'Data merged successfully.',
+            data: clientData,
+          });
+        }
+
+        const cloudData = user.data || { decks: [], cards: [], studyHistory: [], userProfile: null, userAchievements: [] };
+
+        const mergeDecks = (cloudItems: any[], clientItems: any[]) => {
+          const mergedMap = new Map<string, any>();
+          (cloudItems || []).forEach(item => mergedMap.set(item.id, item));
+          (clientItems || []).forEach(clientItem => {
+            const cloudItem = mergedMap.get(clientItem.id);
+            if (cloudItem) {
+              const isDeleted = cloudItem.isDeleted || clientItem.isDeleted;
+              mergedMap.set(clientItem.id, { ...clientItem, isDeleted });
+            } else {
+              mergedMap.set(clientItem.id, clientItem);
+            }
+          });
+          return Array.from(mergedMap.values());
+        };
+
+        const mergeFlashcards = (cloudItems: any[], clientItems: any[]) => {
+          const mergedMap = new Map<string, any>();
+          (cloudItems || []).forEach(item => mergedMap.set(item.id, item));
+          (clientItems || []).forEach(clientItem => {
+            const cloudItem = mergedMap.get(clientItem.id);
+            if (cloudItem) {
+              const clientTimestamp = new Date(clientItem.updatedAt || 0).getTime();
+              const cloudTimestamp = new Date(cloudItem.updatedAt || 0).getTime();
+              const winner = clientTimestamp >= cloudTimestamp ? clientItem : cloudItem;
+              winner.isDeleted = clientItem.isDeleted || cloudItem.isDeleted;
+              mergedMap.set(clientItem.id, winner);
+            } else {
+              mergedMap.set(clientItem.id, clientItem);
+            }
+          });
+          return Array.from(mergedMap.values());
+        };
+
+        const mergedDecks = mergeDecks(cloudData.decks, clientData.decks);
+        const mergedCards = mergeFlashcards(cloudData.cards, clientData.cards);
+
+        const studyHistoryMap = new Map<string, any>();
+        (cloudData.studyHistory || []).forEach((log: any) => studyHistoryMap.set(`${log.cardId}-${log.date}-${log.rating}`, log));
+        (clientData.studyHistory || []).forEach((log: any) => studyHistoryMap.set(`${log.cardId}-${log.date}-${log.rating}`, log));
+        const mergedStudyHistory = Array.from(studyHistoryMap.values());
+
+        let mergedUserProfile: any = null;
+        const cloudP = cloudData.userProfile;
+        const clientP = clientData.userProfile;
+        if (clientP && cloudP) {
+          const clientTimestamp = new Date(clientP.profileLastUpdated || 0);
+          const cloudTimestamp = new Date(cloudP.profileLastUpdated || 0);
+          const newerProfile = clientTimestamp >= cloudTimestamp ? clientP : cloudP;
+
+          let mergedDailyGoals;
+          const clientGoals = clientP.dailyGoals;
+          const cloudGoals = cloudP.dailyGoals;
+
+          if (clientGoals && cloudGoals) {
+            if (clientGoals.date > cloudGoals.date) {
+              mergedDailyGoals = clientGoals;
+            } else if (cloudGoals.date > clientGoals.date) {
+              mergedDailyGoals = cloudGoals;
+            } else {
+              const mergedGoalsMap = new Map<string, any>();
+              (cloudGoals.goals || []).forEach((g: any) => mergedGoalsMap.set(g.id, { ...g }));
+              (clientGoals.goals || []).forEach((cg: any) => {
+                const existingGoal = mergedGoalsMap.get(cg.id);
+                if (existingGoal) {
+                  if (cg.progress > existingGoal.progress) {
+                    existingGoal.progress = cg.progress;
+                    existingGoal.isComplete = cg.isComplete;
+                  }
+                } else {
+                  mergedGoalsMap.set(cg.id, { ...cg });
+                }
+              });
+              mergedDailyGoals = {
+                date: clientGoals.date,
+                goals: Array.from(mergedGoalsMap.values()),
+                allCompleteAwarded: clientGoals.allCompleteAwarded || cloudGoals.allCompleteAwarded,
+              };
+            }
+          } else {
+            mergedDailyGoals = clientGoals || cloudGoals;
+          }
+
+          mergedUserProfile = {
+            id: clientP.id,
+            xp: Math.max(clientP.xp || 0, cloudP.xp || 0),
+            level: Math.max(clientP.level || 1, cloudP.level || 1),
+            lastStreakCheck: (new Date(clientP.lastStreakCheck || 0) > new Date(cloudP.lastStreakCheck || 0)) ? clientP.lastStreakCheck : cloudP.lastStreakCheck,
+            firstName: newerProfile.firstName,
+            lastName: newerProfile.lastName,
+            bio: newerProfile.bio,
+            profileLastUpdated: newerProfile.profileLastUpdated,
+            dailyGoals: mergedDailyGoals || undefined,
+          };
+        } else {
+          mergedUserProfile = clientP || cloudP;
+        }
+
+        const achievementsMap = new Map<string, any>();
+        (cloudData.userAchievements || []).forEach((ach: any) => achievementsMap.set(ach.achievementId, ach));
+        (clientData.userAchievements || []).forEach((ach: any) => achievementsMap.set(ach.achievementId, ach));
+        const mergedUserAchievements = Array.from(achievementsMap.values());
+
+        const mergedData = {
+          decks: mergedDecks,
+          cards: mergedCards,
+          studyHistory: mergedStudyHistory,
+          userProfile: mergedUserProfile,
+          userAchievements: mergedUserAchievements,
+        };
+
+        user.data = mergedData;
+        await setUser(user);
+
+        return res.status(200).json({ data: mergedData });
+      }
+
+      default:
+        return res.status(400).json({ message: 'Invalid or missing action.' });
+    }
+  } catch (error) {
+    console.error(`Error in proxy action '${action}':`, error);
+    return res.status(500).json({ error: 'An internal server error occurred.', details: (error as Error).message });
+  }
+});
+
+// Setup Vite dev server or static file serving
+async function startServer() {
+  if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
+    const vite = await createViteServer({
+      server: { middlewareMode: true, host: '0.0.0.0', port: PORT },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.resolve(__dirname, 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (_req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  }
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Lingua Cards server listening on http://0.0.0.0:${PORT}`);
+  });
+}
+
+startServer();

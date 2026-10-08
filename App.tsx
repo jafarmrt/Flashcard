@@ -21,6 +21,7 @@ import { AuthView } from './components/AuthView';
 import { FloatingActionButton } from './components/common/FloatingActionButton';
 import { BottomNav } from './components/common/BottomNav';
 import { AutoFixReportModal } from './components/AutoFixReportModal';
+import { AiTextExtractorView } from './components/AiTextExtractorView';
 
 const StatusIndicator: React.FC<{ status: HealthStatus, label: string }> = ({ status, label }) => {
     const color = status === 'ok' ? 'bg-green-500' : status === 'error' ? 'bg-red-500' : 'bg-yellow-500';
@@ -41,7 +42,7 @@ const App: React.FC = () => {
         handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
         updateSettings, handleCheckAchievements, handleGoalUpdate, studyCards,
         handleCompleteCardDetails, handleAutoFixCards, handleStopAutoFix, autoFixProgress,
-        handleCloseAutoFixReport, previousViewRef
+        handleCloseAutoFixReport, handleSaveExtractedCards, previousViewRef
     } = useAppLogic();
 
     const visibleFlashcards = flashcards.filter(c => !c.isDeleted);
@@ -59,6 +60,15 @@ const App: React.FC = () => {
                     handleCheckAchievements(score);
                     handleGoalUpdate('QUIZ', 1);
                 }} />;
+            case 'AI_EXTRACT':
+                return <AiTextExtractorView
+                    decks={visibleDecks}
+                    settings={settings}
+                    onUpdateSettings={updateSettings}
+                    onSaveExtractedCards={handleSaveExtractedCards}
+                    onCancel={() => setView('DECKS')}
+                    showToast={showToast}
+                />;
             case 'SETTINGS':
                 return <SettingsView
                     settings={settings}
@@ -81,6 +91,7 @@ const App: React.FC = () => {
                     onDeleteDeck={handleDeleteDeck}
                     onViewAllCards={() => setView('LIST')}
                     onBulkAdd={() => setView('BULK_ADD')}
+                    onAiExtract={() => setView('AI_EXTRACT')}
                     userProfile={userProfile}
                     streak={streak}
                 />;

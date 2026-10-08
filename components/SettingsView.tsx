@@ -120,6 +120,102 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                 </SettingRow>
             </div>
 
+            {/* AI Model & API Configuration */}
+            <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm overflow-hidden">
+                <h3 className="text-lg font-bold p-4 bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
+                    <span className="text-indigo-500">✨</span>
+                    <span>AI Provider & Model Settings</span>
+                </h3>
+                <SettingRow title="AI Provider / Ecosystem" description="Choose Google Gemini or open-source / OpenAI-compatible services (Groq, OpenRouter, Ollama, DeepSeek).">
+                    <select
+                        value={settings.aiProvider === 'openai-compatible' ? (settings.aiBaseUrl?.includes('groq') ? 'groq' : settings.aiBaseUrl?.includes('openrouter') ? 'openrouter' : settings.aiBaseUrl?.includes('deepseek') ? 'deepseek' : settings.aiBaseUrl?.includes('localhost') ? 'ollama' : 'custom') : 'gemini'}
+                        onChange={e => {
+                            const val = e.target.value;
+                            if (val === 'gemini') {
+                                onUpdateSettings({ aiProvider: 'gemini', aiBaseUrl: undefined, aiModel: 'gemini-2.5-flash' });
+                            } else if (val === 'groq') {
+                                onUpdateSettings({ aiProvider: 'openai-compatible', aiBaseUrl: 'https://api.groq.com/openai/v1', aiModel: 'llama-3.3-70b-versatile' });
+                            } else if (val === 'openrouter') {
+                                onUpdateSettings({ aiProvider: 'openai-compatible', aiBaseUrl: 'https://openrouter.ai/api/v1', aiModel: 'deepseek/deepseek-chat' });
+                            } else if (val === 'deepseek') {
+                                onUpdateSettings({ aiProvider: 'openai-compatible', aiBaseUrl: 'https://api.deepseek.com/v1', aiModel: 'deepseek-chat' });
+                            } else if (val === 'ollama') {
+                                onUpdateSettings({ aiProvider: 'openai-compatible', aiBaseUrl: 'http://localhost:11434/v1', aiModel: 'llama3.3' });
+                            } else {
+                                onUpdateSettings({ aiProvider: 'openai-compatible' });
+                            }
+                        }}
+                        className="px-3 py-1.5 text-sm rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 font-medium"
+                    >
+                        <option value="gemini">Google Gemini (Built-in / Official)</option>
+                        <option value="groq">Groq (Ultra-Fast Open Source - Llama 3 / Mixtral)</option>
+                        <option value="openrouter">OpenRouter (All Open-Source Models)</option>
+                        <option value="deepseek">DeepSeek API</option>
+                        <option value="ollama">Ollama / Local Server (localhost:11434)</option>
+                        <option value="custom">Custom OpenAI-Compatible Endpoint</option>
+                    </select>
+                </SettingRow>
+
+                {settings.aiProvider === 'openai-compatible' && (
+                    <SettingRow title="API Base URL" description="The base endpoint URL for your OpenAI-compatible service.">
+                        <input
+                            type="text"
+                            placeholder="https://api.groq.com/openai/v1"
+                            value={settings.aiBaseUrl || ''}
+                            onChange={e => onUpdateSettings({ aiBaseUrl: e.target.value.trim() || undefined })}
+                            className="w-64 px-3 py-1.5 text-xs font-mono rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200"
+                        />
+                    </SettingRow>
+                )}
+
+                <SettingRow title="Model Identifier" description="Model name (e.g. gemini-2.5-flash, llama-3.3-70b-versatile, deepseek-chat).">
+                    <input
+                        type="text"
+                        placeholder="Model name"
+                        value={settings.aiModel || (settings.aiProvider === 'openai-compatible' ? 'llama-3.3-70b-versatile' : 'gemini-2.5-flash')}
+                        onChange={e => onUpdateSettings({ aiModel: e.target.value.trim() || undefined })}
+                        className="w-64 px-3 py-1.5 text-xs font-mono rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200"
+                    />
+                </SettingRow>
+
+                <SettingRow title="API Key" description="API key for your provider. Leave empty to use system key (Gemini) or for local Ollama.">
+                    <div className="flex items-center gap-2">
+                        <input
+                            type="password"
+                            placeholder="API Key (optional/required by provider)"
+                            value={settings.customApiKey || ''}
+                            onChange={e => onUpdateSettings({ customApiKey: e.target.value.trim() || undefined })}
+                            className="w-56 px-3 py-1.5 text-xs font-mono rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200"
+                        />
+                        {settings.customApiKey && (
+                            <button
+                                onClick={() => onUpdateSettings({ customApiKey: undefined })}
+                                className="text-xs text-red-500 hover:underline"
+                            >
+                                Clear
+                            </button>
+                        )}
+                    </div>
+                </SettingRow>
+
+                <SettingRow title="Default English Level" description="Your target proficiency level for automatic AI vocabulary extraction.">
+                    <select
+                        value={settings.userLevel || 'B2'}
+                        onChange={e => onUpdateSettings({ userLevel: e.target.value as any })}
+                        className="px-3 py-1.5 text-sm rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 font-medium"
+                    >
+                        <option value="A1">A1 - Beginner</option>
+                        <option value="A2">A2 - Elementary</option>
+                        <option value="B1">B1 - Intermediate</option>
+                        <option value="B2">B2 - Upper Intermediate</option>
+                        <option value="C1">C1 - Advanced</option>
+                        <option value="C2">C2 - Proficient</option>
+                        <option value="IELTS">IELTS / Academic</option>
+                        <option value="TOEFL">TOEFL Vocabulary</option>
+                    </select>
+                </SettingRow>
+            </div>
+
             {/* Bulk Add Settings */}
             <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm overflow-hidden">
                 <h3 className="text-lg font-bold p-4 bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-700">Bulk Add Settings</h3>

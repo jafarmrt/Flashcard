@@ -6,6 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Lingua Cards - Language Flashcards</title>
 
+    <meta name="description" content="A flashcard web application designed to help you learn new languages. Create, manage, and study your own custom flashcards with helpful AI-powered example sentences, all stored locally in your browser." />
+    <meta property="og:title" content="Lingua Cards - Language Flashcards" />
+    <meta property="og:description" content="A flashcard web application designed to help you learn new languages. Create, manage, and study your own custom flashcards with helpful AI-powered example sentences, all stored locally in your browser." />
+
     <!-- PWA Tags -->
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#4f46e5" />
@@ -43,27 +47,18 @@
     <style>
       /* Apply custom font from Google Fonts link below */
       body {
-        font-family: 'Inter', sans-serif;
+        font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
       }
-      /* Custom animations are now handled by tailwind.config */
+      [dir="rtl"], .font-persian {
+        font-family: 'Vazirmatn', 'Plus Jakarta Sans', system-ui, sans-serif;
+      }
     </style>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <script type="importmap">
-{
-  "imports": {
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "dexie": "https://aistudiocdn.com/dexie@^4.0.7",
-    "webworker": "https://aistudiocdn.com/webworker@^0.8.4",
-    "@vercel/node": "https://aistudiocdn.com/@vercel/node@^5.5.5",
-    "buffer": "https://aistudiocdn.com/buffer@^6.0.3"
-  }
-}
-</script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Vazirmatn:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
   <body class="bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-200">
     <div id="root"></div>

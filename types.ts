@@ -83,6 +83,22 @@ export interface Settings {
     bulkAddConcurrency?: number;
     bulkAddAiTimeout?: number;
     bulkAddDictTimeout?: number;
+    aiProvider?: 'gemini' | 'openai-compatible';
+    aiBaseUrl?: string;
+    customApiKey?: string;
+    aiModel?: string;
+    userLevel?: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2' | 'IELTS' | 'TOEFL';
+}
+
+export interface ExtractedWordCard {
+  front: string;
+  back: string;
+  pronunciation?: string;
+  partOfSpeech?: string;
+  definition?: string[];
+  exampleSentenceTarget?: string[];
+  notes?: string;
+  selected?: boolean;
 }
 
 export interface StudySessionOptions {
