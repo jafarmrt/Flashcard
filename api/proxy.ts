@@ -3,6 +3,12 @@
 // It handles requests for user authentication, cloud sync, and external APIs.
 import { Buffer } from 'buffer';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import {
+  PUBLIC_ACTIONS, USERNAME_PATTERN, MIN_PASSWORD_LENGTH, registrationAllowed,
+  hashPassword, verifyPassword, getSessionSecret, createSessionToken, sessionUser,
+  sessionCookieHeader, clearSessionCookieHeader, loginLockMinutes, recordLoginFailure,
+  clearLoginFailures, isAllowedAudioUrl,
+} from '../server/auth';
 
 // --- TYPE DEFINITIONS (mirrored from client) ---
 interface Deck {
@@ -61,7 +67,7 @@ interface SyncData {
 // Data structure for a user in the KV store
 interface UserData {
     username: string;
-    password: string; // NOTE: In a real-world app, this MUST be a securely hashed password. Stored as plaintext here due to lack of crypto libraries in this environment.
+    password: string; // scrypt hash (see server/auth.ts); older accounts are rehashed on login
     data: SyncData;
 }
 
@@ -139,9 +145,10 @@ async function handleMerriamWebster(payload: any, res: VercelResponse, apiKey: s
 async function handleFetchAudio(payload: any, res: VercelResponse) {
     const { url } = payload;
     if (!url) return res.status(400).json({ error: 'URL is required.' });
+    if (typeof url !== 'string' || !isAllowedAudioUrl(url)) return res.status(400).json({ error: 'Audio URL is not from a known dictionary.' });
 
     try {
-        const audioResponse = await fetch(url);
+        const audioResponse = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(10000) });
         if (!audioResponse.ok) {
             const errorText = await audioResponse.text();
             return res.status(audioResponse.status).json({ error: 'Failed to fetch audio from source.', details: errorText });
@@ -193,11 +200,15 @@ async function setUser(userData: UserData): Promise<void> {
     }
 }
 
-async function handleRegister(payload: any, response: VercelResponse) {
+// Vercel serves over HTTPS, so session cookies are always marked Secure.
+const SECURE = true;
+
+async function handleRegister(payload: any, response: VercelResponse, secret: string) {
     const { username, password } = payload;
-    if (!username || !password) return response.status(400).json({ error: 'Username and password are required.' });
-    if (username.length < 3) return response.status(400).json({ error: 'Username must be at least 3 characters.' });
-    if (password.length < 6) return response.status(400).json({ error: 'Password must be at least 6 characters.' });
+    if (!registrationAllowed()) return response.status(403).json({ error: 'Registration is closed on this server.' });
+    if (typeof username !== 'string' || typeof password !== 'string') return response.status(400).json({ error: 'Username and password are required.' });
+    if (!USERNAME_PATTERN.test(username)) return response.status(400).json({ error: 'Username must be 3-32 letters, digits, dots, dashes or underscores.' });
+    if (password.length < MIN_PASSWORD_LENGTH) return response.status(400).json({ error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` });
 
     const existingUser = await getUser(username);
     if (existingUser) {
@@ -206,7 +217,7 @@ async function handleRegister(payload: any, response: VercelResponse) {
     
     const newUser: UserData = {
         username,
-        password, // WARNING: Storing plaintext password. In a real app, hash this with a library like bcrypt.
+        password: await hashPassword(password),
         data: {
             decks: [],
             cards: [],
@@ -217,46 +228,49 @@ async function handleRegister(payload: any, response: VercelResponse) {
     };
     
     await setUser(newUser);
-    return response.status(201).json({ message: 'User registered successfully.' });
+    response.setHeader('Set-Cookie', sessionCookieHeader(createSessionToken(username, secret), SECURE));
+    return response.status(201).json({ message: 'User registered successfully.', username: username.toLowerCase() });
 }
 
-async function handleLogin(payload: any, response: VercelResponse) {
+async function handleLogin(payload: any, request: VercelRequest, response: VercelResponse, secret: string) {
     const { username, password } = payload;
-    if (!username || !password) return response.status(400).json({ error: 'Username and password are required.' });
+    if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
+        return response.status(400).json({ error: 'Username and password are required.' });
+    }
+    const forwarded = request.headers['x-forwarded-for'];
+    const ip = (Array.isArray(forwarded) ? forwarded[0] : forwarded || '').split(',')[0].trim() || 'unknown';
+    const lockedMinutes = loginLockMinutes(ip, username);
+    if (lockedMinutes > 0) {
+        return response.status(429).json({ error: `Too many failed attempts. Try again in ${lockedMinutes} minute(s).` });
+    }
 
     const user = await getUser(username);
-    if (!user) {
-        return response.status(404).json({ error: 'Invalid username or password.' });
-    }
-    
-    // WARNING: Plaintext password comparison. In a real app, use a secure comparison function like bcrypt.compare.
-    if (user.password !== password) {
+    const check = await verifyPassword(password, user?.password);
+    if (!user || !check.ok) {
+        recordLoginFailure(ip, username);
         return response.status(401).json({ error: 'Invalid username or password.' });
     }
+    clearLoginFailures(ip, username);
+    if (check.needsRehash) {
+        user.password = await hashPassword(password); // replace a legacy plain-text password
+        await setUser(user);
+    }
 
-    return response.status(200).json({ message: 'Login successful.' });
+    response.setHeader('Set-Cookie', sessionCookieHeader(createSessionToken(username, secret), SECURE));
+    return response.status(200).json({ message: 'Login successful.', username: username.toLowerCase() });
 }
 
-async function handleSyncLoad(payload: any, response: VercelResponse) {
-  const { username } = payload;
-  if (!username) return response.status(400).json({ error: 'Username is required.' });
-
+async function handleSyncLoad(username: string, response: VercelResponse) {
   const user = await getUser(username);
-
-  if (user) {
-    return response.status(200).json({ data: user.data });
-  } else {
-    // This case happens for new users loading for the first time
-    return response.status(200).json({ data: null });
-  }
+  return response.status(200).json({ data: user ? user.data : null });
 }
 
-async function handleSyncMerge(payload: any, response: VercelResponse) {
-  const { username, data: clientData } = payload;
-  if (!username || !clientData) return response.status(400).json({ error: 'Username and data are required.' });
+async function handleSyncMerge(username: string, payload: any, response: VercelResponse) {
+  const { data: clientData } = payload;
+  if (!clientData || typeof clientData !== 'object') return response.status(400).json({ error: 'Data is required.' });
 
   const user = await getUser(username);
-  if (!user) return response.status(404).json({ error: 'User not found for sync.' });
+  if (!user) return response.status(401).json({ error: 'Please sign in again.', code: 'AUTH_REQUIRED' });
 
   const cloudData = user.data || { decks: [], cards: [], studyHistory: [], userProfile: null, userAchievements: [] };
 
@@ -390,9 +404,17 @@ export default async function handler(request: VercelRequest, response: VercelRe
     return response.status(405).json({ message: 'Method Not Allowed' });
   }
 
-  const { action, ...payload } = request.body;
+  const { action, ...payload } = request.body || {};
 
   try {
+    // Vercel's filesystem is read-only, so SESSION_SECRET must be set there.
+    const needsSecret = !['ping', 'ping-free-dict', 'ping-mw'].includes(action);
+    const secret = needsSecret ? getSessionSecret() : '';
+    const signedInUser = needsSecret ? sessionUser(request.headers.cookie, secret) : null;
+    if (!PUBLIC_ACTIONS.has(action) && !signedInUser) {
+      return response.status(401).json({ error: 'Please sign in again.', code: 'AUTH_REQUIRED' });
+    }
+
     switch (action) {
       case 'ping':
         return response.status(200).json({ message: 'pong' });
@@ -422,16 +444,24 @@ export default async function handler(request: VercelRequest, response: VercelRe
         return await handleFetchAudio(payload, response);
 
       case 'auth-register':
-        return await handleRegister(payload, response);
+        return await handleRegister(payload, response, secret);
       
       case 'auth-login':
-        return await handleLogin(payload, response);
+        return await handleLogin(payload, request, response, secret);
+
+      case 'auth-session':
+        if (!signedInUser || !(await getUser(signedInUser))) return response.status(200).json({ username: null });
+        return response.status(200).json({ username: signedInUser });
+
+      case 'auth-logout':
+        response.setHeader('Set-Cookie', clearSessionCookieHeader(SECURE));
+        return response.status(200).json({ message: 'Logged out.' });
 
       case 'sync-load':
-        return await handleSyncLoad(payload, response);
+        return await handleSyncLoad(signedInUser!, response);
         
       case 'sync-merge':
-        return await handleSyncMerge(payload, response);
+        return await handleSyncMerge(signedInUser!, payload, response);
 
       default:
         return response.status(400).json({ message: `Invalid or missing action.` });

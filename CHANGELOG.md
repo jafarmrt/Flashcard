@@ -16,6 +16,13 @@ All notable changes to this project will be documented in this file.
 - **Fix:** A failed AI translation no longer saves "Could not generate translation." onto the card; "Complete card" now uses your AI settings and falls back to a free translation, and also adds common expressions.
 - **Fix:** The Express server crashed on start in production mode (`app.get('*')` is invalid in Express 5).
 
+## [5.2.1] - Secure Cloud Sync
+- **Security:** Cloud sync now needs a real sign-in. The server sets a signed, HttpOnly session cookie at login, and sync only reads or writes the signed-in account. Before, anyone who knew a username could read or overwrite its cards.
+- **Security:** Passwords are stored as scrypt hashes. Existing plain-text passwords are converted the next time you sign in.
+- **Security:** Five wrong passwords lock that username from that address for 15 minutes.
+- **Security:** The audio proxy only fetches from known dictionary hosts, and the API no longer accepts calls from other websites.
+- **Setting:** `ALLOW_REGISTRATION=false` closes sign-up once your account exists. Everyone has to sign in once after this update.
+
 ## [5.2.0] - Auto-Fix Reporting & Stability Fixes
 - **Feature:** Added a detailed report summary after the "Auto-Fix All" process completes. You can now see exactly how many cards were updated and what specific information (Audio, Definitions, Translations, etc.) was added to your collection.
 - **Fix:** Resolved a critical issue where cards updated via "Auto-Fix" would revert to their previous state after a few moments. This was caused by a race condition in the background synchronization process, which has now been fixed by pausing sync during intensive operations and improving the data merge strategy.

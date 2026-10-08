@@ -9,8 +9,7 @@
     "lint": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
     "start": "tsx server.ts",
-    "preview": "vite preview",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@vercel/node": "^5.5.5",
