@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { UserProfile, UserAchievement, Achievement } from '../types';
 import { ALL_ACHIEVEMENTS } from '../services/achievements';
-import { StreakCounter, LevelProgressBar } from './GamificationWidgets';
+import { calculateLevel } from '../services/gamificationService';
+import { fa, Icon } from './common/ui';
 
 interface ProfileViewProps {
   userProfile: UserProfile | null;
@@ -12,137 +13,120 @@ interface ProfileViewProps {
   onNavigateToAchievements: () => void;
 }
 
-const EditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>;
+const input = 'w-full min-h-[44px] px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 focus:border-brand-500 focus:outline-none';
 
 export const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, streak, earnedAchievements, onSave, onBack, onNavigateToAchievements }) => {
   const [isEditing, setIsEditing] = useState(false);
-  const [formData, setFormData] = useState<Partial<UserProfile>>({
-    firstName: '',
-    lastName: '',
-    bio: ''
-  });
+  const [formData, setFormData] = useState<Partial<UserProfile>>({ firstName: '', lastName: '', bio: '' });
 
   useEffect(() => {
     if (userProfile && !isEditing) {
-      setFormData({
-        firstName: userProfile.firstName || '',
-        lastName: userProfile.lastName || '',
-        bio: userProfile.bio || ''
-      });
+      setFormData({ firstName: userProfile.firstName || '', lastName: userProfile.lastName || '', bio: userProfile.bio || '' });
     }
   }, [userProfile, isEditing]);
-  
+
   const handleSave = () => {
-      onSave(formData);
-      setIsEditing(false);
-  }
+    onSave(formData);
+    setIsEditing(false);
+  };
 
   const handleCancel = () => {
-    if (userProfile) {
-        setFormData({
-            firstName: userProfile.firstName || '',
-            lastName: userProfile.lastName || '',
-            bio: userProfile.bio || '',
-        });
-    }
+    if (userProfile) setFormData({ firstName: userProfile.firstName || '', lastName: userProfile.lastName || '', bio: userProfile.bio || '' });
     setIsEditing(false);
   };
 
   const achievementsById = useMemo(() => new Map(ALL_ACHIEVEMENTS.map(a => [a.id, a])), []);
+  const recentAchievements: Achievement[] = useMemo(() => [...earnedAchievements]
+    .sort((a, b) => new Date(b.dateEarned).getTime() - new Date(a.dateEarned).getTime())
+    .slice(0, 5)
+    .map(ea => achievementsById.get(ea.achievementId))
+    .filter((a): a is Achievement => a !== undefined), [earnedAchievements, achievementsById]);
 
-  const recentAchievements = useMemo(() => {
-      return [...earnedAchievements]
-          .sort((a, b) => new Date(b.dateEarned).getTime() - new Date(a.dateEarned).getTime())
-          .slice(0, 5)
-          .map(ea => achievementsById.get(ea.achievementId))
-          .filter((a): a is Achievement => a !== undefined);
-  }, [earnedAchievements, achievementsById]);
+  if (!userProfile) return <p dir="rtl" className="font-fa text-center p-10 text-ink-muted">در حال آماده‌سازی نمایه…</p>;
 
-  if (!userProfile) {
-    return <div className="text-center p-10">Loading profile...</div>;
-  }
-  
-  const fullName = [formData.firstName, formData.lastName].filter(Boolean).join(' ') || "Anonymous User";
+  const fullName = [formData.firstName, formData.lastName].filter(Boolean).join(' ') || 'بدون نام';
+  const level = calculateLevel(userProfile.xp || 0);
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row items-center gap-6">
-        <div className="w-24 h-24 bg-indigo-100 dark:bg-indigo-900 rounded-full flex items-center justify-center text-4xl font-bold text-indigo-500">
-          {fullName.charAt(0).toUpperCase()}
-        </div>
-        <div className="flex-1 text-center sm:text-left">
-           <h2 className="text-3xl font-bold text-slate-800 dark:text-slate-100">{fullName}</h2>
-           <p className="text-slate-500 dark:text-slate-400">Level {userProfile.level} Learner</p>
-        </div>
-        {!isEditing && (
-            <button onClick={() => setIsEditing(true)} className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">
-                <EditIcon /> Edit Profile
-            </button>
-        )}
+    <div dir="rtl" className="font-fa max-w-3xl mx-auto w-full flex flex-col gap-5">
+      <div className="flex items-center gap-2">
+        <button type="button" onClick={onBack} aria-label="تنظیمات" className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-white dark:hover:bg-slate-800"><Icon.Back /></button>
+        <h1 className="text-2xl font-extrabold text-ink dark:text-white">نمایه</h1>
       </div>
 
-      {/* Profile Form or Display */}
-      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6">
+      <section className="bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-4">
+        <div className="flex flex-wrap items-center gap-4">
+          <span className="w-20 h-20 rounded-full bg-brand-100 text-brand-700 dark:bg-brand-900/60 dark:text-brand-200 flex items-center justify-center text-3xl font-extrabold" aria-hidden="true">
+            {fullName.charAt(0).toUpperCase()}
+          </span>
+          <div className="flex-1 min-w-[10rem]">
+            <h2 dir="auto" className="text-2xl font-extrabold text-ink dark:text-white">{fullName}</h2>
+            <p className="text-ink-muted dark:text-slate-400">سطح {fa(level.level)}</p>
+          </div>
+          {!isEditing && (
+            <button type="button" onClick={() => setIsEditing(true)} className="min-h-[44px] px-4 rounded-xl border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 font-bold">ویرایش نمایه</button>
+          )}
+        </div>
+
         {isEditing ? (
-            <div className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <label htmlFor="firstName" className="block text-sm font-medium text-slate-700 dark:text-slate-300">First Name</label>
-                        <input type="text" id="firstName" value={formData.firstName} onChange={e => setFormData({...formData, firstName: e.target.value})} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm" />
-                    </div>
-                     <div>
-                        <label htmlFor="lastName" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Last Name</label>
-                        <input type="text" id="lastName" value={formData.lastName} onChange={e => setFormData({...formData, lastName: e.target.value})} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm" />
-                    </div>
-                </div>
-                <div>
-                    <label htmlFor="bio" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Bio</label>
-                    <textarea id="bio" rows={3} value={formData.bio} onChange={e => setFormData({...formData, bio: e.target.value})} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm" placeholder="Tell us a bit about your language learning goals..."></textarea>
-                </div>
-                <div className="flex justify-end gap-2">
-                    <button onClick={handleCancel} className="px-4 py-2 text-sm font-medium rounded-md">Cancel</button>
-                    <button onClick={handleSave} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md">Save Changes</button>
-                </div>
+          <div className="flex flex-col gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="text-ink-muted dark:text-slate-400">نام</span>
+                <input type="text" id="firstName" dir="auto" value={formData.firstName} onChange={e => setFormData({ ...formData, firstName: e.target.value })} className={input} />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="text-ink-muted dark:text-slate-400">نام خانوادگی</span>
+                <input type="text" id="lastName" dir="auto" value={formData.lastName} onChange={e => setFormData({ ...formData, lastName: e.target.value })} className={input} />
+              </label>
             </div>
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-ink-muted dark:text-slate-400">دربارهٔ من</span>
+              <textarea id="bio" dir="auto" rows={3} value={formData.bio} onChange={e => setFormData({ ...formData, bio: e.target.value })} className={input}
+                placeholder="هدفت از یادگیری انگلیسی چیست؟" />
+            </label>
+            <div className="flex gap-2 justify-end">
+              <button type="button" onClick={handleCancel} className="min-h-[44px] px-4 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700">لغو</button>
+              <button type="button" onClick={handleSave} className="min-h-[44px] px-5 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-bold">ذخیره</button>
+            </div>
+          </div>
         ) : (
-            <p className="text-slate-600 dark:text-slate-300 italic">
-                {userProfile.bio || "No bio yet. Click 'Edit Profile' to add one."}
-            </p>
+          <p dir="auto" className="text-ink-muted dark:text-slate-300">{userProfile.bio || 'هنوز چیزی دربارهٔ خودت ننوشته‌ای.'}</p>
         )}
-      </div>
-      
-      {/* Gamification Stats */}
-      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 flex flex-col md:flex-row items-center gap-6">
-          <StreakCounter streak={streak} />
-          <LevelProgressBar userProfile={userProfile} />
-      </div>
+      </section>
 
-      {/* Recent Achievements */}
-      <div className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-sm">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-medium text-slate-500 dark:text-slate-400">Recent Achievements</h3>
-          <button onClick={onNavigateToAchievements} className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">View All</button>
+      <section className="grid grid-cols-2 gap-3">
+        <div className="bg-white dark:bg-slate-800 rounded-3xl p-4 flex flex-col gap-1">
+          <p className="text-2xl font-extrabold text-flame-500 dark:text-orange-300 flex items-center gap-1.5"><Icon.Flame size={22} />{fa(streak)} روز</p>
+          <p className="text-xs text-ink-muted dark:text-slate-400">زنجیرهٔ مطالعه</p>
+        </div>
+        <div className="bg-white dark:bg-slate-800 rounded-3xl p-4 flex flex-col gap-2">
+          <p className="text-2xl font-extrabold text-brand-600 dark:text-brand-300">{fa(level.xp)} امتیاز</p>
+          <span className="h-2 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden flex" role="progressbar" aria-valuenow={level.progress} aria-valuemin={0} aria-valuemax={100}>
+            <span className="bg-brand-500 rounded-full" style={{ width: `${level.progress}%` }} />
+          </span>
+          <p className="text-xs text-ink-muted dark:text-slate-400">{fa(level.xpForNextLevel - level.xp)} امتیاز تا سطح {fa(level.level + 1)}</p>
+        </div>
+      </section>
+
+      <section className="bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="font-bold text-ink dark:text-white">نشان‌های تازه</h2>
+          <button type="button" onClick={onNavigateToAchievements} className="text-sm text-brand-500 dark:text-brand-300 hover:underline">همهٔ نشان‌ها</button>
         </div>
         {recentAchievements.length > 0 ? (
-            <div className="flex flex-wrap gap-4">
-                {recentAchievements.map(ach => (
-                    <div key={ach.id} className="flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-700/50 rounded-md text-sm" title={`${ach.name}: ${ach.description}`}>
-                        <span className="text-2xl">{ach.icon}</span>
-                        <span className="font-semibold text-slate-700 dark:text-slate-200">{ach.name}</span>
-                    </div>
-                ))}
-            </div>
+          <ul className="flex flex-wrap gap-2">
+            {recentAchievements.map(ach => (
+              <li key={ach.id} title={ach.description} className="flex items-center gap-2 rounded-2xl bg-slate-50 dark:bg-slate-700/50 px-3 py-2 text-sm">
+                <span className="text-2xl" aria-hidden="true">{ach.icon}</span>
+                <span className="font-bold text-ink dark:text-slate-100">{ach.name}</span>
+              </li>
+            ))}
+          </ul>
         ) : (
-            <p className="text-center text-slate-500 dark:text-slate-400 py-4">No achievements unlocked yet. Keep studying!</p>
+          <p className="text-sm text-ink-muted dark:text-slate-400">هنوز نشانی نگرفته‌ای؛ با خواندن و مرور ادامه بده.</p>
         )}
-      </div>
-
-       <div className="text-center mt-4">
-            <button onClick={onBack} className="px-6 py-2 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-100 font-semibold shadow-sm hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors">
-              Back to Settings
-            </button>
-       </div>
+      </section>
     </div>
   );
 };
