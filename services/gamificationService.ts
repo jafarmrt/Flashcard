@@ -1,7 +1,8 @@
-import { StudyLog, UserAchievement, Flashcard, Deck, UserProfile } from '../types';
+import { StudyLog, UserAchievement, Flashcard, Deck, UserProfile, Chapter, Source, Occurrence } from '../types';
 import { ALL_ACHIEVEMENTS } from './achievements';
 import { db } from './localDBService';
 import { computeStreak, dayString } from './streakService';
+import { isBookFinished, isChapterFinished } from './library';
 
 const XP_PER_LEVEL_BASE = 150;
 
@@ -49,7 +50,21 @@ interface AchievementContext {
   userProfile: UserProfile;
   earnedAchievements: UserAchievement[];
   quizScore?: { score: number; total: number };
+  sources?: Source[];
+  chapters?: Chapter[];
+  occurrences?: Occurrence[];
 }
+
+// Reading milestones: chapters and books finished, words carded from texts.
+export const readingCounts = (sources: Source[], chapters: Chapter[], occurrences: Occurrence[], cards: Flashcard[]) => {
+  const liveSources = sources.filter(s => !s.isDeleted);
+  const liveIds = new Set(liveSources.map(s => s.id));
+  const chaptersDone = chapters.filter(c => !c.isDeleted && liveIds.has(c.sourceId) && isChapterFinished(c)).length;
+  const booksDone = liveSources.filter(s => isBookFinished(s, chapters)).length;
+  const liveCards = new Set(cards.filter(c => !c.isDeleted).map(c => c.id));
+  const wordsFromTexts = new Set(occurrences.filter(o => !o.isDeleted && liveCards.has(o.cardId)).map(o => o.cardId)).size;
+  return { chaptersDone, booksDone, wordsFromTexts };
+};
 /**
  * Checks for and awards new achievements based on the user's progress.
  * @param context An object containing all necessary data to evaluate achievements.
@@ -93,7 +108,17 @@ export const checkAndAwardAchievements = async (context: AchievementContext): Pr
     award('quiz-hero');
   }
 
-  // 5. Deck Mastery (expensive check, do last)
+  // 5. Reading
+  if (context.sources && context.chapters && context.occurrences) {
+    const { chaptersDone, booksDone, wordsFromTexts } = readingCounts(context.sources, context.chapters, context.occurrences, allCards);
+    if (chaptersDone >= 1) award('first-chapter');
+    if (chaptersDone >= 10) award('chapters-10');
+    if (booksDone >= 1) award('first-book');
+    if (booksDone >= 3) award('books-3');
+    if (wordsFromTexts >= 100) award('words-100');
+  }
+
+  // 6. Deck Mastery (expensive check, do last)
   for (const deck of allDecks) {
     if (deck.isDeleted) continue;
     const cardsInDeck = allCards.filter(c => c.deckId === deck.id && !c.isDeleted);

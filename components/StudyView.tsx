@@ -13,6 +13,9 @@ import { CardPlace, originText } from '../services/library';
 import type { AiRequestOptions } from '../services/geminiService';
 import { fa, Icon, Kbd, StageDots } from './common/ui';
 import { GrammarPractice } from './GrammarPractice';
+import { blankOf, checkCloze, clozeFor, type ClozeResult } from '../services/cloze';
+
+const MODE_NAMES: Record<StudyMode, string> = { flip: 'برگرداندن', type: 'نوشتنی', cloze: 'جای خالی' };
 
 const RATINGS: { rating: PerformanceRating; label: string; key: string; className: string }[] = [
   { rating: 'AGAIN', label: 'دوباره', key: '1', className: 'bg-red-100 text-red-900 hover:bg-red-200 dark:bg-red-900/50 dark:text-red-100' },
@@ -36,6 +39,7 @@ interface StudyViewProps {
   goal: { progress: number; target: number };
   onExit: (updatedCards: Flashcard[], summary: SessionSummary, next?: 'home' | 'more') => void;
   places?: Map<string, CardPlace[]>; // where each card was met while reading
+  sourceId?: string | null; // a review of one book: its sentences come first
   aiOptions?: AiRequestOptions; // checks sentences written for grammar cards
 }
 
@@ -171,7 +175,7 @@ interface Snapshot {
   card?: Flashcard; // the card as it was before this answer
 }
 
-export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak, studiedToday, goal, onExit, places, aiOptions }) => {
+export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak, studiedToday, goal, onExit, places, sourceId, aiOptions }) => {
   const [queue, setQueue] = useState<Flashcard[]>([]);
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
@@ -188,6 +192,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
   const [history, setHistory] = useState<Snapshot[]>([]);
   const [audioBusy, setAudioBusy] = useState(false);
   const [suggested, setSuggested] = useState<PerformanceRating | undefined>(undefined);
+  const [clozeResult, setClozeResult] = useState<ClozeResult | null>(null);
   const startedAt = useRef(Date.now());
   const busy = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -202,11 +207,20 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
 
   const card = queue[index];
   const current = card ? updated.get(card.id) || card : undefined;
+  // The gap sentence for this card: where it was met in books, else its own
+  // sentence. A card without one is asked as in "type" mode.
+  const cloze = useMemo(() => {
+    if (mode !== 'cloze' || !card) return null;
+    const met = places?.get(card.id) || [];
+    const ordered = sourceId ? [...met.filter(p => p.sourceId === sourceId), ...met.filter(p => p.sourceId !== sourceId)] : met;
+    return clozeFor(card, ordered.map(p => p.sentence));
+  }, [mode, card, places, sourceId]);
+  const cardMode: StudyMode = mode === 'cloze' && !cloze ? 'type' : mode;
   const intervals = useMemo(() => (current ? previewIntervals(current) : null), [current]);
 
   useEffect(() => {
-    if (mode === 'type' && !revealed) inputRef.current?.focus();
-  }, [index, mode, revealed]);
+    if (cardMode !== 'flip' && !revealed) inputRef.current?.focus();
+  }, [index, cardMode, revealed]);
 
   const summary = (): SessionSummary => ({ xp, reviews });
   const finish = (next: 'home' | 'more') => onExit(Array.from(updated.values()), summary(), next);
@@ -263,6 +277,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
     setTyped('');
     setAnswerState(null);
     setSuggested(undefined);
+    setClozeResult(null);
     if (index + 1 < nextQueue.length) setIndex(index + 1);
     else setDone(true);
     busy.current = false;
@@ -285,15 +300,26 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
     setFirstAnswers(last.firstAnswers);
     setRevealed(true);
     setSuggested(undefined);
+    setClozeResult(null);
     setDone(false);
   };
 
   const checkTyped = () => {
     if (!card) return;
+    if (cardMode === 'cloze' && cloze) {
+      const result = checkCloze(typed, cloze, card.front);
+      setClozeResult(result);
+      setAnswerState(result === 'correct' ? 'correct' : 'incorrect');
+      setSuggested(result === 'correct' ? 'GOOD' : result === 'close' ? 'HARD' : 'AGAIN');
+      setRevealed(true);
+      return;
+    }
     const ok = levenshtein(typed.toLowerCase().trim(), card.back.toLowerCase().trim()) <= 2; // small typos allowed
     setAnswerState(ok ? 'correct' : 'incorrect');
     setRevealed(true);
   };
+
+  const switchMode = (m: StudyMode) => { setMode(m); setRevealed(false); setAnswerState(null); setClozeResult(null); setSuggested(undefined); setTyped(''); };
 
   // Keyboard: Space/Enter shows the answer, 1-4 rate, P plays, Z undoes, Esc leaves.
   useEffect(() => {
@@ -305,7 +331,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
       const typing = (e.target as HTMLElement).closest('input, textarea');
       if (e.key === 'Escape') { exitEarly(); return; }
       if (typing && !revealed) return;
-      if (!revealed && (e.code === 'Space' || e.key === 'Enter') && mode === 'flip') { e.preventDefault(); setRevealed(true); return; }
+      if (!revealed && (e.code === 'Space' || e.key === 'Enter') && cardMode === 'flip') { e.preventDefault(); setRevealed(true); return; }
       if (revealed) {
         const digit = /^(?:Digit|Numpad)([1-4])$/.exec(e.code)?.[1];
         const r = RATINGS.find(x => x.key === digit);
@@ -383,10 +409,10 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
           <span className="text-sm text-ink-muted dark:text-slate-400 whitespace-nowrap">{fa(index + 1)} از {fa(queue.length)}</span>
         </div>
         <div role="group" aria-label="حالت مرور" className="hidden sm:flex gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
-          {(['flip', 'type'] as StudyMode[]).map(m => (
-            <button key={m} type="button" onClick={() => { setMode(m); setRevealed(false); setAnswerState(null); }} aria-pressed={mode === m}
+          {(['flip', 'type', 'cloze'] as StudyMode[]).map(m => (
+            <button key={m} type="button" onClick={() => switchMode(m)} aria-pressed={mode === m}
               className={`min-h-[36px] px-3.5 rounded-lg text-sm ${mode === m ? 'bg-white dark:bg-slate-700 font-bold shadow-sm' : 'text-ink-muted dark:text-slate-400'}`}>
-              {m === 'flip' ? 'برگرداندن' : 'نوشتنی'}
+              {MODE_NAMES[m]}
             </button>
           ))}
         </div>
@@ -406,7 +432,20 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
             {card.kind && card.kind !== 'word' && <span>{{ phrase: 'عبارت', idiom: 'اصطلاح', grammar: 'ساختار دستوری' }[card.kind]}</span>}
           </div>
 
-          <div dir="ltr" className="flex flex-col items-center gap-2 text-center pt-2">
+          {cardMode === 'cloze' && cloze && (
+            <div className="flex flex-col items-center gap-3 text-center pt-2">
+              <p dir="ltr" className="font-read text-xl md:text-2xl leading-relaxed text-ink dark:text-white max-w-2xl">
+                {cloze.before}
+                {revealed
+                  ? <mark className={`rounded px-1 font-bold ${clozeResult === 'correct' ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100' : 'bg-amber-100 text-amber-900 dark:bg-amber-900/50 dark:text-amber-100'}`}>{cloze.answer}</mark>
+                  : <span aria-label="جای خالی" className="font-mono tracking-[0.2em] text-brand-600 dark:text-brand-300 border-b-2 border-brand-400 px-1">{blankOf(cloze.answer)}</span>}
+                {cloze.after}
+              </p>
+              {!revealed && <p className="text-lg text-ink-muted dark:text-slate-300">{card.back}</p>}
+            </div>
+          )}
+
+          <div dir="ltr" className={`flex flex-col items-center gap-2 text-center pt-2 ${cardMode === 'cloze' && !revealed ? 'hidden' : ''}`}>
             <h2 className="font-en font-bold text-4xl md:text-6xl tracking-tight text-ink dark:text-white break-words max-w-full">{card.front}</h2>
             <div className="flex items-center gap-3 text-ink-muted dark:text-slate-400">
               {(card.pronunciation || card.partOfSpeech) && <span>{[card.pronunciation, card.partOfSpeech].filter(Boolean).join(' · ')}</span>}
@@ -423,7 +462,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
                 {card.practicePrompt && <p dir="rtl" className="text-sm text-slate-600 dark:text-slate-300">{card.practicePrompt}</p>}
               </div>
             )}
-            {!revealed && card.kind !== 'grammar' && card.sourceSentence && (
+            {!revealed && cardMode !== 'cloze' && card.kind !== 'grammar' && card.sourceSentence && (
               <p className="mt-1 max-w-xl text-sm italic text-ink-muted dark:text-slate-400 line-clamp-3">{card.sourceSentence}</p>
             )}
           </div>
@@ -435,22 +474,27 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
           {revealed ? (
             <>
               {answerState && (
-                <p className={`text-center font-bold ${answerState === 'correct' ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
-                  {answerState === 'correct' ? 'درست نوشتی.' : `نوشتی: «${typed}»`}
+                <p className={`text-center font-bold ${answerState === 'correct' ? 'text-emerald-700 dark:text-emerald-300' : clozeResult === 'close' ? 'text-amber-800 dark:text-amber-200' : 'text-red-700 dark:text-red-300'}`}>
+                  {answerState === 'correct' ? 'درست نوشتی.'
+                    : clozeResult === 'close' ? <>نزدیک بود: <bdi dir="ltr" className="font-en">{typed}</bdi></>
+                    : <>نوشتی: «<bdi dir="auto">{typed}</bdi>»</>}
                 </p>
               )}
               <CardAnswer card={card} places={places?.get(card.id)} />
             </>
-          ) : card.kind === 'grammar' ? null : mode === 'flip' ? (
+          ) : card.kind === 'grammar' ? null : cardMode === 'flip' ? (
             <button type="button" onClick={() => setRevealed(true)}
               className="self-center inline-flex items-center gap-2 min-h-[56px] px-10 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold text-lg">
               نمایش پاسخ <Kbd className="text-white">Space</Kbd>
             </button>
           ) : (
             <form onSubmit={e => { e.preventDefault(); checkTyped(); }} className="flex flex-col items-center gap-3 w-full max-w-md self-center">
-              <label htmlFor="typed-answer" className="text-sm text-ink-muted dark:text-slate-400">معنی فارسی را بنویس</label>
-              <input id="typed-answer" ref={inputRef} dir="rtl" value={typed} onChange={e => setTyped(e.target.value)} autoComplete="off"
-                className="w-full text-center text-lg px-4 py-3 rounded-2xl border-2 border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 focus:border-brand-500 focus:outline-none" />
+              <label htmlFor="typed-answer" className="text-sm text-ink-muted dark:text-slate-400">
+                {cardMode === 'cloze' ? 'واژهٔ جاافتاده را همان‌طور که در جمله می‌آید بنویس' : mode === 'cloze' ? 'این کارت جملهٔ مناسبی ندارد؛ معنی فارسی را بنویس' : 'معنی فارسی را بنویس'}
+              </label>
+              <input id="typed-answer" ref={inputRef} dir={cardMode === 'cloze' ? 'ltr' : 'rtl'} value={typed} onChange={e => setTyped(e.target.value)} autoComplete="off"
+                autoCapitalize="off" spellCheck={false}
+                className={`w-full text-center text-lg px-4 py-3 rounded-2xl border-2 border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 focus:border-brand-500 focus:outline-none ${cardMode === 'cloze' ? 'font-en' : ''}`} />
               <button type="submit" className="min-h-[52px] px-10 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold">بررسی</button>
             </form>
           )}
@@ -491,9 +535,14 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
       </div>
 
       <div className="sm:hidden flex justify-center gap-4 pb-4 text-sm">
-        <button type="button" onClick={() => { setMode(mode === 'flip' ? 'type' : 'flip'); setRevealed(false); setAnswerState(null); }} className="text-brand-500 dark:text-brand-300">
-          {mode === 'flip' ? 'حالت نوشتنی' : 'حالت برگرداندن'}
-        </button>
+        <div role="group" aria-label="حالت مرور" className="flex gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
+          {(['flip', 'type', 'cloze'] as StudyMode[]).map(m => (
+            <button key={m} type="button" onClick={() => switchMode(m)} aria-pressed={mode === m}
+              className={`min-h-[36px] px-3 rounded-lg ${mode === m ? 'bg-white dark:bg-slate-700 font-bold shadow-sm text-ink dark:text-white' : 'text-ink-muted dark:text-slate-400'}`}>
+              {MODE_NAMES[m]}
+            </button>
+          ))}
+        </div>
         {history.length > 0 && <button type="button" onClick={undo} className="text-ink-muted dark:text-slate-400">واگرد</button>}
       </div>
     </div>

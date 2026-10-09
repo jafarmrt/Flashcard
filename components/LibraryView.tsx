@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import type { Chapter, Deck, Flashcard, KnownWord, Occurrence, Source, SourceKind } from '../types';
-import type { View } from '../hooks/useAppLogic';
+import type { Chapter, ChapterText, Deck, ExtractedWordCard, Flashcard, KnownWord, Occurrence, Settings, Source, SourceKind } from '../types';
+import type { StudyMode, View } from '../hooks/useAppLogic';
 import type { ImportedSource } from '../services/importers';
 import { chaptersOf, continuePoint, currentChunkOf, isChapterFinished, isChunkOpen, originText, sourceProgress } from '../services/library';
 import { masteryStage, STAGE_NAMES } from '../services/masteryService';
@@ -9,7 +9,12 @@ import { isChestSection } from '../services/xpRules';
 import { knownList } from '../services/knownWords';
 import { needsCheck } from '../services/cardCheck';
 import type { AiRequestOptions } from '../services/geminiService';
+import { cardsOfSource } from '../services/readingStats';
+import { isDue } from '../services/srsService';
+import { coverageOf, knownByFrom, savedProfile } from '../services/coverage';
 import { AddSourceForm } from './AddSourceForm';
+import { BookCoverage } from './library/BookCoverage';
+import { ChapterPrestudy } from './library/ChapterPrestudy';
 import { CardCheckPanel } from './CardCheckPanel';
 import { fa, Icon, StageDots } from './common/ui';
 
@@ -42,6 +47,11 @@ interface LibraryViewProps {
   onDismissSectionReview: () => void;
   aiOptions?: AiRequestOptions;
   onCheckCards: (changes: { id: string; back?: string }[]) => Promise<void>;
+  settings: Settings;
+  knownTerms: string[];
+  loadText: (chapterId: string) => Promise<ChapterText>;
+  onStartSourceReview: (sourceId: string, chapterId?: string, mode?: StudyMode) => void;
+  onPrestudyChapter: (chapterId: string, picks: { item: ExtractedWordCard; chunk: number }[]) => Promise<void>;
 }
 
 // Cards met in each source: card id -> set of source ids, without deleted rows.
@@ -208,6 +218,11 @@ const SourcePage: React.FC<LibraryViewProps & { source: Source }> = props => {
   const next = continuePoint(source, chapters);
 
   const back = () => (activeChapter && !single ? onOpenChapter(null) : onOpenSource(null));
+  // Review: this chapter's cards inside a chapter, else the whole book's.
+  const scopeChapter = activeChapter && !single ? activeChapter : undefined;
+  const scopeCards: Flashcard[] = useMemo(() => cardsOfSource(occurrences, cards, source.id, scopeChapter?.id), [occurrences, cards, source.id, scopeChapter?.id]);
+  const scopeDue: number = useMemo(() => scopeCards.filter(c => isDue(c)).length, [scopeCards]);
+  const existingFronts: string[] = useMemo(() => cards.filter(c => !c.isDeleted).map(c => c.front), [cards]);
   // A section just finished here: its cards, for a short review.
   const review = props.sectionReview?.sourceId === source.id ? props.sectionReview : null;
   const reviewCount = useMemo(() => {
@@ -239,6 +254,20 @@ const SourcePage: React.FC<LibraryViewProps & { source: Source }> = props => {
           <span className="rounded-full bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100 px-3 py-1">{fa(cardCount)} کارت</span>
         </div>
         {source.url && <a href={source.url} target="_blank" rel="noopener noreferrer" dir="ltr" className="font-en text-xs text-brand-500 dark:text-brand-300 truncate hover:underline">{source.url}</a>}
+        {scopeCards.length > 0 && (
+          <div className="flex flex-wrap gap-2 pt-1">
+            <button type="button" onClick={() => props.onStartSourceReview(source.id, scopeChapter?.id, 'flip')}
+              className="min-h-[44px] px-4 rounded-xl bg-ink text-white dark:bg-white dark:text-ink font-bold inline-flex items-center gap-2">
+              {scopeChapter ? 'مرور واژه‌های این فصل' : 'مرور واژه‌های این کتاب'}
+              <span className="rounded-full bg-white/20 dark:bg-ink/10 text-xs px-2 py-0.5">{scopeDue > 0 ? `${fa(scopeDue)} موعد` : `${fa(scopeCards.length)} کارت`}</span>
+            </button>
+            <button type="button" onClick={() => props.onStartSourceReview(source.id, scopeChapter?.id, 'cloze')}
+              title="واژه در جمله‌ای از همین کتاب جا افتاده؛ بنویسش"
+              className="min-h-[44px] px-4 rounded-xl border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 font-bold">
+              جای خالی در جمله‌های کتاب
+            </button>
+          </div>
+        )}
       </div>
 
       {review && (
@@ -269,6 +298,11 @@ const SourcePage: React.FC<LibraryViewProps & { source: Source }> = props => {
         <SourceWords source={source} chapters={chapters} occurrences={occurrences} cards={cards} decks={decks} />
       ) : activeChapter ? (
         <>
+          {single && <BookCoverage source={source} chapters={chapters} cards={cards} knownWords={props.knownWords} userLevel={props.settings.userLevel} loadText={props.loadText} />}
+          {activeChapter.completed.length === 0 && (
+            <ChapterPrestudy chapter={activeChapter} settings={props.settings} existingFronts={existingFronts} knownTerms={props.knownTerms}
+              loadText={props.loadText} onPrestudy={props.onPrestudyChapter} />
+          )}
           <ChapterPath chapter={activeChapter} onOpenChunk={i => onOpenChunk(activeChapter, i)} />
           {!isChapterFinished(activeChapter) && (
             <button type="button" onClick={() => onOpenChunk(activeChapter, currentChunkOf(activeChapter))}
@@ -285,6 +319,7 @@ const SourcePage: React.FC<LibraryViewProps & { source: Source }> = props => {
               {progress.done === 0 ? 'شروع خواندن' : `ادامه: فصل ${fa(next.chapter.order)}، بخش ${fa(next.chunk + 1)}`}
             </button>
           )}
+          <BookCoverage source={source} chapters={chapters} cards={cards} knownWords={props.knownWords} userLevel={props.settings.userLevel} loadText={props.loadText} />
           <ol className="bg-white dark:bg-slate-800 rounded-3xl p-2 flex flex-col">
             {chapters.map(c => {
               const done = isChapterFinished(c);
@@ -343,11 +378,91 @@ const KnownWordsPanel: React.FC<{ rows: KnownWord[]; onRemove: (term: string) =>
   );
 };
 
+// --- The bookshelf: books being read, new ones, and finished ones ---
+
+// A cover colour from the title, so each book keeps its own.
+const COVERS = [
+  'from-indigo-500 to-violet-700', 'from-sky-500 to-blue-700', 'from-emerald-500 to-teal-700', 'from-amber-500 to-orange-700',
+  'from-rose-500 to-pink-700', 'from-fuchsia-500 to-purple-700', 'from-cyan-500 to-sky-700', 'from-lime-600 to-green-700',
+];
+const coverOf = (title: string) => {
+  let h = 0;
+  for (const ch of title) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return COVERS[h % COVERS.length];
+};
+
+interface ShelfProps {
+  sources: Source[];
+  chapters: Chapter[];
+  cardsBySource: Map<string, Set<string>>;
+  knownBy: (word: string) => 'card' | 'list' | null;
+  userLevel?: string;
+  onOpen: (sourceId: string) => void;
+}
+
+const Shelf: React.FC<ShelfProps> = ({ sources, chapters, cardsBySource, knownBy, userLevel, onOpen }) => {
+  const rows = sources.map(s => {
+    const list = chaptersOf(s.id, chapters);
+    const p = sourceProgress(list);
+    const profile = savedProfile(s.id);
+    return { s, list, p, next: continuePoint(s, list), coverage: profile ? coverageOf(profile, userLevel, knownBy).percent : null };
+  });
+  const groups = [
+    { title: 'در حال خواندن', rows: rows.filter(r => r.p.done > 0 && !r.p.finished) },
+    { title: 'هنوز شروع نشده', rows: rows.filter(r => r.p.done === 0) },
+    { title: 'تمام‌شده', rows: rows.filter(r => r.p.finished) },
+  ].filter(g => g.rows.length > 0);
+  const chaptersDone = rows.reduce((n, r) => n + r.list.filter(isChapterFinished).length, 0);
+  const finished = rows.filter(r => r.p.finished).length;
+
+  return (
+    <div className="flex flex-col gap-5">
+      <p className="flex flex-wrap gap-2 text-sm">
+        <span className="rounded-full bg-white dark:bg-slate-800 px-3 py-1">{fa(rows.length)} کتاب و متن</span>
+        <span className="rounded-full bg-white dark:bg-slate-800 px-3 py-1">{fa(chaptersDone)} فصل خوانده‌شده</span>
+        {finished > 0 && <span className="rounded-full bg-emerald-100 text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100 px-3 py-1">{fa(finished)} تمام‌شده</span>}
+      </p>
+      {groups.map(g => (
+        <section key={g.title} className="flex flex-col gap-3">
+          <h2 className="text-sm font-bold text-ink-muted dark:text-slate-400">{g.title}</h2>
+          <ul className="grid gap-3 sm:grid-cols-2">
+            {g.rows.map(({ s, list, p, next, coverage }) => (
+              <li key={s.id}>
+                <button type="button" onClick={() => onOpen(s.id)} className="w-full h-full text-right bg-white dark:bg-slate-800 rounded-3xl p-4 flex gap-4 hover:ring-2 hover:ring-brand-200 dark:hover:ring-brand-800">
+                  <span className={`relative w-20 h-28 shrink-0 rounded-xl bg-gradient-to-br ${coverOf(s.title)} text-white p-2 flex flex-col justify-between overflow-hidden shadow-[inset_4px_0_0_rgba(0,0,0,0.18)]`} aria-hidden="true">
+                    <span dir="auto" className="font-en text-[11px] font-bold leading-tight line-clamp-4 break-words">{s.title}</span>
+                    {p.finished && <span className="absolute top-1.5 left-1.5 w-6 h-6 rounded-full bg-white text-emerald-700 flex items-center justify-center"><Icon.Check size={14} /></span>}
+                    <span className="h-1.5 rounded-full bg-white/30 overflow-hidden flex"><span className="bg-white rounded-full" style={{ width: `${p.percent}%` }} /></span>
+                  </span>
+                  <span className="flex-1 min-w-0 flex flex-col gap-1.5">
+                    <span dir="auto" className="font-en font-bold text-ink dark:text-white truncate">{s.title}</span>
+                    {s.author && <span dir="auto" className="font-en text-sm text-ink-muted dark:text-slate-400 truncate">{s.author}</span>}
+                    <span className="flex flex-wrap gap-1.5">
+                      <span className={`text-xs rounded-full px-2.5 py-0.5 ${KIND_STYLE[s.kind]}`}>{KIND_NAMES[s.kind]}</span>
+                      {coverage !== null && <span className="text-xs rounded-full px-2.5 py-0.5 bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-100" title="درصد واژه‌های متن که بلدی">{fa(Math.round(coverage))}٪ بلدی</span>}
+                    </span>
+                    <span className="text-sm text-ink-muted dark:text-slate-400">
+                      {p.finished ? 'تمام شد' : next && list.length > 1 ? `فصل ${fa(next.chapter.order)} از ${fa(list.length)}` : next ? `بخش ${fa(next.chunk + 1)} از ${fa(next.chapter.chunkCount)}` : ''}
+                      {'، '}{fa(cardsBySource.get(s.id)?.size || 0)} کارت
+                    </span>
+                    <span className="text-xs text-ink-muted dark:text-slate-500">{fa(p.words)} واژه · {fa(p.percent)}٪ خوانده شده</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+};
+
 // The library: every book, article and text, and how far each one is read.
 export const LibraryView: React.FC<LibraryViewProps> = props => {
   const { sources, chapters, occurrences, cards, activeSourceId, onAddSource, onOpenSource, onNavigate } = props;
   const [adding, setAdding] = useState(false);
   const cardsBySource = useCardsBySource(occurrences, cards);
+  const knownBy = useMemo(() => knownByFrom(cards, props.knownWords), [cards, props.knownWords]);
   const visible = sources.filter(s => !s.isDeleted).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const active = visible.find(s => s.id === activeSourceId);
 
@@ -378,31 +493,7 @@ export const LibraryView: React.FC<LibraryViewProps> = props => {
       )}
 
       {visible.length > 0 && (
-        <ul className="grid gap-3 sm:grid-cols-2">
-          {visible.map(s => {
-            const list = chaptersOf(s.id, chapters);
-            const p = sourceProgress(list);
-            const next = continuePoint(s, list);
-            return (
-              <li key={s.id}>
-                <button type="button" onClick={() => onOpenSource(s.id)} className="w-full h-full text-right bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-3 hover:ring-2 hover:ring-brand-200 dark:hover:ring-brand-800">
-                  <span className="flex items-start gap-2">
-                    <span className="flex-1 min-w-0 flex flex-col">
-                      <span dir="auto" className="font-en font-bold text-ink dark:text-white truncate">{s.title}</span>
-                      {s.author && <span dir="auto" className="font-en text-sm text-ink-muted dark:text-slate-400 truncate">{s.author}</span>}
-                    </span>
-                    <span className={`text-xs rounded-full px-2.5 py-0.5 shrink-0 ${KIND_STYLE[s.kind]}`}>{KIND_NAMES[s.kind]}</span>
-                  </span>
-                  <ProgressBar percent={p.percent} done={p.finished} />
-                  <span className="text-sm text-ink-muted dark:text-slate-400">
-                    {p.finished ? 'تمام شد' : next && list.length > 1 ? `فصل ${fa(next.chapter.order)} از ${fa(list.length)}` : next ? `بخش ${fa(next.chunk + 1)} از ${fa(next.chapter.chunkCount)}` : ''}
-                    {'، '}{fa(p.words)} واژه، {fa(cardsBySource.get(s.id)?.size || 0)} کارت
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        <Shelf sources={visible} chapters={chapters} cardsBySource={cardsBySource} knownBy={knownBy} userLevel={props.settings.userLevel} onOpen={onOpenSource} />
       )}
 
       <KnownWordsPanel rows={props.knownWords} onRemove={props.onUnmarkKnown} />

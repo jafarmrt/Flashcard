@@ -8,7 +8,7 @@ export const reviewGoalId = (target: number) => `review-${target}`;
 export const generateNewDailyGoals = (_streak: number, reviewTarget: number = DEFAULT_DAILY_REVIEW_GOAL): DailyGoal[] => [{
     id: reviewGoalId(reviewTarget),
     type: 'STUDY',
-    description: `${reviewTarget} reviews`,
+    description: `${reviewTarget} مرور`, // a finished section counts as SECTION_GOAL_REVIEWS
     target: reviewTarget,
     xp: 30,
     progress: 0,

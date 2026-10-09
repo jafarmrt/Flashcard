@@ -81,11 +81,12 @@ const App: React.FC = () => {
         updateSettings, handleCheckAchievements, handleGoalUpdate, studyCards,
         handleCompleteCardDetails, handleAutoFixCards, handleStopAutoFix, autoFixProgress,
         handleCloseAutoFixReport, handleSaveExtractedCards, previousViewRef,
-        syncStatus, studyMode, studyLogs, studySessionId, sources, chapters, occurrences,
+        syncStatus, studyMode, studySourceId, studyLogs, studySessionId, sources, chapters, occurrences,
         activeSourceId, activeChapterId, activeChunk, startQuickReview, openStudySetup,
         handleAddSource, handleOpenSource, handleOpenChapter, handleOpenChunk, handleDeleteSource,
         handleCompleteChunk, loadChapterText, handleSaveReaderCards,
         knownWords, sectionReview, handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview, handleCheckCards,
+        handleStartSourceReview, handleReviewCards, handlePrestudyChapter,
     } = useAppLogic();
 
     const visibleFlashcards = useMemo(() => flashcards.filter(c => !c.isDeleted), [flashcards]);
@@ -169,6 +170,11 @@ const App: React.FC = () => {
                     onDismissSectionReview={dismissSectionReview}
                     aiOptions={aiRequestOptions(settings)}
                     onCheckCards={handleCheckCards}
+                    settings={settings}
+                    knownTerms={knownTerms}
+                    loadText={loadChapterText}
+                    onStartSourceReview={handleStartSourceReview}
+                    onPrestudyChapter={handlePrestudyChapter}
                 />;
             case 'READER':
                 if (!activeSource || !activeChapter) return null;
@@ -200,6 +206,7 @@ const App: React.FC = () => {
                     goal={{ progress: studyGoal?.progress || 0, target: studyGoal?.target || DEFAULT_DAILY_REVIEW_GOAL }}
                     onExit={handleSessionEnd}
                     places={places}
+                    sourceId={studySourceId}
                     aiOptions={aiRequestOptions(settings)}
                 />;
             case 'PRACTICE':
@@ -259,7 +266,8 @@ const App: React.FC = () => {
                     audioOptions={geminiAudioOptions(settings)}
                 />;
             case 'STATS':
-                return <StatsView onBack={() => setView('DECKS')} />;
+                return <StatsView cards={visibleFlashcards} sources={sources} occurrences={occurrences}
+                    onReviewCards={ids => { handleReviewCards(ids, 'STATS'); }} onOpenSource={handleOpenSource} />;
             case 'USAGE':
                 return <UsageView cards={visibleFlashcards} onBack={() => setView('SETTINGS')} />;
             case 'CHANGELOG':
@@ -317,7 +325,7 @@ const App: React.FC = () => {
 
     // New screens are Persian (right to left); the older screens keep their
     // English, left-to-right layout inside the same shell.
-    const PERSIAN_VIEWS = ['TODAY', 'ME', 'TEXTS', 'READER', 'STUDY', 'SETTINGS', 'USAGE'];
+    const PERSIAN_VIEWS = ['TODAY', 'ME', 'TEXTS', 'READER', 'STUDY', 'SETTINGS', 'USAGE', 'DECKS', 'LIST', 'FORM', 'BULK_ADD', 'ACHIEVEMENTS', 'STATS', 'PROFILE', 'PRACTICE', 'AI_EXTRACT'];
     const isStudy = view === 'STUDY';
 
     return (

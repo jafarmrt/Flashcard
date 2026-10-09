@@ -7,6 +7,7 @@ import type { CardOrigin, Chapter, ChapterText, Deck, Flashcard, Occurrence, Sou
 import { findSentence, splitIntoChunks, wordCount } from './textChunker.js';
 import { lemmaCandidates, termWords, tokensOf } from './lemma.js';
 import { normalizeTerm } from './vocabMerge.js';
+import { BOOK_COMPLETE_XP, CHAPTER_COMPLETE_XP, CHUNK_COMPLETE_XP } from './xpRules.js';
 
 export interface ChapterInput {
   title: string;
@@ -75,6 +76,23 @@ export const chaptersOf = (sourceId: string, chapters: Chapter[]): Chapter[] =>
   chapters.filter(c => c.sourceId === sourceId && !c.isDeleted).sort((a, b) => a.order - b.order);
 
 export const isChapterFinished = (c: Chapter) => c.completed.length >= c.chunkCount;
+
+// A book (not an article or a pasted text) with every chapter read. The
+// "book finished" bonus and badge both use this.
+export const isBookFinished = (source: Pick<Source, 'id' | 'kind'>, chapters: Chapter[]): boolean => {
+  if (source.kind !== 'book') return false;
+  const list = chaptersOf(source.id, chapters);
+  return list.length > 0 && list.every(isChapterFinished);
+};
+
+// What a finished section earns: its own XP, plus a bonus when it was the
+// last of its chapter, and another when that chapter was the last of a book.
+export const sectionReward = (chapter: Chapter, source: Pick<Source, 'id' | 'kind'> | undefined, chapters: Chapter[]) => {
+  const chapterDone = isChapterFinished(chapter);
+  const bookDone = chapterDone && !!source && isBookFinished(source, chapters.map(c => (c.id === chapter.id ? chapter : c)));
+  const xp = CHUNK_COMPLETE_XP + (chapterDone ? CHAPTER_COMPLETE_XP : 0) + (bookDone ? BOOK_COMPLETE_XP : 0);
+  return { chapterDone, bookDone, xp };
+};
 
 // The first section not finished yet, or the last one when all are done.
 export const currentChunkOf = (c: Chapter): number => {
