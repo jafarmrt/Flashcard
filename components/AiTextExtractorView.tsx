@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Deck, Settings, ExtractedWordCard } from '../types';
 import { testAiConnection } from '../services/geminiService';
+import { aiRequestOptions, usableModel } from '../services/aiSettings';
 import { extractFromLongText, ExtractionProgress, ExtractionSource } from '../services/extractionPipeline';
 import { DEFAULT_CHUNK_WORDS, splitIntoChunks, wordCount as countWords } from '../services/textChunker';
 import { speakText, stopSpeech, pauseSpeech, resumeSpeech, isSpeechSupported, getAvailableVoices } from '../services/ttsService';
@@ -51,17 +52,17 @@ export const AI_PRESETS: ProviderPreset[] = [
     provider: 'gemini',
     baseUrl: '',
     defaultModel: 'gemini-2.5-flash',
-    models: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'],
+    models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'],
     keyPlaceholder: 'AIzaSy... (Leave empty to use built-in server key)',
     keyHelp: 'Built-in server key is used if empty.',
   },
   {
     id: 'groq',
-    name: 'Groq (Ultra-Fast Open Source - Llama 3 / Mixtral)',
+    name: 'Groq (fast, free tier - Llama 3.3)',
     provider: 'openai-compatible',
     baseUrl: 'https://api.groq.com/openai/v1',
     defaultModel: 'llama-3.3-70b-versatile',
-    models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768', 'gemma2-9b-it'],
+    models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
     keyPlaceholder: 'gsk_...',
     keyHelp: 'Get a free API key from console.groq.com',
   },
@@ -244,6 +245,8 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
     if (preset) {
       setCustomBaseUrl(preset.baseUrl);
       setCustomModelInput(preset.defaultModel);
+      // A key belongs to one provider: never send it to another.
+      setCustomKeyInput(presetId === initialPreset.id ? settings.customApiKey || '' : '');
       setTestResult(null);
     }
   };
@@ -310,19 +313,14 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
         source,
         existingFronts,
         includeGrammar: source === 'ai' && includeGrammar,
-        aiOptions: {
-          aiProvider: settings.aiProvider || 'gemini',
-          aiBaseUrl: settings.aiBaseUrl || undefined,
-          customApiKey: settings.customApiKey || undefined,
-          model: settings.aiModel || 'gemini-2.5-flash',
-        },
+        aiOptions: aiRequestOptions(settings),
         signal: controller.signal,
         onProgress: setProgress,
       });
 
       if (result.cards.length === 0) {
         showToast(result.failedSections > 0
-          ? 'Extraction failed. Check the AI settings or your connection.'
+          ? `Extraction failed. ${result.aiError ? `AI: ${result.aiError}` : 'Check the AI settings or your connection.'}`
           : 'No suitable vocabulary could be extracted. Try a longer text or adjust level.');
         return;
       }
@@ -331,7 +329,7 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
       setStep('review');
       const notes = [
         result.stopped ? 'stopped early' : '',
-        result.fallbackSections ? `${result.fallbackSections} section(s) used free dictionaries` : '',
+        result.fallbackSections ? `${result.fallbackSections} section(s) used free dictionaries${result.aiError ? ` because ${result.aiError}` : ''}` : '',
         result.failedSections ? `${result.failedSections} section(s) failed` : '',
       ].filter(Boolean).join(', ');
       showToast(`Found ${result.cards.length} items in ${result.sections} section(s)${notes ? ` (${notes})` : ''}.`);
@@ -395,7 +393,7 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
           <div className="flex items-center gap-2 text-xs text-indigo-200 mb-1">
             <span>AI Linguistic Engine</span>
             <span aria-hidden="true">·</span>
-            <span className="font-mono text-white font-semibold">{settings.aiModel || 'gemini-2.5-flash'}</span>
+            <span className="font-mono text-white font-semibold">{usableModel(settings)}</span>
             {settings.aiProvider === 'openai-compatible' && (
               <>
                 <span aria-hidden="true">·</span>

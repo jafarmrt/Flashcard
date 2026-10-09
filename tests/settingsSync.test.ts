@@ -1,3 +1,4 @@
+import { geminiAudioOptions, usableModel } from '../services/aiSettings';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyIncomingSettings, newerSettings, toSyncedSettings } from '../services/settingsSync';
@@ -34,4 +35,21 @@ test('older or unstamped cloud settings leave the device alone', () => {
 test('a device that never saved settings takes the cloud ones', () => {
   assert.deepEqual(applyIncomingSettings({}, { dailyReviewGoal: 60, updatedAt: '2026-10-08T09:00:00Z' }),
     { dailyReviewGoal: 60, updatedAt: '2026-10-08T09:00:00Z' });
+});
+
+test('usableModel keeps a model only with the provider it belongs to', () => {
+  assert.equal(usableModel({ aiProvider: 'gemini', aiModel: 'gemini-2.5-pro' }), 'gemini-2.5-pro');
+  assert.equal(usableModel({ aiProvider: 'gemini', aiModel: 'llama-3.3-70b-versatile' }), 'gemini-2.5-flash');
+  assert.equal(usableModel({ aiProvider: 'openai-compatible', aiModel: 'gemini-2.5-flash' }), 'llama-3.3-70b-versatile');
+  assert.equal(usableModel({ aiProvider: 'openai-compatible', aiModel: 'google/gemini-2.5-flash' }), 'google/gemini-2.5-flash');
+  assert.equal(usableModel({ aiProvider: 'gemini', aiModel: 'gemini-1.5-flash' }), 'gemini-2.5-flash');
+  assert.equal(usableModel({ aiProvider: 'openai-compatible', aiModel: 'mixtral-8x7b-32768' }), 'llama-3.3-70b-versatile');
+  assert.equal(usableModel({ aiProvider: 'openai-compatible' }), 'llama-3.3-70b-versatile');
+});
+
+test('geminiAudioOptions never sends another provider\'s key to Google', () => {
+  const groq = geminiAudioOptions({ aiProvider: 'openai-compatible', customApiKey: 'gsk_secret', aiModel: 'llama-3.3-70b-versatile' } as any);
+  assert.equal(groq.aiProvider, 'gemini');
+  assert.equal(groq.customApiKey, undefined);
+  assert.equal(groq.model, 'gemini-2.5-flash');
 });

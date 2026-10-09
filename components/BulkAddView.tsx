@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, memo, useEffect } from 'react';
 import { Flashcard } from '../types';
-import { generatePersianDetails } from '../services/geminiService';
+import { AiRequestOptions, generatePersianDetails } from '../services/geminiService';
 import { fetchFromFreeDictionary, fetchFromMerriamWebster, fetchAudioData, DictionaryResult } from '../services/dictionaryService';
 
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted'>;
@@ -40,6 +40,7 @@ interface BulkAddViewProps {
     concurrency: number;
     aiTimeout: number; // in seconds
     dictTimeout: number; // in seconds
+    aiOptions?: AiRequestOptions;
 }
 
 // --- ICONS ---
@@ -148,7 +149,7 @@ const ReviewItem = memo(({
 });
 
 
-export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, showToast, defaultApiSource, concurrency, aiTimeout, dictTimeout }) => {
+export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, showToast, defaultApiSource, concurrency, aiTimeout, dictTimeout, aiOptions }) => {
     const [step, setStep] = useState<'input' | 'processing' | 'review'>('input');
     const [wordsInput, setWordsInput] = useState('');
     const [deckName, setDeckName] = useState('New Vocabulary');
@@ -157,24 +158,25 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
     const [isProcessing, setIsProcessing] = useState(false);
     const isCancelledRef = useRef(false);
 
-    const processedWordsRef = useRef(processedWords);
-    useEffect(() => {
-        processedWordsRef.current = processedWords;
-    }, [processedWords]);
+    // The ref is the source of truth and is updated at once, so a step that
+    // has just finished (the dictionary found an audio URL) is visible to the
+    // next step before React renders.
+    const processedWordsRef = useRef<ProcessedWord[]>([]);
+    const commitWords = (next: ProcessedWord[]) => {
+        processedWordsRef.current = next;
+        setProcessedWords(next);
+    };
 
     const updateWordState = (word: string, updater: (draft: ProcessedWord) => void) => {
-        setProcessedWords(prev => {
-            const index = prev.findIndex(p => p.word === word);
-            if (index === -1) return prev;
-            
-            const newState = [...prev];
-            // Create a deep copy to safely mutate nested objects like `details` and `card`
-            const newWordState = JSON.parse(JSON.stringify(newState[index]));
-            updater(newWordState);
-           
-            newState[index] = newWordState;
-            return newState;
-        });
+        const prev = processedWordsRef.current;
+        const index = prev.findIndex(p => p.word === word);
+        if (index === -1) return;
+        const newState = [...prev];
+        // Create a deep copy to safely mutate nested objects like `details` and `card`
+        const newWordState = JSON.parse(JSON.stringify(newState[index]));
+        updater(newWordState);
+        newState[index] = newWordState;
+        commitWords(newState);
     };
     
     const processWordPart = useCallback(async (
@@ -212,7 +214,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
             } else if (part === 'ai') {
                 updateWordState(word, draft => { draft.details.ai.status = 'loading'; });
                 const details = await Promise.race([
-                    generatePersianDetails(word),
+                    generatePersianDetails(word, aiOptions),
                     timeoutPromise(aiTimeout * 1000, `AI timed out.`)
                 ]);
                 updateWordState(word, draft => {
@@ -226,7 +228,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                     const finalNotes = (currentNotes && currentNotes.trim() !== '') ? currentNotes : details.notes;
 
                     draft.card = { ...draft.card, back: finalBack, notes: finalNotes };
-                    draft.details.ai = { status: 'done', source: 'Gemini' };
+                    draft.details.ai = { status: 'done', source: aiOptions?.aiProvider === 'openai-compatible' ? (aiOptions.model || 'AI') : 'Gemini' };
                 });
             } else if (part === 'audio') {
                 const wordState = processedWordsRef.current.find(p => p.word === word);
@@ -261,7 +263,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                 }
             });
         }
-    }, [defaultApiSource, aiTimeout, dictTimeout]);
+    }, [defaultApiSource, aiTimeout, dictTimeout, aiOptions]);
 
     const handleProcessWord = useCallback(async (word: string) => {
         if (isCancelledRef.current) return;
@@ -308,7 +310,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
         if (!isCancelledRef.current) {
             setIsProcessing(false);
             if (step !== 'review') {
-                const finalWords = await new Promise<ProcessedWord[]>(resolve => setProcessedWords(current => { resolve(current); return current; }));
+                const finalWords = processedWordsRef.current;
                 const successCount = finalWords.filter(p => p.status === 'done').length;
                 const failureCount = finalWords.length - successCount;
                 showToast(`Processing complete. ${successCount} successful, ${failureCount} failed.`);
@@ -322,7 +324,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
         if (words.length === 0) { showToast("Please enter at least one word."); return; }
         if (!deckName.trim()) { showToast("Please enter a deck name."); return; }
         
-        setProcessedWords(words.map(word => ({
+        commitWords(words.map(word => ({
             word,
             status: 'pending',
             card: { front: word },

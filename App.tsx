@@ -8,6 +8,7 @@ import FlashcardForm from './components/FlashcardForm';
 import { StudyView } from './components/StudyView';
 import { StatsView } from './components/StatsView';
 import { PracticeView } from './components/ConversationView';
+import { aiRequestOptions, geminiAudioOptions } from './services/aiSettings';
 import Toast from './components/Toast';
 import DeckList from './components/DeckList';
 import { ChangelogView } from './components/ChangelogView';
@@ -127,7 +128,7 @@ const App: React.FC = () => {
                     onExit={handleSessionEnd}
                 />;
             case 'PRACTICE':
-                return <PracticeView cards={visibleFlashcards} awardXP={userProfile ? (points) => handleGoalUpdate('QUIZ', points, true) : () => {}} onQuizComplete={(score) => {
+                return <PracticeView cards={visibleFlashcards} aiOptions={aiRequestOptions(settings)} audioOptions={geminiAudioOptions(settings)} awardXP={userProfile ? (points) => handleGoalUpdate('QUIZ', points, true) : () => {}} onQuizComplete={(score) => {
                     handleCheckAchievements(score);
                     handleGoalUpdate('QUIZ', 1);
                 }} />;
@@ -177,6 +178,8 @@ const App: React.FC = () => {
                     initialDeckName={editingCardDeckName}
                     showToast={showToast}
                     defaultApiSource={settings.defaultApiSource}
+                    aiOptions={aiRequestOptions(settings)}
+                    audioOptions={geminiAudioOptions(settings)}
                 />;
             case 'STATS':
                 return <StatsView onBack={() => setView('DECKS')} />;
@@ -202,6 +205,7 @@ const App: React.FC = () => {
                     concurrency={settings.bulkAddConcurrency || 3}
                     aiTimeout={settings.bulkAddAiTimeout || 15}
                     dictTimeout={settings.bulkAddDictTimeout || 2.5}
+                    aiOptions={aiRequestOptions(settings)}
                 />;
             case 'LIST':
             default:

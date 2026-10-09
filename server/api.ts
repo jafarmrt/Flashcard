@@ -344,7 +344,7 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         }
 
         const apiKey = payload.customApiKey || process.env.GEMINI_API_KEY || process.env.API_KEY;
-        if (!apiKey) return res.status(500).json({ error: 'Gemini API key not configured. Please set GEMINI_API_KEY or configure your Custom API Key in AI Settings.' });
+        if (!apiKey) return res.status(400).json({ error: 'Gemini: no API key. Set GEMINI_API_KEY on the server or enter a key in the AI settings.' });
         return await handleGeminiGenerate(payload, res, apiKey);
       }
 

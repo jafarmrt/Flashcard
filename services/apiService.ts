@@ -1,5 +1,16 @@
 export const AUTH_REQUIRED_EVENT = 'lingua-auth-required';
 
+// A failed proxy call, with the HTTP status so callers can tell a wrong key
+// (no point retrying) from a timeout or a busy provider.
+export class ProxyError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ProxyError';
+    this.status = status;
+  }
+}
+
 // A helper function to call our secure proxy
 export const callProxy = async (action: 'auth-register' | 'auth-login' | 'auth-session' | 'auth-logout' | 'sync-load' | 'sync-merge' | 'ping' | 'ping-free-dict' | 'ping-mw' | 'gemini-generate' | 'test-ai-key' | 'dictionary-free' | 'dictionary-mw' | 'fetch-audio' | 'word-frequencies' | 'free-enrich' | 'free-translate', payload: object) => {
     const response = await fetch('/api/proxy', {
@@ -13,7 +24,7 @@ export const callProxy = async (action: 'auth-register' | 'auth-login' | 'auth-s
         // The session cookie is missing or expired: let the app show the sign-in screen.
         window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
       }
-      throw new Error(errorData.error || 'Request failed');
+      throw new ProxyError(errorData.error || `Request failed (${response.status})`, response.status);
     }
     return response.json();
 };
