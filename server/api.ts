@@ -395,7 +395,8 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
       case 'free-enrich': {
         const { term } = payload;
         if (!term || typeof term !== 'string') return res.status(400).json({ error: 'term is required.' });
-        return res.status(200).json(await freeEnrich(term));
+        if (term.length > 100) return res.status(400).json({ error: 'term is too long.' });
+        return res.status(200).json(await freeEnrich(term, undefined, payload.onlyIfFound === true));
       }
 
       case 'free-translate': {

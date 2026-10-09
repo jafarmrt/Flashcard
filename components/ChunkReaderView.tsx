@@ -1,6 +1,8 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ExtractedWordCard, Settings, TextDoc } from '../types';
+import { aiRequestOptions } from '../services/aiSettings';
 import { extractFromLongText, ExtractionSource } from '../services/extractionPipeline';
+import { lemmaCandidates } from '../services/lemma';
 import { enrichmentToCard, freeEnrich } from '../services/freeExtractionService';
 import { findSentence } from '../services/textChunker';
 import { normalizeTerm } from '../services/vocabMerge';
@@ -20,9 +22,17 @@ interface ChunkReaderViewProps {
   showToast: (message: string) => void;
 }
 
-type Item = ExtractedWordCard & { loading?: boolean };
+// `key` identifies an item (its term, normalised); `forms` are the words of
+// the text that were tapped for it ("running" for "run"), for highlighting.
+type Item = ExtractedWordCard & { key: string; forms: string[]; loading?: boolean };
 
 const KIND_LABEL: Record<string, string> = { word: 'واژه', phrase: 'عبارت', idiom: 'اصطلاح', grammar: 'دستوری' };
+
+// Words of the text, keeping inner apostrophes and hyphens ("don't",
+// "well-known"); everything else is plain text between them.
+const WORD_SPLIT = /(\p{Script=Latin}+(?:['’-]\p{Script=Latin}+)*)/u;
+
+const toItem = (card: ExtractedWordCard, forms: string[] = []): Item => ({ ...card, key: normalizeTerm(card.front), forms });
 
 // One section of a text: read it, pick its hard words (AI, free dictionaries,
 // or by tapping a word), turn them into cards, then finish the section.
@@ -31,16 +41,34 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
 }) => {
   const chunk = doc.chunks[index] || '';
   const [items, setItems] = useState<Item[]>([]);
-  const [selected, setSelected] = useState<number | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [source, setSource] = useState<ExtractionSource>(settings.extractionSource || 'ai');
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [reading, setReading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const lookups = useRef(new Set<string>());
   const done = doc.completed.includes(index);
 
+  // Leaving the section stops a running search and reading aloud.
+  useEffect(() => () => { abortRef.current?.abort(); stopSpeech(); }, []);
+
   const known = useMemo(() => new Set(existingFronts.map(normalizeTerm)), [existingFronts]);
-  const itemKeys = useMemo(() => new Map(items.map((it, i) => [normalizeTerm(it.front), i])), [items]);
+  // Any base form with a card counts: "decided" is known when "decide" has a card.
+  const isKnown = (word: string) => lemmaCandidates(word).some(form => known.has(normalizeTerm(form)));
+
+  // Every way an item can appear in the text -> its key.
+  const formIndex = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const it of items) {
+      map.set(it.key, it.key);
+      for (const form of it.forms) map.set(normalizeTerm(form), it.key);
+    }
+    return map;
+  }, [items]);
+  const itemKeyFor = (word: string): string | undefined =>
+    formIndex.get(normalizeTerm(word)) ?? lemmaCandidates(word).map(f => formIndex.get(normalizeTerm(f))).find(Boolean);
 
   const extract = async () => {
     abortRef.current?.abort();
@@ -48,68 +76,111 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     abortRef.current = controller;
     setLoading(true);
     try {
+      // Items already in the list are not asked for again.
+      const listed = items.filter(it => !it.loading).map(it => it.front);
       const result = await extractFromLongText({
         text: chunk,
         level: settings.userLevel || 'B2',
         perSection: 12,
         source,
-        existingFronts,
+        existingFronts: [...existingFronts, ...listed],
         includeGrammar: source === 'ai',
-        aiOptions: {
-          aiProvider: settings.aiProvider || 'gemini',
-          aiBaseUrl: settings.aiBaseUrl || undefined,
-          customApiKey: settings.customApiKey || undefined,
-          model: settings.aiModel || 'gemini-2.5-flash',
-        },
+        aiOptions: aiRequestOptions(settings),
         signal: controller.signal,
       });
-      if (result.fallbackSections > 0) showToast('هوش مصنوعی جواب نداد؛ از دیکشنری‌های رایگان استفاده شد.');
-      if (result.cards.length === 0) showToast(result.failedSections > 0 ? 'پیدا کردن واژه‌ها ناموفق بود. تنظیمات یا اتصال را بررسی کن.' : 'واژهٔ سخت تازه‌ای پیدا نشد.');
+      if (controller.signal.aborted) return;
+      const listedKeys = new Set(listed.map(normalizeTerm));
+      const fresh = result.cards
+        .filter(c => !listedKeys.has(normalizeTerm(c.front)))
+        .map(c => toItem({ ...c, selected: !c.alreadyInDeck }));
+      if (result.fallbackSections > 0) {
+        showToast(`هوش مصنوعی جواب نداد${result.aiError ? ` (${result.aiError})` : ''}؛ از دیکشنری رایگان استفاده شد.`);
+      } else if (fresh.length === 0) {
+        showToast(result.failedSections > 0 ? 'پیدا کردن واژه‌ها ناموفق بود. تنظیمات یا اتصال را بررسی کن.' : 'واژهٔ سخت تازه‌ای پیدا نشد.');
+      }
       setItems(prev => {
-        const have = new Set(prev.map(p => normalizeTerm(p.front)));
-        return [...prev, ...result.cards.filter(c => !have.has(normalizeTerm(c.front))).map(c => ({ ...c, selected: !c.alreadyInDeck }))];
+        const have = new Set(prev.map(p => p.key));
+        return [...prev, ...fresh.filter(c => !have.has(c.key))];
       });
-      setSaved(false);
+      if (fresh.length > 0) setSaved(false);
+    } catch (error) {
+      console.error('Extraction failed:', error);
+      if (!controller.signal.aborted) showToast('پیدا کردن واژه‌ها ناموفق بود. اتصال را بررسی کن.');
     } finally {
-      setLoading(false);
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setLoading(false);
+      }
     }
   };
 
-  // Tap a word in the text to look it up and add it to the list.
+  // Tap a word in the text to look it up and add it to the list. The word is
+  // saved under its dictionary form ("running" -> "run"), once.
   const addWord = async (raw: string) => {
-    const term = raw.toLowerCase();
-    const existing = itemKeys.get(normalizeTerm(term));
-    if (existing !== undefined) { setSelected(existing); return; }
-    const position = items.length;
-    setItems(prev => [...prev, { front: term, back: '…', loading: true, selected: true, alreadyInDeck: known.has(normalizeTerm(term)) }]);
-    setSelected(position);
+    const surface = raw.toLowerCase().replace(/’/g, "'");
+    const existing = itemKeyFor(surface);
+    if (existing) { setSelectedKey(existing); return; }
+    if (lookups.current.has(surface)) return;
+    lookups.current.add(surface);
+    const tempKey = `lookup:${surface}`;
+    setItems(prev => [...prev, { key: tempKey, forms: [surface], front: surface, back: '…', loading: true, selected: true, alreadyInDeck: isKnown(surface) }]);
+    setSelectedKey(tempKey);
+    const drop = () => {
+      setItems(prev => prev.filter(p => p.key !== tempKey));
+      setSelectedKey(k => (k === tempKey ? null : k));
+    };
     try {
-      const e = await freeEnrich(term);
+      const e = await freeEnrich(surface);
       if (!e.found && !e.translation) {
-        showToast(`«${term}» در دیکشنری پیدا نشد.`);
-        setItems(prev => prev.filter(p => !(p.loading && p.front === term)));
-        setSelected(null);
+        showToast(`«${surface}» در دیکشنری پیدا نشد.`);
+        drop();
         return;
       }
-      const card = enrichmentToCard(term, findSentence(chunk, term), e, 'word');
-      setItems(prev => prev.map(p => (p.loading && p.front === term ? { ...card, alreadyInDeck: known.has(normalizeTerm(card.front)) } : p)));
+      const card = toItem(enrichmentToCard(surface, findSentence(chunk, surface), e, 'word'), [surface]);
+      card.alreadyInDeck = known.has(card.key) || isKnown(surface);
+      card.selected = !card.alreadyInDeck;
+      setItems(prev => {
+        // Another form of the same word is already listed: keep one item.
+        if (prev.some(p => p.key === card.key)) {
+          return prev
+            .filter(p => p.key !== tempKey)
+            .map(p => (p.key === card.key ? { ...p, forms: Array.from(new Set([...p.forms, surface])) } : p));
+        }
+        return prev.map(p => (p.key === tempKey ? card : p));
+      });
+      setSelectedKey(k => (k === tempKey ? card.key : k));
       setSaved(false);
     } catch (error) {
       console.error('Lookup failed:', error);
       showToast('جست‌وجوی واژه ناموفق بود.');
-      setItems(prev => prev.filter(p => !(p.loading && p.front === term)));
-      setSelected(null);
+      drop();
+    } finally {
+      lookups.current.delete(surface);
     }
   };
 
-  const toggle = (i: number) => setItems(prev => prev.map((p, j) => (j === i ? { ...p, selected: !p.selected } : p)));
+  const toggle = (key: string) => setItems(prev => prev.map(p => (p.key === key ? { ...p, selected: !p.selected } : p)));
   const toSave = items.filter(it => it.selected && !it.alreadyInDeck && !it.loading && it.back && it.back !== '…');
 
   const save = async () => {
-    if (toSave.length === 0) return;
-    await onSaveCards(toSave, doc.deckName);
-    setItems(prev => prev.map(p => (toSave.includes(p) ? { ...p, alreadyInDeck: true, selected: false } : p)));
-    setSaved(true);
+    if (saving || toSave.length === 0) return;
+    setSaving(true);
+    const keys = new Set(toSave.map(it => it.key));
+    try {
+      await onSaveCards(toSave.map(({ key, forms, loading: _loading, ...card }) => card), doc.deckName);
+      setItems(prev => prev.map(p => (keys.has(p.key) ? { ...p, alreadyInDeck: true, selected: false } : p)));
+      setSaved(true);
+    } catch (error) {
+      console.error('Saving cards failed:', error);
+      showToast('ساخت کارت‌ها ناموفق بود.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const finish = () => {
+    if (toSave.length > 0 && !window.confirm(`${fa(toSave.length)} واژهٔ انتخاب‌شده هنوز کارت نشده‌اند. بدون ساختن کارت تمام شود؟`)) return;
+    onComplete();
   };
 
   const toggleReading = () => {
@@ -122,14 +193,13 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   const paragraphs = useMemo(() => chunk.split(/\n\s*\n/), [chunk]);
   const renderParagraph = (p: string, pi: number) => (
     <p key={pi} className="mb-4 last:mb-0">
-      {p.split(/([A-Za-z][A-Za-z'’-]*)/).map((part, i) => {
+      {p.split(WORD_SPLIT).map((part, i) => {
         if (i % 2 === 0) return <React.Fragment key={i}>{part}</React.Fragment>;
-        const key = normalizeTerm(part);
-        const itemIndex = itemKeys.get(key);
-        const isSelected = itemIndex !== undefined && itemIndex === selected;
-        const cls = itemIndex !== undefined
+        const itemKey = itemKeyFor(part);
+        const isSelected = itemKey !== undefined && itemKey === selectedKey;
+        const cls = itemKey !== undefined
           ? isSelected ? 'bg-brand-200 ring-2 ring-brand-500 dark:bg-brand-800' : 'bg-amber-100 dark:bg-amber-900/50'
-          : known.has(key) ? 'underline decoration-emerald-500/60 decoration-2 underline-offset-4' : '';
+          : isKnown(part) ? 'underline decoration-emerald-500/60 decoration-2 underline-offset-4' : '';
         return (
           <button key={i} type="button" onClick={() => addWord(part)}
             className={`inline rounded px-0.5 -mx-0.5 hover:bg-brand-100 dark:hover:bg-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${cls}`}>
@@ -140,7 +210,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     </p>
   );
 
-  const detail = selected !== null ? items[selected] : undefined;
+  const detail = selectedKey !== null ? items.find(it => it.key === selectedKey) : undefined;
 
   return (
     <div dir="rtl" className="font-fa flex flex-col gap-5 w-full">
@@ -200,12 +270,12 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
             </button>
             {items.length > 0 && (
               <ul className="flex flex-col gap-1 max-h-[22rem] overflow-y-auto -mx-1 px-1">
-                {items.map((it, i) => (
-                  <li key={`${it.front}-${i}`}>
-                    <div className={`flex items-center gap-2.5 min-h-[44px] px-2.5 rounded-xl ${selected === i ? 'bg-brand-50 dark:bg-brand-900/40' : ''}`}>
+                {items.map(it => (
+                  <li key={it.key}>
+                    <div className={`flex items-center gap-2.5 min-h-[44px] px-2.5 rounded-xl ${selectedKey === it.key ? 'bg-brand-50 dark:bg-brand-900/40' : ''}`}>
                       <input type="checkbox" checked={!!it.selected && !it.alreadyInDeck} disabled={it.alreadyInDeck || it.loading}
-                        onChange={() => toggle(i)} aria-label={`انتخاب ${it.front}`} className="w-[18px] h-[18px] accent-brand-500" />
-                      <button type="button" onClick={() => setSelected(i)} className="flex-1 min-w-0 flex items-center gap-2 text-right">
+                        onChange={() => toggle(it.key)} aria-label={`انتخاب ${it.front}`} className="w-[18px] h-[18px] accent-brand-500" />
+                      <button type="button" onClick={() => setSelectedKey(it.key)} className="flex-1 min-w-0 flex items-center gap-2 text-right">
                         <span dir="ltr" className="font-en font-medium text-ink dark:text-white truncate">{it.front}</span>
                         {it.kind && it.kind !== 'word' && <span className="text-[11px] rounded-full bg-slate-100 dark:bg-slate-700 px-2">{KIND_LABEL[it.kind]}</span>}
                         <span className="flex-1" />
@@ -221,16 +291,22 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
           </section>
 
           {detail && !detail.loading && (
-            <section className="bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-2.5 animate-reveal">
+            // Below xl the list sits under the text, so the tapped word opens
+            // as a sheet at the bottom of the screen, where the reader is.
+            <section aria-label="جزئیات واژه"
+              className="fixed z-30 inset-x-3 bottom-[calc(5rem+env(safe-area-inset-bottom))] md:bottom-5 md:left-6 md:right-[17.5rem] max-h-[46vh] overflow-y-auto shadow-2xl ring-1 ring-slate-200 dark:ring-slate-700 xl:static xl:max-h-none xl:shadow-none xl:ring-0 bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-2.5 animate-reveal">
               <div dir="ltr" className="flex items-baseline gap-2.5 flex-wrap">
                 <span className="font-en font-bold text-2xl text-ink dark:text-white">{detail.front}</span>
                 {detail.pronunciation && <span className="text-ink-muted dark:text-slate-400">{detail.pronunciation}</span>}
                 {isSpeechSupported() && (
                   <button type="button" onClick={() => speakText(detail.front, { rate: 0.9 })} aria-label="پخش تلفظ" className="text-brand-500 dark:text-brand-300"><Icon.Speaker size={18} /></button>
                 )}
+                <span className="flex-1" />
+                <button type="button" onClick={() => setSelectedKey(null)} aria-label="بستن" className="xl:hidden w-9 h-9 -m-1.5 rounded-xl flex items-center justify-center text-ink-muted hover:bg-slate-100 dark:hover:bg-slate-700"><Icon.Close size={18} /></button>
               </div>
               <p className="text-ink dark:text-white">{detail.back}</p>
               {detail.grammarPattern && <p dir="ltr" className="font-mono text-sm text-rose-700 dark:text-rose-300">{detail.grammarPattern}</p>}
+              {detail.definition && detail.definition[0] && <p dir="ltr" className="text-sm text-ink-muted dark:text-slate-400">{detail.definition[0]}</p>}
               {detail.collocations && detail.collocations.length > 0 && (
                 <div dir="ltr" className="flex flex-wrap gap-1.5">
                   {detail.collocations.slice(0, 5).map((c, i) => (
@@ -238,22 +314,42 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
                   ))}
                 </div>
               )}
-              {detail.definition && detail.definition[0] && <p dir="ltr" className="text-sm text-ink-muted dark:text-slate-400">{detail.definition[0]}</p>}
+              {detail.notes && <p className="text-sm text-ink dark:text-slate-200">{detail.notes}</p>}
+              {detail.practicePrompt && (
+                <p className="text-sm rounded-xl bg-rose-50 dark:bg-rose-900/30 text-rose-900 dark:text-rose-100 px-3 py-2">تمرین: {detail.practicePrompt}</p>
+              )}
+              {detail.sourceSentence && <p dir="ltr" className="font-read text-sm italic text-ink-muted dark:text-slate-400 border-t border-slate-100 dark:border-slate-700 pt-2">“{detail.sourceSentence}”</p>}
+              <div className="xl:hidden flex items-center gap-3 pt-1">
+                {!detail.alreadyInDeck && (
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={!!detail.selected} onChange={() => toggle(detail.key)} className="w-[18px] h-[18px] accent-brand-500" />
+                    کارت ساخته شود
+                  </label>
+                )}
+                <span className="flex-1" />
+                {toSave.length > 0 && (
+                  <button type="button" onClick={save} disabled={saving} className="min-h-[44px] px-4 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-bold disabled:opacity-60">
+                    {saving ? 'در حال ساخت…' : `ساخت ${fa(toSave.length)} کارت`}
+                  </button>
+                )}
+              </div>
             </section>
           )}
 
           <div className="flex flex-col gap-2">
             {toSave.length > 0 && (
-              <button type="button" onClick={save} className="min-h-[56px] rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold text-lg">
-                ساخت {fa(toSave.length)} کارت
+              <button type="button" onClick={save} disabled={saving} className="min-h-[56px] rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold text-lg disabled:opacity-60">
+                {saving ? 'در حال ساخت…' : `ساخت ${fa(toSave.length)} کارت`}
               </button>
             )}
-            <button type="button" onClick={onComplete}
+            <button type="button" onClick={finish}
               className={`min-h-[52px] rounded-2xl font-extrabold ${toSave.length === 0 ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'border-2 border-emerald-600 text-emerald-800 dark:text-emerald-200'}`}>
               {done ? 'برگشت به مسیر' : `پایان این بخش · +${fa(CHUNK_COMPLETE_XP)} امتیاز${isChestSection(index) ? ' و صندوق جایزه' : ''}`}
             </button>
             {saved && <p className="text-center text-sm text-emerald-700 dark:text-emerald-300">کارت‌ها ساخته شد و در مرور بعدی می‌آیند.</p>}
           </div>
+          {/* Room to scroll the buttons above the word sheet on small screens. */}
+          {detail && !detail.loading && <div aria-hidden className="h-[46vh] xl:hidden" />}
         </aside>
       </div>
     </div>

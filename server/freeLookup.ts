@@ -6,6 +6,9 @@
 // `fetchImpl` is injectable so the parsing can be tested without the network.
 
 import { STOPWORDS } from '../services/freeCandidates.js';
+import { lemmaCandidates } from '../services/lemma.js';
+
+export { lemmaCandidates };
 
 type FetchLike = (url: string, init?: { signal?: AbortSignal; headers?: Record<string, string> }) => Promise<{
   ok: boolean;
@@ -107,33 +110,6 @@ export function parseDictionaryEntries(data: any[]): DictionaryEntry {
     examples: examples.slice(0, 3),
     audioUrl: phonetics.find(p => p.audio)?.audio || undefined,
   };
-}
-
-// Dictionary forms to try for an inflected word: "studies" -> "study", "running" -> "run".
-export function lemmaCandidates(word: string): string[] {
-  const w = word.toLowerCase().trim();
-  const out = [w];
-  const add = (s: string) => { if (s.length >= 3 && !out.includes(s)) out.push(s); };
-  if (w.includes(' ')) {
-    // Phrases: inflect only the first word ("carried out" -> "carry out").
-    const [head, ...rest] = w.split(/\s+/);
-    for (const form of lemmaCandidates(head).slice(1)) add(`${form} ${rest.join(' ')}`);
-    return out;
-  }
-  // The "e" forms come before the bare stem: noted -> note (not "not"),
-  // hopes -> hope (not "hop"), coding -> code (not "cod").
-  if (w.endsWith('ies')) add(w.slice(0, -3) + 'y');
-  if (w.endsWith('s') && !w.endsWith('ss')) add(w.slice(0, -1));
-  if (w.endsWith('es')) add(w.slice(0, -2));
-  if (w.endsWith('ied')) add(w.slice(0, -3) + 'y');
-  if (w.endsWith('ed')) { add(w.slice(0, -1)); add(w.slice(0, -2)); }
-  if (w.endsWith('ing')) { add(w.slice(0, -3) + 'e'); add(w.slice(0, -3)); }
-  if (/(ed|ing)$/.test(w)) {
-    const stem = w.replace(/(ed|ing)$/, '');
-    if (/([b-df-hj-np-tv-z])\1$/.test(stem)) add(stem.slice(0, -1)); // stopped -> stop
-  }
-  if (w.endsWith('ly')) add(w.slice(0, -2));
-  return out;
 }
 
 // The word as written, then its base forms. The full dictionary is asked for
@@ -242,9 +218,14 @@ export async function freeTranslate(text: string, fetchImpl: FetchLike = default
 
 // --- Everything for one term ------------------------------------------------
 
-export async function freeEnrich(term: string, fetchImpl: FetchLike = defaultFetch): Promise<FreeEnrichment> {
+// `onlyIfFound`: stop after the dictionary when it does not know the term,
+// so checking a possible phrasal verb spends no translation quota.
+export async function freeEnrich(term: string, fetchImpl: FetchLike = defaultFetch, onlyIfFound = false): Promise<FreeEnrichment> {
   const dictionary = await lookupDictionary(term, fetchImpl);
   const headword = dictionary?.headword || term.trim().toLowerCase();
+  if (!dictionary && onlyIfFound) {
+    return { found: false, headword, pronunciation: '', partOfSpeech: '', definitions: [], examples: [], translation: '', collocations: [] };
+  }
   const [translation, collocations] = await Promise.all([
     freeTranslate(headword, fetchImpl),
     lookupCollocations(headword, fetchImpl),

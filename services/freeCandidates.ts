@@ -3,6 +3,7 @@
 // stop list, then word frequency (Datamuse, per million words) decides what is
 // hard for the learner's level. Pure functions; the lookups live in freeExtractionService.
 
+import { IRREGULAR_FORMS, tokensOf } from './lemma.js';
 import { splitSentences } from './textChunker.js';
 
 // Function words and very common words that never deserve a card.
@@ -42,43 +43,66 @@ export interface WordCandidate {
   sentence: string;
 }
 
-const TOKEN = /[A-Za-z][A-Za-z'’-]*[A-Za-z]|[A-Za-z]/g;
+
+const sentencesOf = (text: string): string[] =>
+  text.split(/\n\s*\n/).flatMap(paragraph => splitSentences(paragraph));
+
+// Words written with a capital inside a sentence and never in lower case are
+// names ("Darcy", "London"), also when one starts a sentence.
+export const namesIn = (sentences: string[]): Set<string> => {
+  const capitalised = new Set<string>();
+  const lower = new Set<string>();
+  for (const sentence of sentences) {
+    tokensOf(sentence).forEach((token, index) => {
+      const word = token.toLowerCase();
+      if (/^\p{Ll}/u.test(token)) lower.add(word);
+      else if (index > 0 && token !== token.toUpperCase()) capitalised.add(word);
+    });
+  }
+  return new Set([...capitalised].filter(w => !lower.has(w)));
+};
 
 // Content words of a text section, each with the first sentence it appears in.
-// Capitalised words inside a sentence are treated as names and skipped.
 export const candidateWords = (text: string): WordCandidate[] => {
+  const sentences = sentencesOf(text);
+  const names = namesIn(sentences);
   const seen = new Map<string, WordCandidate>();
-  for (const paragraph of text.split(/\n\s*\n/)) {
-    for (const sentence of splitSentences(paragraph)) {
-      const tokens = sentence.match(TOKEN) || [];
-      tokens.forEach((token, index) => {
-        const word = token.toLowerCase().replace(/’/g, "'").replace(/'s$/, '');
-        if (word.length < 3 || STOPWORDS.has(word) || word.includes("'")) return;
-        if (index > 0 && /^[A-Z]/.test(token) && token !== token.toUpperCase()) return; // a name
-        if (!seen.has(word)) seen.set(word, { word, sentence });
-      });
+  for (const sentence of sentences) {
+    for (const token of tokensOf(sentence)) {
+      const word = token.toLowerCase().replace(/’/g, "'").replace(/'s$/, '');
+      if (word.length < 3 || STOPWORDS.has(word) || word.includes("'") || names.has(word)) continue;
+      if (/^\p{Lu}+$/u.test(token) && token.length <= 5) continue; // an acronym: NASA, UNESCO
+      if (!seen.has(word)) seen.set(word, { word, sentence });
     }
   }
   return Array.from(seen.values());
 };
 
-// Possible phrasal verbs ("give up", "carry out"): a content word followed by a particle.
-// They are only kept when a dictionary knows them.
+// Verbs that head most phrasal verbs, in any form ("took off" -> "take off").
+const PHRASAL_HEADS = new Set(['make', 'take', 'get', 'put', 'go', 'come', 'set', 'turn', 'look', 'give', 'carry', 'bring', 'break', 'run', 'pick', 'point', 'figure', 'find', 'work', 'hold', 'keep', 'cut', 'let', 'show', 'stand', 'fall', 'throw', 'pull', 'call', 'sort', 'end', 'rule', 'wear', 'back', 'sum']);
+
+const headBase = (word: string) => IRREGULAR_FORMS[word] || word;
+
+// Possible phrasal verbs ("give up", "carry out"): a content word followed by
+// a particle. Irregular past forms are turned into the base verb. Common
+// phrasal-verb heads come first; a dictionary later decides which are real.
 export const candidatePhrasalVerbs = (text: string): WordCandidate[] => {
-  const seen = new Map<string, WordCandidate>();
-  for (const paragraph of text.split(/\n\s*\n/)) {
-    for (const sentence of splitSentences(paragraph)) {
-      const tokens = (sentence.match(TOKEN) || []).map(t => t.toLowerCase());
-      for (let i = 0; i < tokens.length - 1; i++) {
-        const [head, particle] = [tokens[i], tokens[i + 1]];
-        if (head.length < 3 || !PARTICLES.has(particle)) continue;
-        if (STOPWORDS.has(head) && !['make', 'take', 'get', 'put', 'go', 'come', 'set', 'turn', 'look', 'give', 'carry', 'bring', 'break', 'run', 'pick', 'point', 'figure', 'find', 'work', 'hold', 'keep'].includes(head)) continue;
-        const phrase = `${head} ${particle}`;
-        if (!seen.has(phrase)) seen.set(phrase, { word: phrase, sentence });
-      }
+  const seen = new Map<string, WordCandidate & { known: boolean }>();
+  for (const sentence of sentencesOf(text)) {
+    const tokens = tokensOf(sentence).map(t => t.toLowerCase());
+    for (let i = 0; i < tokens.length - 1; i++) {
+      const [written, particle] = [tokens[i], tokens[i + 1]];
+      if (!PARTICLES.has(particle)) continue;
+      const head = headBase(written);
+      const known = PHRASAL_HEADS.has(head) || [...PHRASAL_HEADS].some(h => written.startsWith(h) && written.length - h.length <= 4);
+      if (head.length < 2 || (STOPWORDS.has(written) && !known)) continue;
+      const phrase = `${head} ${particle}`;
+      if (!seen.has(phrase)) seen.set(phrase, { word: phrase, sentence, known });
     }
   }
-  return Array.from(seen.values());
+  return Array.from(seen.values())
+    .sort((a, b) => Number(b.known) - Number(a.known))
+    .map(({ word, sentence }) => ({ word, sentence }));
 };
 
 // The hardest useful words for a level: frequency below the level's threshold,

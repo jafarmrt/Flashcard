@@ -2,6 +2,8 @@
 // Splits long texts into sections of at most N words, on sentence boundaries,
 // so each section can be analysed on its own (AI prompt size, free API limits).
 
+import { isFormOf, tokensOf } from './lemma.js';
+
 export const DEFAULT_CHUNK_WORDS = 300;
 
 const countWords = (text: string): number => (text.match(/\S+/g) || []).length;
@@ -39,7 +41,11 @@ const sliceLongSentence = (sentence: string, maxWords: number): string[] => {
 // a single sentence is longer than the limit; paragraph breaks are kept.
 export const splitIntoChunks = (text: string, maxWords: number = DEFAULT_CHUNK_WORDS): string[] => {
   const limit = Math.max(1, Math.floor(maxWords));
-  const paragraphs = text.replace(/\r\n?/g, '\n').split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+  // Single line breaks inside a paragraph (text copied from a PDF) are not
+  // sentence ends: join those lines.
+  const paragraphs = text.replace(/\r\n?/g, '\n').split(/\n\s*\n/)
+    .map(p => p.replace(/\s*\n\s*/g, ' ').trim())
+    .filter(Boolean);
 
   const chunks: string[] = [];
   let current: string[][] = []; // paragraphs of the current chunk, each a list of sentences
@@ -74,23 +80,27 @@ export const splitIntoChunks = (text: string, maxWords: number = DEFAULT_CHUNK_W
 
 export const wordCount = countWords;
 
-const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-// Finds the sentence of `text` that contains `term` (case-insensitive, whole
-// words, allowing inflected endings such as -s, -ed, -ing on each word).
+// Finds the sentence of `text` that contains `term`, matching each word in
+// any inflected form ("decided" for "decide", "took" for "take") and allowing
+// one word between the parts of a phrase ("take it into account").
 export const findSentence = (text: string, term: string): string | undefined => {
-  const words = term.trim().split(/\s+/).filter(Boolean);
+  const words = tokensOf(term.toLowerCase());
   if (words.length === 0) return undefined;
-  const pattern = words
-    .map(w => {
-      const stem = w.length > 4 ? w.replace(/(e|y|s)$/i, '') : w;
-      return `${escapeRegExp(stem)}[a-z'’]*`;
-    })
-    .join('\\W+(?:\\w+\\W+)?'); // allow one word between parts ("take it into account")
-  const regex = new RegExp(`\\b${pattern}\\b`, 'i');
+  const matchesAt = (tokens: string[], start: number): boolean => {
+    let i = start;
+    for (let w = 0; w < words.length; w++) {
+      if (w > 0 && i < tokens.length && !isFormOf(tokens[i], words[w])) i++; // one word between
+      if (i >= tokens.length || !isFormOf(tokens[i], words[w])) return false;
+      i++;
+    }
+    return true;
+  };
   for (const paragraph of text.split(/\n\s*\n/)) {
-    for (const sentence of splitSentences(paragraph)) {
-      if (regex.test(sentence)) return sentence;
+    for (const sentence of splitSentences(paragraph.replace(/\s*\n\s*/g, ' '))) {
+      const tokens = tokensOf(sentence);
+      for (let start = 0; start < tokens.length; start++) {
+        if (matchesAt(tokens, start)) return sentence;
+      }
     }
   }
   return undefined;
