@@ -42,6 +42,11 @@ const SpeakerIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" hei
 const LoadingIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg>;
 
 
+const label = 'block text-sm font-bold text-ink dark:text-slate-200';
+const hint = 'text-xs text-ink-muted dark:text-slate-400 mt-0.5';
+const field = 'block w-full min-h-[44px] rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm text-ink dark:text-white placeholder-slate-400 focus:border-brand-500 focus:outline-none';
+
+
 const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCancel, initialDeckName, showToast, defaultApiSource, aiOptions, audioOptions }) => {
   const [formData, setFormData] = useState<FlashcardFormData>({
     front: '',
@@ -140,11 +145,11 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
               exampleSentenceTarget: details.exampleSentences,
               audioSrc: details.audioUrl,
           }));
-          showToast(`Details fetched from ${defaultApiSource === 'free' ? 'Free Dictionary' : 'Merriam-Webster'}.`);
+          showToast(`جزئیات از ${defaultApiSource === 'free' ? 'دیکشنری رایگان' : 'Merriam-Webster'} آمد.`);
 
       } catch (error) {
           console.error("Failed to fetch details from dictionary API:", error);
-          showToast(`Could not find "${formData.front}" in the selected dictionary.`);
+          showToast(`«${formData.front}» در دیکشنری پیدا نشد.`);
       } finally {
           setIsFetchingDetails(false);
       }
@@ -162,7 +167,7 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
       }));
     } catch(error) {
        console.error("Failed to generate AI details:", error);
-       showToast('AI generation failed.');
+       showToast('هوش مصنوعی معنی را نساخت. دوباره امتحان کن.');
     } finally {
       setIsGeneratingAI(false);
     }
@@ -191,7 +196,7 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
             const feedback = await getPronunciationFeedback(formData.front, base64Audio, audioBlob.type, audioOptions);
             setPronunciationFeedback(feedback);
           } catch (err) {
-            setPronunciationFeedback('Could not get feedback. Please try again.');
+            setPronunciationFeedback('بازخوردی نیامد. دوباره امتحان کن.');
           } finally {
             setIsCheckingPronunciation(false);
              stream.getTracks().forEach(track => track.stop());
@@ -202,7 +207,7 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
         setIsRecording(true);
       } catch (error) {
         console.error("Error accessing microphone:", error);
-        alert("Microphone access is required for this feature. Please enable it in your browser settings.");
+        alert("برای این کار باید اجازهٔ میکروفون را در تنظیمات مرورگر بدهی.");
       }
     }
   };
@@ -217,66 +222,70 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
         audio.onended = () => setIsFetchingAudio(false);
     } catch (error) {
         console.error("Failed to play audio:", error);
-        showToast("Could not play audio.");
+        showToast("صدا پخش نشد.");
         setIsFetchingAudio(false);
     }
   };
 
   return (
-    <div className="max-w-3xl mx-auto bg-white dark:bg-slate-800 p-8 rounded-lg shadow-md">
-      <h2 className="text-2xl font-bold mb-6 text-slate-800 dark:text-slate-100">{card ? 'Edit Card' : 'Create New Card'}</h2>
-      <form onSubmit={handleSubmit} className="space-y-6">
+    <div dir="rtl" className="font-fa max-w-3xl mx-auto w-full bg-white dark:bg-slate-800 p-5 sm:p-8 rounded-3xl">
+      <h1 className="text-2xl font-extrabold mb-6 text-ink dark:text-white">{card ? 'ویرایش کارت' : 'کارت تازه'}</h1>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-6">
         <div>
-            <label htmlFor="front" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-                Front (English Word) <span className="text-red-500">*</span>
+            <label htmlFor="front" className={label}>
+                واژه یا عبارت انگلیسی <span className="text-red-500">*</span>
             </label>
-            <div className="relative">
+            <div className="relative mt-1">
                 <input
                     type="text"
                     id="front"
                     name="front"
+                    dir="ltr"
                     value={formData.front || ''}
                     onChange={handleTextChange}
                     required
-                    className="mt-1 block w-full pl-3 pr-10 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                    placeholder="e.g., hello"
+                    autoComplete="off"
+                    className={`${field} font-en text-base pl-3 pr-12`}
+                    placeholder="hello"
                 />
-                <button type="button" onClick={handleToggleRecording} disabled={!formData.front || isCheckingPronunciation} className="absolute inset-y-0 right-0 top-1 flex items-center pr-3 disabled:opacity-50" aria-label="Record pronunciation">
+                <button type="button" onClick={handleToggleRecording} disabled={!formData.front || isCheckingPronunciation}
+                    className="absolute inset-y-0 right-0 w-11 flex items-center justify-center disabled:opacity-50"
+                    aria-label={isRecording ? 'پایان ضبط' : 'ضبط تلفظ خودت'} title={isRecording ? 'پایان ضبط' : 'تلفظ را بگو تا هوش مصنوعی بررسی کند'}>
                     <MicIcon recording={isRecording} />
                 </button>
             </div>
              {(isCheckingPronunciation || pronunciationFeedback) && (
-                <div className="mt-2 text-sm p-2 bg-slate-100 dark:bg-slate-700 rounded-md">
-                    {isCheckingPronunciation ? 'Analyzing...' : `AI Feedback: ${pronunciationFeedback}`}
+                <div className="mt-2 text-sm p-3 rounded-xl bg-slate-100 dark:bg-slate-700 text-ink dark:text-slate-100">
+                    {isCheckingPronunciation ? 'در حال بررسی تلفظ…' : <>نظر هوش مصنوعی: <bdi dir="auto">{pronunciationFeedback}</bdi></>}
                 </div>
              )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <button type="button" onClick={handleFetchDetails} disabled={isFetchingDetails || !formData.front} className="w-full px-4 py-3 text-sm font-medium text-white bg-slate-600 hover:bg-slate-700 dark:bg-slate-500 dark:hover:bg-slate-600 rounded-md transition-colors disabled:opacity-50 disabled:cursor-wait">
-                {isFetchingDetails ? 'Fetching...' : 'Fetch Details'}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <button type="button" onClick={handleFetchDetails} disabled={isFetchingDetails || !formData.front} className="w-full min-h-[48px] px-4 rounded-xl text-sm font-bold text-ink dark:text-white bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 transition-colors disabled:opacity-50 disabled:cursor-wait">
+                {isFetchingDetails ? 'در حال گرفتن…' : 'گرفتن جزئیات از دیکشنری'}
             </button>
-            <button type="button" onClick={handleGenerateAiDetails} disabled={isGeneratingAI || !formData.front} className="w-full px-4 py-3 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-wait">
-                {isGeneratingAI ? 'Generating...' : '✨ AI Generate Persian'}
+            <button type="button" onClick={handleGenerateAiDetails} disabled={isGeneratingAI || !formData.front} className="w-full min-h-[48px] px-4 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 transition-colors disabled:opacity-50 disabled:cursor-wait">
+                {isGeneratingAI ? 'در حال ساختن…' : '✨ معنی فارسی با هوش مصنوعی'}
             </button>
         </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
              {/* Deck Name */}
             <div>
-                <label htmlFor="deckName" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-                    Deck <span className="text-red-500">*</span>
+                <label htmlFor="deckName" className={label}>
+                    دسته <span className="text-red-500">*</span>
                 </label>
                 <input
                     type="text"
                     id="deckName"
                     name="deckName"
+                    dir="auto"
                     value={deckName}
                     onChange={(e) => setDeckName(e.target.value)}
                     required
                     list="deck-options"
-                    className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                    placeholder="e.g., Chapter 1 Verbs"
+                    className={`${field} mt-1 px-3 font-en`}
                 />
                 <datalist id="deck-options">
                     {decks.map(d => <option key={d.id} value={d.name} />)}
@@ -284,93 +293,99 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
             </div>
             {/* Back of Card */}
           <div>
-            <label htmlFor="back" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-              Back (Persian) <span className="text-red-500">*</span>
+            <label htmlFor="back" className={label}>
+              معنی فارسی <span className="text-red-500">*</span>
             </label>
             <input
               type="text"
               id="back"
               name="back"
+              dir="rtl"
               value={formData.back || ''}
               onChange={handleTextChange}
               required
-              className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+              className={`${field} mt-1 px-3`}
             />
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
           {/* Pronunciation */}
           <div>
-            <label htmlFor="pronunciation" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-              Pronunciation (IPA)
+            <label htmlFor="pronunciation" className={label}>
+              تلفظ <span className="font-en font-normal text-ink-muted dark:text-slate-400">(IPA)</span>
             </label>
             <input
               type="text"
               id="pronunciation"
               name="pronunciation"
+              dir="ltr"
               value={formData.pronunciation || ''}
               onChange={handleTextChange}
-              className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+              className={`${field} mt-1 px-3 font-en`}
             />
           </div>
             <div>
-              <label htmlFor="partOfSpeech" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-                Part of Speech
+              <label htmlFor="partOfSpeech" className={label}>
+                نقش دستوری
               </label>
               <input
                 type="text"
                 id="partOfSpeech"
                 name="partOfSpeech"
+                dir="ltr"
                 value={formData.partOfSpeech || ''}
                 onChange={handleTextChange}
-                className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                className={`${field} mt-1 px-3 font-en`}
+                placeholder="noun, verb…"
               />
             </div>
         </div>
-        
+
         <div>
-          <label htmlFor="definition" className="block text-sm font-medium text-slate-700 dark:text-slate-300">English Definition(s)</label>
-          <textarea id="definition" name="definition" rows={3} value={formData.definition?.join('\n\n') || ''} onChange={handleTextAreaChange} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" placeholder="Separate multiple definitions with two newlines (Enter key twice)"/>
-        </div>
-        
-        <div>
-           <label htmlFor="exampleSentenceTarget" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Example Sentence(s)</label>
-          <textarea id="exampleSentenceTarget" name="exampleSentenceTarget" rows={3} value={formData.exampleSentenceTarget?.join('\n\n') || ''} onChange={handleTextAreaChange} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" placeholder="Separate multiple examples with two newlines (Enter key twice)"/>
+          <label htmlFor="definition" className={label}>تعریف انگلیسی</label>
+          <p id="definition-hint" className={hint}>اگر چند تعریف داری، با یک خط خالی از هم جدایشان کن.</p>
+          <textarea id="definition" name="definition" dir="ltr" rows={3} aria-describedby="definition-hint" value={formData.definition?.join('\n\n') || ''} onChange={handleTextAreaChange} className={`${field} mt-1 px-3 py-2 font-en`} />
         </div>
 
         <div>
-          <label htmlFor="notes" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Notes / Mnemonics (Persian)</label>
-          <textarea id="notes" name="notes" rows={3} value={formData.notes || ''} onChange={handleTextChange} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
+           <label htmlFor="exampleSentenceTarget" className={label}>جملهٔ مثال</label>
+           <p id="example-hint" className={hint}>اگر چند مثال داری، با یک خط خالی از هم جدایشان کن.</p>
+          <textarea id="exampleSentenceTarget" name="exampleSentenceTarget" dir="ltr" rows={3} aria-describedby="example-hint" value={formData.exampleSentenceTarget?.join('\n\n') || ''} onChange={handleTextAreaChange} className={`${field} mt-1 px-3 py-2 font-en`} />
         </div>
 
         <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Pronunciation Audio</label>
-            <div className="mt-1 flex items-center gap-4 h-[52px]">
+          <label htmlFor="notes" className={label}>یادداشت و ترفند به‌خاطرسپاری</label>
+          <textarea id="notes" name="notes" dir="rtl" rows={3} value={formData.notes || ''} onChange={handleTextChange} className={`${field} mt-1 px-3 py-2`} />
+        </div>
+
+        <div>
+            <span className={label}>صدای تلفظ</span>
+            <div className="mt-1 flex items-center gap-4 min-h-[52px]">
                 {formData.audioSrc ? (
-                    <button 
-                        type="button" 
-                        onClick={playAudio} 
+                    <button
+                        type="button"
+                        onClick={playAudio}
                         disabled={isFetchingAudio}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors disabled:opacity-50"
+                        className="inline-flex items-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold text-ink dark:text-slate-200 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
                     >
                         {isFetchingAudio ? <LoadingIcon/> : <SpeakerIcon />}
-                        <span>Play Audio</span>
+                        <span>پخش صدا</span>
                     </button>
                 ) : (
-                     <span className="text-sm text-slate-500 dark:text-slate-400 px-1">
-                        {isFetchingDetails ? "Fetching details..." : "Audio will be fetched with details."}
+                     <span className="text-sm text-ink-muted dark:text-slate-400 px-1">
+                        {isFetchingDetails ? 'در حال گرفتن جزئیات…' : 'صدا همراه جزئیات دیکشنری گرفته می‌شود.'}
                      </span>
                 )}
             </div>
         </div>
 
-        <div className="flex justify-end gap-4 pt-4">
-          <button type="button" onClick={onCancel} className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">
-            Cancel
+        <div className="flex justify-end gap-3 pt-2">
+          <button type="button" onClick={onCancel} className="min-h-[44px] px-5 rounded-xl text-sm font-bold text-ink dark:text-slate-200 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
+            لغو
           </button>
-          <button type="submit" className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors">
-            Save Card
+          <button type="submit" className="min-h-[44px] px-6 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 transition-colors">
+            ذخیرهٔ کارت
           </button>
         </div>
       </form>
