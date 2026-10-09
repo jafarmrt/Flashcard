@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
-import { Deck, Flashcard, UserProfile } from '../types';
+import { DailyGoal, Deck, Flashcard, UserProfile } from '../types';
 import { isDue } from '../services/srsService';
-import { Dashboard } from './Dashboard';
-// Fix: Import DailyGoalsWidget to resolve 'Cannot find name' error.
-import { DailyGoalsWidget } from './DailyGoalsWidget';
+import { calculateLevel } from '../services/gamificationService';
+import { fa, Icon, StreakChip } from './common/ui';
 
 interface DeckListProps {
     decks: Deck[];
@@ -18,9 +17,72 @@ interface DeckListProps {
     streak: number;
 }
 
-const StudyIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>;
-const RenameIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>;
-const DeleteIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>;
+const RenameIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>;
+const DeleteIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>;
+const SparkIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>;
+
+// A daily goal in words, from its type (the stored description is English).
+const goalLabel = (goal: DailyGoal): string => {
+    switch (goal.type) {
+        case 'STUDY': return `${fa(goal.target)} مرور`;
+        case 'QUIZ': return `${fa(goal.target)} تمرین آزمون`;
+        case 'STREAK': return `زنجیرهٔ ${fa(goal.target)} روزه`;
+        default: return goal.description;
+    }
+};
+
+const Bar: React.FC<{ percent: number; tone?: 'brand' | 'done' }> = ({ percent, tone = 'brand' }) => (
+    <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+        <div className={`h-full rounded-full transition-all duration-500 ${tone === 'done' ? 'bg-emerald-600' : 'bg-brand-500'}`} style={{ width: `${Math.min(100, percent)}%` }} />
+    </div>
+);
+
+// Level, streak and today's goals at the top of the deck list.
+const Progress: React.FC<{ userProfile: UserProfile; streak: number }> = ({ userProfile, streak }) => {
+    const { level, progress, xpForNextLevel, xp } = calculateLevel(userProfile.xp);
+    const goals = userProfile.dailyGoals?.goals || [];
+    const doneGoals = goals.filter(g => g.isComplete).length;
+    const showGoals = goals.length > 0 && doneGoals < goals.length;
+    return (
+        <section className="bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-4">
+            <div className="flex flex-wrap items-center gap-3">
+                <div className="flex-1 min-w-[12rem]">
+                    <div className="flex justify-between items-center gap-2 mb-1.5 text-sm">
+                        <span className="inline-flex items-center gap-1.5 font-bold text-brand-600 dark:text-brand-300"><Icon.Star size={15} />سطح {fa(level)}</span>
+                        <span className="text-ink-muted dark:text-slate-400">{fa(xp)} از {fa(xpForNextLevel)} امتیاز</span>
+                    </div>
+                    <Bar percent={progress} />
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                    <StreakChip streak={streak} />
+                    {goals.length > 0 && (
+                        <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-sm font-bold ${doneGoals === goals.length
+                            ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100'
+                            : 'bg-slate-100 text-ink dark:bg-slate-700 dark:text-slate-100'}`}>
+                            <Icon.Check size={14} />{fa(doneGoals)} از {fa(goals.length)} هدف
+                        </span>
+                    )}
+                </div>
+            </div>
+            {showGoals && (
+                <div className="flex flex-col gap-3 pt-4 border-t border-slate-100 dark:border-slate-700">
+                    <h2 className="text-sm font-bold text-ink dark:text-white">هدف‌های امروز</h2>
+                    {goals.map(goal => (
+                        <div key={goal.id} className="flex flex-col gap-1.5">
+                            <div className="flex justify-between items-center gap-2 text-sm">
+                                <span className="text-ink dark:text-slate-200">{goalLabel(goal)}</span>
+                                {goal.isComplete
+                                    ? <Icon.Check size={18} className="text-emerald-600 dark:text-emerald-400" />
+                                    : <span className="text-ink-muted dark:text-slate-400">{fa(goal.progress)} از {fa(goal.target)}</span>}
+                            </div>
+                            <Bar percent={goal.target > 0 ? (goal.progress / goal.target) * 100 : 0} tone={goal.isComplete ? 'done' : 'brand'} />
+                        </div>
+                    ))}
+                </div>
+            )}
+        </section>
+    );
+};
 
 const DeckCard: React.FC<{
     deck: Deck;
@@ -39,9 +101,9 @@ const DeckCard: React.FC<{
         }
         setIsRenaming(false);
     };
-    
+
     const handleDelete = () => {
-        if (confirm(`Are you sure you want to delete the deck "${deck.name}"? This will also delete all ${cardCount} cards inside it. This action cannot be undone.`)) {
+        if (confirm(`دستهٔ «${deck.name}» حذف شود؟ ${fa(cardCount)} کارت داخل آن هم حذف می‌شود و برنمی‌گردد.`)) {
             onDelete();
         }
     };
@@ -49,55 +111,55 @@ const DeckCard: React.FC<{
     const dueProgress = cardCount > 0 ? (dueCount / cardCount) * 100 : 0;
 
     return (
-        <div className="bg-gradient-to-br from-white to-slate-50 dark:from-slate-800 dark:to-slate-900 rounded-lg shadow-md p-6 flex flex-col justify-between transition-all hover:shadow-lg hover:-translate-y-1 border dark:border-slate-700/50">
-            <div>
+        <div className="bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-4 min-w-0 transition-all hover:shadow-md hover:-translate-y-0.5">
+            <div className="min-w-0">
                 {isRenaming ? (
                     <div className="flex gap-2">
                         <input
                             type="text"
+                            dir="auto"
                             value={newName}
                             onChange={(e) => setNewName(e.target.value)}
                             onBlur={handleRename}
                             onKeyDown={(e) => e.key === 'Enter' && handleRename()}
                             autoFocus
-                            className="flex-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                            aria-label="نام تازهٔ دسته"
+                            className="flex-1 min-w-0 min-h-[40px] px-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-ink dark:text-white font-en focus:border-brand-500 focus:outline-none"
                         />
-                         <button onClick={handleRename} className="px-3 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md">Save</button>
+                        <button onClick={handleRename} className="min-h-[40px] px-4 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600">ذخیره</button>
                     </div>
                 ) : (
-                    <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100 truncate">{deck.name}</h3>
+                    <h3 dir="auto" className="font-en text-xl font-bold text-ink dark:text-white truncate text-right" title={deck.name}>{deck.name}</h3>
                 )}
-                <div className="mt-2 text-sm text-slate-500 dark:text-slate-400 space-y-1">
-                    <p>{cardCount} card{cardCount !== 1 && 's'}</p>
+                <p className="mt-1 text-sm text-ink-muted dark:text-slate-400">{fa(cardCount)} کارت</p>
+            </div>
+
+            <div>
+                <div className="flex justify-between items-center mb-1.5 text-xs font-bold">
+                    <span className="text-brand-600 dark:text-brand-300">موعد مرور</span>
+                    <span className="text-ink-muted dark:text-slate-300">{fa(dueCount)} از {fa(cardCount)}</span>
+                </div>
+                <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                    <div className="h-full rounded-full bg-brand-500" title={`${fa(dueCount)} کارت موعد مرور دارد`} style={{ width: `${dueProgress}%` }} />
                 </div>
             </div>
 
-            <div className="my-4">
-                <div className="flex justify-between items-center mb-1">
-                    <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400">DUE FOR REVIEW</span>
-                    <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">{dueCount} / {cardCount}</span>
-                </div>
-                <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2">
-                    <div className="bg-indigo-500 h-2 rounded-full" title={`${dueCount} cards due`} style={{ width: `${dueProgress}%` }}></div>
-                </div>
-            </div>
-
-            <div className="flex flex-col sm:flex-row gap-2">
+            <div className="flex gap-2">
                 <button
                     onClick={onStudy}
                     disabled={cardCount === 0}
-                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-indigo-400 disabled:cursor-not-allowed"
+                    className="flex-1 flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                    <StudyIcon /> Study
+                    <Icon.Cards size={18} /> مرور
                 </button>
-                <div className="flex gap-2">
-                    <button onClick={() => setIsRenaming(true)} className="flex-1 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-200 dark:hover:bg-slate-600">
-                        <RenameIcon /> <span className="sm:hidden">Rename</span>
-                    </button>
-                    <button onClick={handleDelete} className="flex-1 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-600/50 rounded-md hover:bg-red-200 dark:hover:bg-red-900/50">
-                        <DeleteIcon /> <span className="sm:hidden">Delete</span>
-                    </button>
-                </div>
+                <button onClick={() => setIsRenaming(true)} aria-label={`تغییر نام ${deck.name}`} title="تغییر نام"
+                    className="flex items-center justify-center gap-1.5 min-h-[44px] px-3 rounded-xl text-sm font-bold text-ink dark:text-slate-200 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700">
+                    <RenameIcon /> <span className="sm:hidden">تغییر نام</span>
+                </button>
+                <button onClick={handleDelete} aria-label={`حذف ${deck.name}`} title="حذف دسته"
+                    className="flex items-center justify-center gap-1.5 min-h-[44px] px-3 rounded-xl text-sm font-bold text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-900/50">
+                    <DeleteIcon /> <span className="sm:hidden">حذف</span>
+                </button>
             </div>
         </div>
     );
@@ -105,16 +167,17 @@ const DeckCard: React.FC<{
 
 
 const DeckList: React.FC<DeckListProps> = ({ decks, cards, onStudyDeck, onRenameDeck, onDeleteDeck, onViewAllCards, onBulkAdd, onAiExtract, userProfile, streak }) => {
-    
+
     if (decks.length === 0) {
         return (
-            <div className="text-center py-20 bg-white dark:bg-slate-800 rounded-lg shadow-sm">
-                <h2 className="text-2xl font-semibold text-slate-700 dark:text-slate-200">No decks found.</h2>
-                <p className="mt-2 text-slate-500 dark:text-slate-400">Create a new card to automatically create your first deck, or use the "Sync" page to load decks from the cloud.</p>
+            <div dir="rtl" className="font-fa max-w-5xl mx-auto w-full text-center py-16 px-5 bg-white dark:bg-slate-800 rounded-3xl">
+                <span className="mx-auto mb-4 w-14 h-14 rounded-2xl bg-brand-100 text-brand-500 dark:bg-brand-900/60 dark:text-brand-200 flex items-center justify-center"><Icon.Layers size={28} /></span>
+                <h1 className="text-2xl font-extrabold text-ink dark:text-white">هنوز دسته‌ای نداری</h1>
+                <p className="mt-2 text-ink-muted dark:text-slate-400">اولین کارت را که بسازی، دسته‌اش هم خودکار ساخته می‌شود. کارت‌ها را از تنظیمات هم می‌شود از فایل CSV وارد کرد.</p>
             </div>
         );
     }
-    
+
     const deckData = decks.map(deck => {
         const cardsInDeck = cards.filter(card => card.deckId === deck.id);
         const dueCardsInDeck = cardsInDeck.filter(card => isDue(card));
@@ -124,43 +187,36 @@ const DeckList: React.FC<DeckListProps> = ({ decks, cards, onStudyDeck, onRename
             dueCount: dueCardsInDeck.length,
         };
     }).sort((a,b) => a.name.localeCompare(b.name));
-    
+
     const totalCards = cards.length;
 
     return (
-        <div>
-            {userProfile && (
-                <div className="mb-8">
-                    <Dashboard userProfile={userProfile} streak={streak} />
-                </div>
-            )}
-            
-            {userProfile?.dailyGoals && userProfile.dailyGoals.goals.length > 0 && !userProfile.dailyGoals.goals.every(g => g.isComplete) && (
-                <div className="mb-8">
-                    <DailyGoalsWidget goals={userProfile.dailyGoals.goals} />
-                </div>
-            )}
+        <div dir="rtl" className="font-fa max-w-5xl mx-auto w-full flex flex-col gap-5">
+            {userProfile && <Progress userProfile={userProfile} streak={streak} />}
 
-            <div className="flex flex-col sm:flex-row justify-between sm:items-center mb-6 gap-4">
-                 <h2 className="text-3xl font-bold text-slate-800 dark:text-slate-100">Your Decks</h2>
-                 <div className="flex flex-wrap items-center gap-2">
-                    <button onClick={onViewAllCards} className="px-3.5 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">
-                        View All {totalCards} Cards
+            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                <div>
+                    <h1 className="text-2xl md:text-3xl font-extrabold text-ink dark:text-white">دسته‌ها</h1>
+                    <p className="text-sm text-ink-muted dark:text-slate-400">{fa(decks.length)} دسته، {fa(totalCards)} کارت</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                    <button onClick={onViewAllCards} className="inline-flex items-center gap-1.5 min-h-[44px] px-4 rounded-xl text-sm font-bold text-ink dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
+                        <Icon.List size={16} />همهٔ {fa(totalCards)} کارت
                     </button>
                     {onAiExtract && (
-                      <button onClick={onAiExtract} className="px-3.5 py-2 text-sm font-medium text-white bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 rounded-md transition-all shadow-sm flex items-center gap-1.5">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-                        <span>AI Text Extractor</span>
+                      <button onClick={onAiExtract} className="inline-flex items-center gap-1.5 min-h-[44px] px-4 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 transition-colors">
+                        <SparkIcon />
+                        <span>استخراج واژه از متن</span>
                       </button>
                     )}
-                    <button onClick={onBulkAdd} className="px-3.5 py-2 text-sm font-medium text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 border border-indigo-200 dark:border-indigo-800 rounded-md transition-colors flex items-center gap-1.5">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
-                        <span>Bulk Add</span>
+                    <button onClick={onBulkAdd} className="inline-flex items-center gap-1.5 min-h-[44px] px-4 rounded-xl text-sm font-bold text-brand-700 dark:text-brand-200 bg-brand-50 dark:bg-brand-900/40 hover:bg-brand-100 dark:hover:bg-brand-900/60 transition-colors">
+                        <Icon.Layers size={16} />
+                        <span>افزودن گروهی</span>
                     </button>
-                 </div>
+                </div>
             </div>
-           
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {deckData.map(deck => (
                     <DeckCard
                         key={deck.id}

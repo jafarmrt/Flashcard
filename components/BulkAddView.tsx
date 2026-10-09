@@ -3,6 +3,7 @@ import { Flashcard } from '../types';
 import { AiRequestOptions, generatePersianDetails } from '../services/geminiService';
 import { fetchFromFreeDictionary, fetchFromMerriamWebster, fetchAudioData, DictionaryResult } from '../services/dictionaryService';
 import { aiOrigin, dictionaryOrigin } from '../services/aiSettings';
+import { fa, Icon } from './common/ui';
 
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted'>;
 
@@ -58,25 +59,41 @@ const EditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height
 const timeoutPromise = (ms: number, message: string) =>
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error(message)), ms));
 
+// --- STATUS WORDS ---
+const STATUS_LABEL: Record<ProcessStatus, string> = {
+    pending: 'در صف',
+    loading: 'در حال کار…',
+    done: 'آماده',
+    error: 'ناموفق',
+    timeout: 'دیر جواب داد',
+};
+
 // --- DETAIL ROW COMPONENT ---
 const DetailRow = memo(({ label, details, onRetry }: { label: string, details: ProcessDetails, onRetry: () => void }) => {
     const isFailed = ['error', 'timeout'].includes(details.status);
     return (
-        <div className="flex items-center gap-4 py-2 px-3 text-sm border-t border-slate-200 dark:border-slate-700">
-            <div className="w-6">{statusIcons[details.status]}</div>
-            <div className="flex-1">
-                <p className="font-semibold text-slate-700 dark:text-slate-200">{label}</p>
-                {details.source && <p className="text-xs text-slate-500 dark:text-slate-400">Source: {details.source}</p>}
-                {details.error && <p className="text-xs text-red-600 dark:text-red-400 truncate" title={details.error}>Error: {details.error}</p>}
+        <div className="flex items-center gap-3 py-2 px-3 text-sm border-t border-slate-200 dark:border-slate-700">
+            <div className="w-6 shrink-0">{statusIcons[details.status]}</div>
+            <div className="flex-1 min-w-0">
+                <p className="font-bold text-ink dark:text-slate-200">{label}</p>
+                {details.source && <p className="text-xs text-ink-muted dark:text-slate-400">منبع: <bdi dir="auto">{details.source}</bdi></p>}
+                {details.error && (
+                    <p className="flex gap-1 min-w-0 text-xs text-red-700 dark:text-red-300" title={details.error}>
+                        <span className="shrink-0">خطا:</span><bdi dir="auto" className="truncate min-w-0">{details.error}</bdi>
+                    </p>
+                )}
             </div>
             {isFailed && (
-                <button onClick={onRetry} title="Retry" className="p-2 text-indigo-600 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-full">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.5 2v6h-6"/><path d="M2.5 22v-6h6"/><path d="M2 11.5a10 10 0 0 1 18.8-4.3l-3.3 3.3a5 5 0 0 0-8.5 4.3"/></svg>
+                <button onClick={onRetry} title="دوباره" aria-label={`دوباره: ${label}`} className="w-9 h-9 shrink-0 flex items-center justify-center text-brand-600 dark:text-brand-300 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-full">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6"/><path d="M2.5 22v-6h6"/><path d="M2 11.5a10 10 0 0 1 18.8-4.3l-3.3 3.3a5 5 0 0 0-8.5 4.3"/></svg>
                 </button>
             )}
         </div>
     );
 });
+
+const smallField = 'block w-full min-h-[40px] text-sm px-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-ink dark:text-white focus:border-brand-500 focus:outline-none';
+const iconButton = 'w-9 h-9 flex items-center justify-center rounded-full hover:bg-slate-200 dark:hover:bg-slate-600';
 
 // --- REVIEW ITEM COMPONENT ---
 const ReviewItem = memo(({
@@ -109,40 +126,43 @@ const ReviewItem = memo(({
     };
 
     return (
-        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm">
-            <div className="flex items-center gap-4 p-3">
+        <div className="bg-white dark:bg-slate-800 rounded-2xl">
+            <div className="flex items-center gap-3 p-3">
                 <div className="flex-shrink-0 w-5">{statusIcons[item.status]}</div>
                 {isEditing ? (
-                    <div className="flex-1 space-y-2">
-                        <input type="text" value={editData.back} onChange={e => setEditData(d => ({...d, back: e.target.value}))} className="block w-full text-sm px-2 py-1 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm" placeholder="Persian Translation"/>
-                        <input type="text" value={editData.notes} onChange={e => setEditData(d => ({...d, notes: e.target.value}))} className="block w-full text-sm px-2 py-1 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm" placeholder="Notes"/>
+                    <div className="flex-1 min-w-0 flex flex-col gap-2">
+                        <p dir="ltr" className="font-en font-bold text-ink dark:text-white truncate text-right">{item.word}</p>
+                        <input type="text" dir="rtl" value={editData.back} onChange={e => setEditData(d => ({...d, back: e.target.value}))} className={smallField} placeholder="معنی فارسی" aria-label="معنی فارسی"/>
+                        <input type="text" dir="rtl" value={editData.notes} onChange={e => setEditData(d => ({...d, notes: e.target.value}))} className={smallField} placeholder="یادداشت" aria-label="یادداشت"/>
                     </div>
                 ) : (
                     <div className="flex-1 min-w-0">
-                         <p className="font-medium text-slate-700 dark:text-slate-200 truncate">{item.word}</p>
-                         {item.status === 'done' && <p className="text-sm text-slate-500 dark:text-slate-400 truncate">{item.card.back}</p>}
-                         {item.status !== 'done' && <p className="text-sm text-slate-500 dark:text-slate-400 capitalize">{item.status}</p>}
+                         <p dir="ltr" className="font-en font-bold text-ink dark:text-white truncate text-right">{item.word}</p>
+                         {item.status === 'done' && <p dir="auto" className="text-sm text-ink-muted dark:text-slate-400 truncate text-right">{item.card.back}</p>}
+                         {item.status !== 'done' && <p className="text-sm text-ink-muted dark:text-slate-400">{STATUS_LABEL[item.status]}</p>}
                     </div>
                 )}
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 shrink-0">
                     {isEditing ? (
                         <>
-                            <button onClick={handleSaveEdit} className="p-2 text-green-600 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-full"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></button>
-                            <button onClick={handleCancelEdit} className="p-2 text-red-600 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-full"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+                            <button onClick={handleSaveEdit} aria-label="ذخیره" title="ذخیره" className={`${iconButton} text-emerald-600 dark:text-emerald-400`}><Icon.Check size={16} /></button>
+                            <button onClick={handleCancelEdit} aria-label="لغو" title="لغو" className={`${iconButton} text-red-600 dark:text-red-400`}><Icon.Close size={16} /></button>
                         </>
                     ) : (
                        <>
-                         {item.status === 'done' && <button onClick={() => setIsEditing(true)} className="p-2 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-full"><EditIcon /></button>}
-                         <button onClick={() => onToggleDetails(item.word)} className="p-2 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-full"><ChevronDown /></button>
+                         {item.status === 'done' && <button onClick={() => setIsEditing(true)} aria-label={`ویرایش ${item.word}`} title="ویرایش" className={`${iconButton} text-ink-muted dark:text-slate-400`}><EditIcon /></button>}
+                         <button onClick={() => onToggleDetails(item.word)} aria-expanded={item.isExpanded} aria-label={`جزئیات ${item.word}`} title="جزئیات" className={`${iconButton} text-ink-muted dark:text-slate-400`}>
+                            <span className={`transition-transform ${item.isExpanded ? 'rotate-180' : ''}`}><ChevronDown /></span>
+                         </button>
                        </>
                     )}
                 </div>
             </div>
              {item.isExpanded && !isEditing && (
-                <div className="bg-slate-50 dark:bg-slate-800/50 rounded-b-lg">
-                    <DetailRow label="Dictionary" details={item.details.dictionary} onRetry={() => onRetryPart(item.word, 'dictionary')} />
-                    <DetailRow label="AI Details" details={item.details.ai} onRetry={() => onRetryPart(item.word, 'ai')} />
-                    <DetailRow label="Audio" details={item.details.audio} onRetry={() => onRetryPart(item.word, 'audio')} />
+                <div className="bg-slate-50 dark:bg-slate-800/50 rounded-b-2xl">
+                    <DetailRow label="دیکشنری" details={item.details.dictionary} onRetry={() => onRetryPart(item.word, 'dictionary')} />
+                    <DetailRow label="معنی با هوش مصنوعی" details={item.details.ai} onRetry={() => onRetryPart(item.word, 'ai')} />
+                    <DetailRow label="صدا" details={item.details.audio} onRetry={() => onRetryPart(item.word, 'audio')} />
                 </div>
             )}
         </div>
@@ -196,12 +216,12 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                 try {
                     details = await Promise.race([
                         primaryFetcher(word),
-                        timeoutPromise(dictTimeout * 1000, `Primary dictionary timed out.`)
+                        timeoutPromise(dictTimeout * 1000, `دیکشنری اصلی دیر جواب داد.`)
                     ]);
-                    source = defaultApiSource === 'free' ? 'Free Dictionary' : 'Merriam-Webster';
+                    source = defaultApiSource === 'free' ? 'دیکشنری رایگان' : 'Merriam-Webster';
                 } catch (e) {
                     details = await secondaryFetcher(word);
-                    source = defaultApiSource === 'free' ? 'Merriam-Webster' : 'Free Dictionary';
+                    source = defaultApiSource === 'free' ? 'Merriam-Webster' : 'دیکشنری رایگان';
                 }
                 updateWordState(word, draft => {
                     draft.card = { ...draft.card,
@@ -216,7 +236,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                 updateWordState(word, draft => { draft.details.ai.status = 'loading'; });
                 const details = await Promise.race([
                     generatePersianDetails(word, aiOptions),
-                    timeoutPromise(aiTimeout * 1000, `AI timed out.`)
+                    timeoutPromise(aiTimeout * 1000, `هوش مصنوعی دیر جواب داد.`)
                 ]);
                 updateWordState(word, draft => {
                     // CRITICAL FIX: Check if the user has already manually entered values.
@@ -229,7 +249,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                     const finalNotes = (currentNotes && currentNotes.trim() !== '') ? currentNotes : details.notes;
 
                     draft.card = { ...draft.card, back: finalBack, notes: finalNotes, ...(details.origin ? { origin: details.origin } : {}) };
-                    draft.details.ai = { status: 'done', source: details.origin?.provider || 'AI' };
+                    draft.details.ai = { status: 'done', source: details.origin?.provider || 'هوش مصنوعی' };
                 });
             } else if (part === 'audio') {
                 const wordState = processedWordsRef.current.find(p => p.word === word);
@@ -238,7 +258,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                 if (!audioUrl) {
                     updateWordState(word, draft => {
                          if (draft.details.audio.status === 'pending') {
-                            draft.details.audio = { status: 'error', error: 'No audio source found.' };
+                            draft.details.audio = { status: 'error', error: 'صدایی برای این واژه پیدا نشد.' };
                         }
                     });
                     return;
@@ -253,12 +273,12 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                 });
             }
         } catch (error) {
-            const errorMessage = (error instanceof Error) ? error.message : "An unknown error occurred.";
+            const errorMessage = (error instanceof Error) ? error.message : "خطای ناشناخته.";
             const status: ProcessStatus = errorMessage.toLowerCase().includes('timeout') ? 'timeout' : 'error';
             updateWordState(word, draft => {
                 if (part === 'dictionary') {
                     draft.details.dictionary = { status, error: errorMessage };
-                    draft.details.audio = { status: 'error', error: 'Dictionary lookup failed.' };
+                    draft.details.audio = { status: 'error', error: 'دیکشنری جواب نداد.' };
                 } else if (part === 'ai') {
                     draft.details.ai = { status, error: errorMessage };
                 } else if (part === 'audio') {
@@ -316,7 +336,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                 const finalWords = processedWordsRef.current;
                 const successCount = finalWords.filter(p => p.status === 'done').length;
                 const failureCount = finalWords.length - successCount;
-                showToast(`Processing complete. ${successCount} successful, ${failureCount} failed.`);
+                showToast(`ساختن کارت‌ها تمام شد: ${fa(successCount)} آماده، ${fa(failureCount)} ناموفق.`);
                 setStep('review');
             }
         }
@@ -324,8 +344,8 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
     
     const handleInitialProcess = () => {
         const words: string[] = Array.from(new Set(wordsInput.split('\n').map(word => word.trim()).filter(Boolean)));
-        if (words.length === 0) { showToast("Please enter at least one word."); return; }
-        if (!deckName.trim()) { showToast("Please enter a deck name."); return; }
+        if (words.length === 0) { showToast("دست‌کم یک واژه بنویس."); return; }
+        if (!deckName.trim()) { showToast("نام دسته را بنویس."); return; }
         
         commitWords(words.map(word => ({
             word,
@@ -346,7 +366,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
         if(failedWords.length > 0) {
             runProcessingQueue(failedWords);
         } else {
-            showToast("No failed words to retry.");
+            showToast("واژهٔ ناموفقی نمانده.");
         }
     };
 
@@ -384,7 +404,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
         if (cardsToSave.length > 0) {
             await onSave(cardsToSave, deckName);
         } else {
-            showToast("No cards were successfully created to save.");
+            showToast("کارتی برای ذخیره ساخته نشد.");
             onCancel();
         }
         setIsSaving(false);
@@ -394,7 +414,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
         isCancelledRef.current = true;
         setIsProcessing(false);
         const successCount = processedWords.filter(p => p.status === 'done').length;
-        showToast(`Processing stopped. ${successCount} words were completed.`);
+        showToast(`متوقف شد؛ ${fa(successCount)} واژه آماده شد.`);
         setStep('review');
     };
 
@@ -402,68 +422,77 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
         updateWordState(word, draft => { draft.isExpanded = !draft.isExpanded; });
     };
 
+    const panel = 'max-w-3xl mx-auto w-full bg-white dark:bg-slate-800 p-5 sm:p-8 rounded-3xl';
+    const secondaryButton = 'min-h-[44px] px-5 rounded-xl text-sm font-bold text-ink dark:text-slate-200 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors';
+    const primaryButton = 'min-h-[44px] px-6 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 transition-colors disabled:opacity-50 disabled:cursor-wait';
+
     const renderInputStep = () => (
-        <div className="max-w-3xl mx-auto bg-white dark:bg-slate-800 p-8 rounded-lg shadow-md">
-            <h2 className="text-2xl font-bold mb-1 text-slate-800 dark:text-slate-100">Bulk Add Words</h2>
-            <p className="text-slate-600 dark:text-slate-400 mb-6">Enter a list of English words, one per line. We'll automatically create flashcards for them.</p>
-            
-            <div className="space-y-6">
+        <div className={panel}>
+            <h1 className="text-2xl font-extrabold mb-1 text-ink dark:text-white">افزودن گروهی</h1>
+            <p className="text-ink-muted dark:text-slate-400 mb-6">واژه‌های انگلیسی را هر کدام در یک خط بنویس؛ برای هر کدام خودکار کارت ساخته می‌شود.</p>
+
+            <div className="flex flex-col gap-6">
                 <div>
-                    <label htmlFor="words-input" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Words to Add</label>
-                    <textarea 
+                    <label htmlFor="words-input" className="block text-sm font-bold text-ink dark:text-slate-200">واژه‌ها</label>
+                    <textarea
                         id="words-input"
+                        dir="ltr"
                         rows={10}
                         value={wordsInput}
                         onChange={e => setWordsInput(e.target.value)}
-                        className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                        className="mt-1 block w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-ink dark:text-white font-en placeholder-slate-400 focus:border-brand-500 focus:outline-none"
                         placeholder="ephemeral&#10;ubiquitous&#10;mellifluous"
                     />
                 </div>
                 <div>
-                    <label htmlFor="deckName-bulk" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Add to Deck</label>
-                    <input 
+                    <label htmlFor="deckName-bulk" className="block text-sm font-bold text-ink dark:text-slate-200">افزودن به دسته</label>
+                    <input
                         type="text"
                         id="deckName-bulk"
+                        dir="auto"
                         value={deckName}
                         onChange={e => setDeckName(e.target.value)}
-                        className="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                        className="mt-1 block w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-ink dark:text-white font-en focus:border-brand-500 focus:outline-none"
                     />
                 </div>
-                <div className="flex justify-end gap-4 pt-4">
-                    <button type="button" onClick={onCancel} className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">
-                        Cancel
+                <div className="flex justify-end gap-3 pt-2">
+                    <button type="button" onClick={onCancel} className={secondaryButton}>
+                        لغو
                     </button>
-                    <button type="button" onClick={handleInitialProcess} className="px-6 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors">
-                        Process Words
+                    <button type="button" onClick={handleInitialProcess} className={primaryButton}>
+                        ساختن کارت‌ها
                     </button>
                 </div>
             </div>
         </div>
     );
-    
+
     const renderProcessingStep = () => {
         const completed = processedWords.filter(p => p.status !== 'pending' && p.status !== 'loading').length;
         const total = processedWords.length;
         const progress = total > 0 ? (completed / total) * 100 : 0;
 
         return (
-            <div className="max-w-3xl mx-auto bg-white dark:bg-slate-800 p-8 rounded-lg shadow-md">
-                <h2 className="text-2xl font-bold mb-4 text-slate-800 dark:text-slate-100">Creating Flashcards...</h2>
-                 <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2.5 mb-4">
-                    <div className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300" style={{ width: `${progress}%` }}></div>
+            <div className={panel}>
+                <div className="flex justify-between items-baseline gap-3 mb-4">
+                    <h1 className="text-2xl font-extrabold text-ink dark:text-white">در حال ساختن کارت‌ها…</h1>
+                    <span className="text-sm font-bold text-ink-muted dark:text-slate-400 shrink-0">{fa(completed)} از {fa(total)}</span>
                 </div>
-                <div className="space-y-2 h-96 overflow-y-auto pr-2">
+                 <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2.5 mb-4 overflow-hidden">
+                    <div className="bg-brand-500 h-2.5 rounded-full transition-all duration-300" style={{ width: `${progress}%` }}></div>
+                </div>
+                <div className="flex flex-col gap-2 h-96 overflow-y-auto pe-1">
                     {processedWords.map(item => (
-                        <div key={item.word} className="flex items-center gap-4 p-3 bg-slate-50 dark:bg-slate-700/50 rounded-md">
-                            {statusIcons[item.status]}
-                            <span className="flex-1 font-medium text-slate-700 dark:text-slate-200">{item.word}</span>
-                            <span className="text-sm text-slate-500 dark:text-slate-400 capitalize">{item.status}</span>
+                        <div key={item.word} className="flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-700/50 rounded-xl">
+                            <span className="shrink-0">{statusIcons[item.status]}</span>
+                            <span dir="ltr" className="flex-1 min-w-0 font-en font-bold text-ink dark:text-slate-200 truncate text-right">{item.word}</span>
+                            <span className="text-sm text-ink-muted dark:text-slate-400 shrink-0">{STATUS_LABEL[item.status]}</span>
                         </div>
                     ))}
                 </div>
                 <div className="text-center mt-6">
-                    <button onClick={handleCancelProcessing} className="px-6 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md transition-colors">
-                        Stop Processing
+                    <button onClick={handleCancelProcessing} className="min-h-[44px] px-6 rounded-xl text-sm font-bold text-white bg-red-600 hover:bg-red-700 transition-colors">
+                        توقف
                     </button>
                 </div>
             </div>
@@ -474,18 +503,18 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
         const successCount = processedWords.filter(p => p.status === 'done').length;
         const failedCount = processedWords.filter(p => ['error', 'timeout'].includes(p.status)).length;
         return (
-            <div className="max-w-3xl mx-auto bg-white dark:bg-slate-800 p-8 rounded-lg shadow-md">
-                <div className="flex flex-col sm:flex-row justify-between sm:items-start gap-4">
+            <div className={panel}>
+                <div className="flex flex-col sm:flex-row justify-between sm:items-start gap-3 mb-5">
                     <div>
-                        <h2 className="text-2xl font-bold mb-1 text-slate-800 dark:text-slate-100">Review & Save</h2>
-                        <p className="text-slate-600 dark:text-slate-400 mb-6">
-                            <span className="text-green-600 dark:text-green-400 font-semibold">{successCount} cards</span> ready, <span className="text-red-600 dark:text-red-400 font-semibold">{failedCount} failed</span>. Edit translations or inspect details.
+                        <h1 className="text-2xl font-extrabold mb-1 text-ink dark:text-white">بررسی و ذخیره</h1>
+                        <p className="text-ink-muted dark:text-slate-400">
+                            <span className="text-emerald-700 dark:text-emerald-300 font-bold">{fa(successCount)} کارت</span> آماده، <span className="text-red-700 dark:text-red-300 font-bold">{fa(failedCount)} ناموفق</span>. معنی‌ها را ویرایش کن یا جزئیات هر واژه را ببین.
                         </p>
                     </div>
-                    {failedCount > 0 && <button onClick={handleRetryAllFailed} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md shadow-sm transition-colors">Retry All Failed</button>}
+                    {failedCount > 0 && <button onClick={handleRetryAllFailed} className="min-h-[44px] px-4 rounded-xl text-sm font-bold text-brand-700 dark:text-brand-200 bg-brand-50 dark:bg-brand-900/40 hover:bg-brand-100 dark:hover:bg-brand-900/60 transition-colors shrink-0">تلاش دوباره برای ناموفق‌ها</button>}
                 </div>
 
-                <div className="space-y-2 h-96 overflow-y-auto p-2 bg-slate-50 dark:bg-slate-900/50 rounded-lg">
+                <div className="flex flex-col gap-2 h-96 overflow-y-auto p-2 bg-slate-100 dark:bg-slate-900/50 rounded-2xl">
                     {processedWords.map(item => (
                        <ReviewItem 
                             key={item.word}
@@ -496,13 +525,13 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                        />
                     ))}
                 </div>
-                
-                <div className="flex justify-end gap-4 pt-6">
-                    <button type="button" onClick={() => { setWordsInput(''); setStep('input'); }} className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">
-                        Add More
+
+                <div className="flex flex-wrap justify-end gap-3 pt-6">
+                    <button type="button" onClick={() => { setWordsInput(''); setStep('input'); }} className={secondaryButton}>
+                        افزودن واژه‌های بیشتر
                     </button>
-                    <button type="button" onClick={handleSave} disabled={isSaving || successCount === 0} className="px-6 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-wait">
-                        {isSaving ? 'Saving...' : `Save ${successCount} Cards`}
+                    <button type="button" onClick={handleSave} disabled={isSaving || successCount === 0} className={primaryButton}>
+                        {isSaving ? 'در حال ذخیره…' : `ذخیرهٔ ${fa(successCount)} کارت`}
                     </button>
                 </div>
             </div>
@@ -517,5 +546,5 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
         }
     };
 
-    return <div className="animate-flip-in">{renderContent()}</div>;
+    return <div dir="rtl" className="font-fa animate-flip-in">{renderContent()}</div>;
 };

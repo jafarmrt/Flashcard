@@ -324,7 +324,7 @@ const App: React.FC = () => {
 
     // New screens are Persian (right to left); the older screens keep their
     // English, left-to-right layout inside the same shell.
-    const PERSIAN_VIEWS = ['TODAY', 'ME', 'TEXTS', 'READER', 'STUDY', 'SETTINGS', 'USAGE'];
+    const PERSIAN_VIEWS = ['TODAY', 'ME', 'TEXTS', 'READER', 'STUDY', 'SETTINGS', 'USAGE', 'DECKS', 'LIST', 'FORM', 'BULK_ADD', 'ACHIEVEMENTS'];
     const isStudy = view === 'STUDY';
 
     return (
