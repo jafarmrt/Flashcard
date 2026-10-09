@@ -31,6 +31,7 @@ export const ChapterPrestudy: React.FC<ChapterPrestudyProps> = ({ chapter, setti
   const [progress, setProgress] = useState('');
   const [picks, setPicks] = useState<Pick[]>([]);
   const [error, setError] = useState('');
+  const [skipped, setSkipped] = useState(0);
   const abort = useRef<AbortController | null>(null);
   useEffect(() => () => abort.current?.abort(), []);
   const level = settings.userLevel || 'B2';
@@ -46,6 +47,8 @@ export const ChapterPrestudy: React.FC<ChapterPrestudyProps> = ({ chapter, setti
       const sections = text.chunks.slice(0, PRESTUDY_SECTIONS);
       const found: Pick[] = [];
       const seen = new Set<string>();
+      let tried = 0;
+      let failed = 0;
       for (let i = 0; i < sections.length && found.length < MAX_WORDS; i++) {
         setProgress(`بخش ${fa(i + 1)} از ${fa(sections.length)}…`);
         const result = await extractFromLongText({
@@ -54,6 +57,8 @@ export const ChapterPrestudy: React.FC<ChapterPrestudyProps> = ({ chapter, setti
           aiOptions: aiRequestOptions(settings), signal: controller.signal,
         });
         if (controller.signal.aborted) return;
+        tried += result.sections;
+        failed += result.failedSections;
         for (const item of result.cards) {
           const key = normalizeTerm(item.front);
           if (item.alreadyInDeck || item.kind === 'grammar' || seen.has(key) || found.length >= MAX_WORDS) continue;
@@ -61,7 +66,11 @@ export const ChapterPrestudy: React.FC<ChapterPrestudyProps> = ({ chapter, setti
           found.push({ item, chunk: i, on: !(item.origin?.by === 'ai' && isBelowLevel(item.level, level)) });
         }
       }
+      // Offline, every lookup fails without an exception: that is not "no
+      // hard words".
+      if (tried > 0 && failed === tried) throw new Error('every section failed');
       setPicks(found);
+      setSkipped(failed);
       setState('shown');
     } catch (e) {
       if (controller.signal.aborted) return;
@@ -134,6 +143,7 @@ export const ChapterPrestudy: React.FC<ChapterPrestudyProps> = ({ chapter, setti
           </button>
         </>
       )}
+      {skipped > 0 && <p className="text-sm text-amber-800 dark:text-amber-200">{fa(skipped)} بخش بررسی نشد (اتصال)؛ شاید واژه‌های سخت بیشتری باشد.</p>}
       {error && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{error}</p>}
     </section>
   );

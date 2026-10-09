@@ -145,7 +145,9 @@ const parseFrequency = (item: any): number | null => {
   return Number.isFinite(value) ? value : null;
 };
 
-// Occurrences per million words (Datamuse); null when unknown.
+// Occurrences per million words (Datamuse); null when unknown. A word whose
+// lookup failed (timeout, rate limit) is left out, so callers can tell a
+// failure from a rare word.
 export async function lookupFrequencies(words: string[], fetchImpl: FetchLike = defaultFetch, concurrency = 8): Promise<Record<string, number | null>> {
   const unique = Array.from(new Set(words.map(w => w.toLowerCase().trim()).filter(Boolean))).slice(0, 400);
   const result: Record<string, number | null> = {};
@@ -155,19 +157,18 @@ export async function lookupFrequencies(words: string[], fetchImpl: FetchLike = 
   });
   const worker = async () => {
     for (let w = queue.shift(); w !== undefined; w = queue.shift()) {
-      let freq: number | null = null;
       try {
         const res = await fetchImpl(`https://api.datamuse.com/words?sp=${encodeURIComponent(w)}&md=f&max=1`, { signal: timeout(4000) });
         if (res.ok) {
           const data = await res.json();
           const item = Array.isArray(data) ? data.find((d: any) => d.word?.toLowerCase() === w) : null;
-          freq = item ? parseFrequency(item) : null;
+          const freq = item ? parseFrequency(item) : null;
           frequencyCache.set(w, freq);
+          result[w] = freq;
         }
       } catch {
-        // leave unknown, do not cache network failures
+        // left out, and not cached: a network failure says nothing about the word
       }
-      result[w] = freq;
     }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker));

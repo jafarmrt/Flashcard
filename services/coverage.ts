@@ -88,13 +88,29 @@ export const sampleWords = (counts: Map<string, number>): { head: [string, numbe
   return { head, tail, tailTokens };
 };
 
+// A word left out of the answer could not be looked up (timeout, rate limit);
+// null means looked up and not known, a rare word.
 export type FrequencyLookup = (words: string[]) => Promise<Record<string, number | null>>;
+
+// More failed lookups than this and the result would call an easy book hard.
+export const MAX_FAILED_SHARE = 0.1;
+
+export class CoverageError extends Error {
+  constructor(public reason: 'no-words' | 'lookup-failed') {
+    super(reason);
+  }
+}
 
 export const buildProfile = async (texts: string[], lookup: FrequencyLookup, now: Date = new Date()): Promise<BookProfile> => {
   const { tokens, common, counts } = countWords(texts);
+  if (counts.size === 0) throw new CoverageError('no-words');
   const { head, tail, tailTokens } = sampleWords(counts);
   const words = [...head, ...tail].map(([w]) => w);
-  const frequencies = words.length ? await lookup(words) : {};
+  const frequencies = { ...(await lookup(words)) };
+  const missing = () => words.filter(w => !(w in frequencies));
+  // Failures are often a passing rate limit: one more try for those words.
+  if (missing().length) Object.assign(frequencies, await lookup(missing()));
+  if (missing().length > words.length * MAX_FAILED_SHARE) throw new CoverageError('lookup-failed');
   const sample = ([word, count]: [string, number]): WordSample => ({ word, count, frequency: frequencies[word] ?? null });
   return { tokens, common, head: head.map(sample), tail: tail.map(sample), tailTokens, types: counts.size, at: now.toISOString() };
 };

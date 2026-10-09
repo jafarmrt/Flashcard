@@ -1,13 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildProfile, countWords, coverageOf, knownByFrom, sampleWords, textLevelOf, HEAD_SIZE, TAIL_SIZE, type BookProfile } from '../services/coverage';
+import { buildProfile, countWords, coverageOf, CoverageError, knownByFrom, sampleWords, textLevelOf, HEAD_SIZE, TAIL_SIZE, type BookProfile } from '../services/coverage';
 import { blankOf, checkCloze, clozeFor, makeCloze } from '../services/cloze';
 import { bookGrowth, cardsOfSource, hardestWords, pickBookReview, reviewsPerDay } from '../services/readingStats';
 import { readingCounts } from '../services/gamificationService';
+import { sectionReward } from '../services/library';
+import { BOOK_COMPLETE_XP, CHAPTER_COMPLETE_XP, CHUNK_COMPLETE_XP } from '../services/xpRules';
 import { newKnownWord } from '../services/knownWords';
 import type { Chapter, Flashcard, Occurrence, Source, StudyLog } from '../types';
 
-const T0 = new Date('2026-10-09T10:00:00Z');
+// Noon on the device's own calendar, so day strings are the same in every time zone.
+const T0 = new Date(2026, 9, 9, 12);
 const DAY = 24 * 60 * 60 * 1000;
 
 const card = (over: Partial<Flashcard> = {}): Flashcard => ({
@@ -32,14 +35,14 @@ const chapter = (id: string, sourceId: string, order: number, chunkCount: number
 // --- Vocabulary coverage ---
 
 test('word counts leave out names and count stop words and short forms as common', () => {
-  const { tokens, common, counts } = countWords(['Emma smiled. "I don\'t know," Emma said; her mother\'s garden was well-kept. The garden smiled.']);
+  const { tokens, common, counts } = countWords(['Emma smiled. "I don\'t know," Emma said; her mother\'s garden was well-kept. Garden walls smiled.']);
   assert.equal(counts.has('emma'), false, 'a name');
-  assert.equal(counts.get('garden'), 2);
+  assert.equal(counts.get('garden'), 2, 'capitalised at the start of a sentence, lower-case elsewhere: one word');
   assert.equal(counts.get('mother'), 1, '"mother\'s" counts as "mother"');
-  assert.equal(counts.get('smiled'), 2, 'capitalised elsewhere but also lower-case: a word');
+  assert.equal(counts.get('smiled'), 2);
   assert.ok(counts.has('kept') && counts.has('well') === false, 'a hyphenated word is its parts; "well" is a stop word');
-  // I, don't, know, said, her, was, the, well: common.
-  assert.equal(common, 8);
+  // I, don't, know, said, her, was, well: common.
+  assert.equal(common, 7);
   assert.equal(tokens, common + [...counts.values()].reduce((a, b) => a + b, 0));
 });
 
@@ -95,6 +98,23 @@ test('a profile is built with one frequency lookup of the sample', async () => {
   assert.equal(p.at, T0.toISOString());
 });
 
+test('failed lookups are tried once more, and too many failures give no profile', async () => {
+  const text = ['The reluctant gardener walked to the garden. The garden was quiet.'];
+  let calls = 0;
+  // The first answer leaves out two words (a timeout); the second has them.
+  const flaky = async (words: string[]) => {
+    calls++;
+    return Object.fromEntries(words.filter(w => calls > 1 || (w !== 'quiet' && w !== 'walked')).map(w => [w, 100]));
+  };
+  const p = await buildProfile(text, flaky, T0);
+  assert.equal(calls, 2);
+  assert.equal(p.head.find(s => s.word === 'quiet')!.frequency, 100);
+  // Offline or rate-limited throughout: no result rather than "hard".
+  await assert.rejects(buildProfile(text, async () => ({}), T0), (e: unknown) => e instanceof CoverageError && e.reason === 'lookup-failed');
+  // Not English: nothing to measure.
+  await assert.rejects(buildProfile(['Emma! I, the, and.'], async () => ({}), T0), (e: unknown) => e instanceof CoverageError && e.reason === 'no-words');
+});
+
 test('a word is the learner\'s own once its card has grown, or when it is on the list, in any form', () => {
   const knownBy = knownByFrom([grown('a', 'decide', 12), grown('b', 'garden', 2), card({ id: 'c', front: 'take into account', stability: 40, repetition: 3, interval: 40 })], [newKnownWord('walk', T0, 'k1')]);
   assert.equal(knownBy('decided'), 'card');
@@ -112,6 +132,7 @@ test('a gap is made in the book\'s sentence, in the form written there', () => {
   assert.equal(phrase.answer, 'took the cost into account');
   assert.equal(makeCloze('Decided.', 'decide'), null, 'too short to hint at anything');
   assert.equal(makeCloze('He went home.', 'decide'), null);
+  assert.equal(makeCloze('He decided, then decided again, to go.', 'decide'), null, 'the second one would give the answer away');
   assert.equal(blankOf('took into account'), 't___ i___ a______');
 });
 
@@ -119,6 +140,7 @@ test('the gap sentence comes from where the word was met first, then the card', 
   const c = card({ front: 'reluctant', sourceSentence: 'He was reluctant to go out.', exampleSentenceTarget: ['A reluctant hero.'] });
   assert.equal(clozeFor(c, ['The reluctant boy stayed in his room.'])!.sentence, 'The reluctant boy stayed in his room.');
   assert.equal(clozeFor(c, ['Nothing here matches.'])!.sentence, 'He was reluctant to go out.');
+  assert.equal(clozeFor(c, ['The reluctant boy met a reluctant girl.', 'A reluctant smile came at last.'])!.sentence, 'A reluctant smile came at last.');
   assert.equal(clozeFor(card({ kind: 'grammar', front: 'Passive voice', sourceSentence: 'It was built.' })), null);
   assert.equal(clozeFor(card({ front: 'zorp' })), null);
 });
@@ -141,8 +163,9 @@ test('a book review takes the due cards of the book or chapter, else its weakest
     grown('b', 'beta', 2), // weak, not due
     grown('c', 'gamma', 40), // strong
     grown('d', 'delta', 2, new Date(T0.getTime() - DAY)), // other book
+    grown('e', 'epsilon', 2, new Date(T0.getTime() - DAY)), // taken out of this book
   ];
-  const occurrences = [occ('a', 's1', 'c1', T0), occ('b', 's1', 'c2', T0), occ('c', 's1', 'c2', T0), occ('d', 's2', 'x1', T0), occ('b', 's1', 'c3', T0, { isDeleted: true })];
+  const occurrences = [occ('a', 's1', 'c1', T0), occ('b', 's1', 'c2', T0), occ('c', 's1', 'c2', T0), occ('d', 's2', 'x1', T0), occ('e', 's1', 'c3', T0, { isDeleted: true })];
   assert.deepEqual(cardsOfSource(occurrences, cards, 's1').map(c => c.id), ['a', 'b', 'c']);
   assert.deepEqual(cardsOfSource(occurrences, cards, 's1', 'c2').map(c => c.id), ['b', 'c']);
   const book = pickBookReview(cardsOfSource(occurrences, cards, 's1'), T0);
@@ -190,4 +213,21 @@ test('reading milestones: chapters and books finished, words carded from texts',
   const cards = [card({ id: 'a' }), card({ id: 'b', isDeleted: true })];
   const counts = readingCounts(sources, chapters, [occ('a', 's1', 'c1', T0), occ('b', 's1', 'c1', T0)], cards);
   assert.deepEqual(counts, { chaptersDone: 3, booksDone: 1, wordsFromTexts: 1 });
+});
+
+test('the last section of a chapter, and of a book, earns a bonus; the badge and the bonus agree', () => {
+  const book = source('s1', 'Emma');
+  const article = source('s2', 'Note', 'article');
+  const one = source('s3', 'Short', 'book');
+  const chapters = [chapter('c1', 's1', 1, 2, [0, 1]), chapter('c2', 's1', 2, 2, [0]), chapter('a1', 's2', 1, 1, []), chapter('a2', 's2', 2, 1, [0]), chapter('o1', 's3', 1, 1, [])];
+  const finish = (id: string, index: number) => {
+    const c = chapters.find(x => x.id === id)!;
+    return { ...c, completed: [...new Set([...c.completed, index])] };
+  };
+  assert.deepEqual(sectionReward(chapter('c2', 's1', 2, 3, [0]), book, chapters), { chapterDone: false, bookDone: false, xp: CHUNK_COMPLETE_XP });
+  assert.deepEqual(sectionReward(finish('c2', 1), book, chapters), { chapterDone: true, bookDone: true, xp: CHUNK_COMPLETE_XP + CHAPTER_COMPLETE_XP + BOOK_COMPLETE_XP });
+  assert.deepEqual(sectionReward(finish('a1', 0), article, chapters), { chapterDone: true, bookDone: false, xp: CHUNK_COMPLETE_XP + CHAPTER_COMPLETE_XP }, 'an article is not a book');
+  assert.equal(sectionReward(finish('o1', 0), one, chapters).bookDone, true, 'a book of one chapter is a book');
+  const after = chapters.map(c => (c.id === 'c2' ? finish('c2', 1) : c.id === 'a1' ? finish('a1', 0) : c.id === 'o1' ? finish('o1', 0) : c));
+  assert.equal(readingCounts([book, article, one], after, [], []).booksDone, 2, 'the same two books earn the badge');
 });

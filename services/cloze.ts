@@ -23,8 +23,10 @@ export const makeCloze = (sentence: string, term: string): Cloze | null => {
   if (!text || !term.trim()) return null;
   const section = readerSection(text);
   if (section.words.length < 3 || section.words.length > MAX_WORDS) return null;
-  const [range] = phraseRanges(section, term);
-  if (!range) return null;
+  const ranges = phraseRanges(section, term);
+  // Written twice, one would give the other away: try another sentence.
+  if (ranges.length !== 1) return null;
+  const [range] = ranges;
   const start = section.words[range[0]].start;
   const end = section.words[range[1]].end;
   if (end - start >= text.length - 2) return null; // nothing left around the gap

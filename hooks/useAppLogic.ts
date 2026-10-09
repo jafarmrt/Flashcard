@@ -4,8 +4,8 @@ import { db } from '../services/localDBService';
 import { calculateLevel, calculateStreak, checkAndAwardAchievements } from '../services/gamificationService';
 import { generateNewDailyGoals, updateGoalProgress, reviewGoalId } from '../services/dailyGoalsService';
 import { availableFreezes, dayString, daysToFreeze, MAX_HELD_FREEZES } from '../services/streakService';
-import { BOOK_COMPLETE_XP, CHAPTER_COMPLETE_XP, CHUNK_COMPLETE_XP, DEFAULT_DAILY_REVIEW_GOAL, isChestSection, SECTION_GOAL_REVIEWS } from '../services/xpRules';
-import { buildSource, cardIndex, cardsInText, chaptersOf, findCard, isChapterFinished, markChunkDone, migrateTexts, newOccurrence, SourceInput } from '../services/library';
+import { DEFAULT_DAILY_REVIEW_GOAL, isChestSection, SECTION_GOAL_REVIEWS } from '../services/xpRules';
+import { buildSource, cardIndex, cardsInText, chaptersOf, findCard, markChunkDone, migrateTexts, newOccurrence, sectionReward, SourceInput } from '../services/library';
 import { cardsOfSource, pickBookReview } from '../services/readingStats';
 import { normalizeTerm } from '../services/vocabMerge';
 import { forgetRows, newKnownWord } from '../services/knownWords';
@@ -133,6 +133,8 @@ export const useAppLogic = () => {
   const [studyCards, setStudyCards] = useState<Flashcard[]>([]);
   const [isStudySetupModalOpen, setIsStudySetupModalOpen] = useState(false);
   const [studyMode, setStudyMode] = useState<StudyMode>('flip');
+  // The book a review was started from: its sentences come first in gaps.
+  const [studySourceId, setStudySourceId] = useState<string | null>(null);
   const [studyLogs, setStudyLogs] = useState<StudyLog[]>([]);
 
   // Library State
@@ -183,9 +185,21 @@ export const useAppLogic = () => {
     localStorage.setItem(LAST_USER_KEY, username);
   };
 
+  // Toasts take turns, so one never hides another (a level-up arrives with
+  // "chapter finished", a finished goal right after).
+  const toastQueue = useRef<string[]>([]);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const nextToast = () => {
+    const message = toastQueue.current.shift();
+    setToastMessage(message ?? null);
+    toastTimer.current = message === undefined ? null : setTimeout(nextToast, toastQueue.current.length ? 2200 : 3000);
+  };
   const showToast = (message: string) => {
-    setToastMessage(message);
-    setTimeout(() => setToastMessage(null), 3000);
+    const queue = toastQueue.current;
+    if (queue[queue.length - 1] === message) return;
+    if (queue.length >= 4) queue.shift();
+    queue.push(message);
+    if (!toastTimer.current) nextToast();
   };
 
   const checkAndRefreshDailyGoals = async (profile: UserProfile, currentStreak: number) => {
@@ -353,11 +367,8 @@ export const useAppLogic = () => {
       return { ...p, xp, level: calculateLevel(xp).level };
     });
     if (!result) return;
-    if (result.after.level > result.before.level) {
-        showToast(`به سطح ${fa(result.after.level)} رسیدی! 🎉`);
-    } else if (message) {
-        showToast(message);
-    }
+    if (message) showToast(message);
+    if (result.after.level > result.before.level) showToast(`به سطح ${fa(result.after.level)} رسیدی! 🎉`);
     handleCheckAchievements();
   };
 
@@ -953,6 +964,7 @@ export const useAppLogic = () => {
   
   const handleStartStudySession = (options: StudySessionOptions, deckIdOverride?: string | null, sourceCards: Flashcard[] = flashcards, returnTo: View = 'TODAY') => {
     const deckId = deckIdOverride !== undefined ? deckIdOverride : studyDeckId;
+    setStudySourceId(null);
 
     const visibleFlashcards = sourceCards.filter(c => !c.isDeleted);
     let cardsToStudy = deckId
@@ -1098,8 +1110,7 @@ export const useAppLogic = () => {
   const handleCompleteChunk = async (chapterId: string, index: number) => {
     const chapter = await db.chapters.get(chapterId);
     if (!chapter) return;
-    const { chapter: updated, firstTime } = markChunkDone(chapter, index);
-    if (!firstTime) {
+    if (!markChunkDone(chapter, index).firstTime) {
       setView('TEXTS');
       return;
     }
@@ -1112,25 +1123,33 @@ export const useAppLogic = () => {
     const now = new Date();
     const seenAgain = cardsInText(text, (await db.flashcards.toArray()).filter(c => !placed.has(c.id)))
       .map(({ card, sentence }) => newOccurrence(card, chapter, index, sentence, now));
-    await (db as any).transaction('rw', [db.chapters, db.occurrences], async () => {
-      await db.chapters.put(updated);
+    // Marked done inside the write, from the stored chapter: a second tap on
+    // "finish" while the first is saving must not award the section twice.
+    const updated: Chapter | null = await (db as any).transaction('rw', [db.chapters, db.occurrences], async () => {
+      const current = await db.chapters.get(chapterId);
+      if (!current) return null;
+      const done = markChunkDone(current, index);
+      if (!done.firstTime) return null;
+      await db.chapters.put(done.chapter);
       if (seenAgain.length) await db.occurrences.bulkPut(seenAgain);
+      return done.chapter;
     });
+    if (!updated) {
+      setView('TEXTS');
+      return;
+    }
     setChapters(prev => prev.map(c => (c.id === updated.id ? updated : c)));
     if (seenAgain.length) setOccurrences(prev => [...prev.filter(o => !seenAgain.some(s => s.id === o.id)), ...seenAgain]);
     offerReview(await db.occurrences.where('chapterId').equals(chapterId).toArray());
     // The last section of a chapter, or of a book, earns a bonus on top.
-    const chapterDone = isChapterFinished(updated);
-    const siblings = chaptersOf(chapter.sourceId, (await db.chapters.where('sourceId').equals(chapter.sourceId).toArray()).map(c => (c.id === updated.id ? updated : c)));
-    const bookDone = chapterDone && siblings.length > 1 && siblings.every(isChapterFinished);
-    const bonus = (chapterDone ? CHAPTER_COMPLETE_XP : 0) + (bookDone ? BOOK_COMPLETE_XP : 0);
+    const { chapterDone, bookDone, xp } = sectionReward(updated, await db.sources.get(chapter.sourceId), await db.chapters.where('sourceId').equals(chapter.sourceId).toArray());
     const met = seenAgain.length ? `؛ ${fa(seenAgain.length)} واژهٔ کارت‌دار در این بخش دوباره دیده شد` : '';
     const message = bookDone
-      ? `کتاب را تمام کردی! 🏁 +${fa(CHUNK_COMPLETE_XP + bonus)} امتیاز`
+      ? `کتاب را تمام کردی! 🏁 +${fa(xp)} امتیاز`
       : chapterDone
-        ? `فصل تمام شد! 📖 +${fa(CHUNK_COMPLETE_XP + bonus)} امتیاز${met}`
-        : `بخش ${fa(index + 1)} تمام شد. +${fa(CHUNK_COMPLETE_XP)} امتیاز${met}`;
-    await awardXP(CHUNK_COMPLETE_XP + bonus, message);
+        ? `فصل تمام شد! 📖 +${fa(xp)} امتیاز${met}`
+        : `بخش ${fa(index + 1)} تمام شد. +${fa(xp)} امتیاز${met}`;
+    await awardXP(xp, message);
     // Reading counts toward the daily goal.
     await handleGoalUpdate('STUDY', SECTION_GOAL_REVIEWS);
     if (isChestSection(index)) {
@@ -1261,6 +1280,7 @@ export const useAppLogic = () => {
     setStudyMode(mode);
     setStudyDeckId(null);
     handleStartStudySession({ filter: 'all-cards', limit: 0 }, null, picked, 'TEXTS');
+    setStudySourceId(sourceId);
   };
 
   // Any cards, by id (the hardest words on the stats page, say).
@@ -1532,7 +1552,7 @@ export const useAppLogic = () => {
   return {
       // State
       flashcards, decks, view, editingCard, toastMessage, isLoggedIn, currentUser, authLoading, appLoading,
-      syncStatus, studyDeckId, studyCards, studySessionId, isStudySetupModalOpen, studyMode, studyLogs, dbStatus, apiStatus,
+      syncStatus, studyDeckId, studyCards, studySessionId, isStudySetupModalOpen, studyMode, studySourceId, studyLogs, dbStatus, apiStatus,
       sources, chapters, occurrences, activeSourceId, activeChapterId, activeChunk, knownWords, sectionReview,
       freeDictApiStatus, mwDictApiStatus, settings, userProfile, streak, earnedAchievements,
       previousViewRef, autoFixProgress, autoFixReport,

@@ -2,7 +2,7 @@ import { StudyLog, UserAchievement, Flashcard, Deck, UserProfile, Chapter, Sourc
 import { ALL_ACHIEVEMENTS } from './achievements';
 import { db } from './localDBService';
 import { computeStreak, dayString } from './streakService';
-import { chaptersOf, isChapterFinished } from './library';
+import { isBookFinished, isChapterFinished } from './library';
 
 const XP_PER_LEVEL_BASE = 150;
 
@@ -60,11 +60,7 @@ export const readingCounts = (sources: Source[], chapters: Chapter[], occurrence
   const liveSources = sources.filter(s => !s.isDeleted);
   const liveIds = new Set(liveSources.map(s => s.id));
   const chaptersDone = chapters.filter(c => !c.isDeleted && liveIds.has(c.sourceId) && isChapterFinished(c)).length;
-  const booksDone = liveSources.filter(s => {
-    if (s.kind !== 'book') return false;
-    const list = chaptersOf(s.id, chapters);
-    return list.length > 0 && list.every(isChapterFinished);
-  }).length;
+  const booksDone = liveSources.filter(s => isBookFinished(s, chapters)).length;
   const liveCards = new Set(cards.filter(c => !c.isDeleted).map(c => c.id));
   const wordsFromTexts = new Set(occurrences.filter(o => !o.isDeleted && liveCards.has(o.cardId)).map(o => o.cardId)).size;
   return { chaptersDone, booksDone, wordsFromTexts };

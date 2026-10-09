@@ -31,6 +31,17 @@ test('lookupFrequencies reads Datamuse f: tags and caches them', async () => {
   assert.equal(calls.length, before, 'second lookup is served from the cache');
 });
 
+test('lookupFrequencies leaves out words whose lookup failed, and does not cache them', async () => {
+  let down = true;
+  const f = async (url: string) => {
+    if (down) throw new Error('timeout');
+    return { ok: true, status: 200, json: async () => (url.includes('sp=meadowlark') ? [{ word: 'meadowlark', tags: ['f:0.5'] }] : []) };
+  };
+  assert.deepEqual(await lookupFrequencies(['meadowlark'], f as any), {});
+  down = false;
+  assert.deepEqual(await lookupFrequencies(['meadowlark'], f as any), { meadowlark: 0.5 });
+});
+
 test('lookupCollocations builds expressions from neighbouring words, skipping stop words', async () => {
   const f = fakeFetch({
     'rel_bgb=decision': [{ word: 'the' }, { word: 'final' }, { word: 'difficult' }, { word: 'tough' }, { word: 'informed' }],

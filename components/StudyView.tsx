@@ -39,6 +39,7 @@ interface StudyViewProps {
   goal: { progress: number; target: number };
   onExit: (updatedCards: Flashcard[], summary: SessionSummary, next?: 'home' | 'more') => void;
   places?: Map<string, CardPlace[]>; // where each card was met while reading
+  sourceId?: string | null; // a review of one book: its sentences come first
   aiOptions?: AiRequestOptions; // checks sentences written for grammar cards
 }
 
@@ -174,7 +175,7 @@ interface Snapshot {
   card?: Flashcard; // the card as it was before this answer
 }
 
-export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak, studiedToday, goal, onExit, places, aiOptions }) => {
+export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak, studiedToday, goal, onExit, places, sourceId, aiOptions }) => {
   const [queue, setQueue] = useState<Flashcard[]>([]);
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
@@ -208,7 +209,12 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
   const current = card ? updated.get(card.id) || card : undefined;
   // The gap sentence for this card: where it was met in books, else its own
   // sentence. A card without one is asked as in "type" mode.
-  const cloze = useMemo(() => (mode === 'cloze' && card ? clozeFor(card, (places?.get(card.id) || []).map(p => p.sentence)) : null), [mode, card, places]);
+  const cloze = useMemo(() => {
+    if (mode !== 'cloze' || !card) return null;
+    const met = places?.get(card.id) || [];
+    const ordered = sourceId ? [...met.filter(p => p.sourceId === sourceId), ...met.filter(p => p.sourceId !== sourceId)] : met;
+    return clozeFor(card, ordered.map(p => p.sentence));
+  }, [mode, card, places, sourceId]);
   const cardMode: StudyMode = mode === 'cloze' && !cloze ? 'type' : mode;
   const intervals = useMemo(() => (current ? previewIntervals(current) : null), [current]);
 

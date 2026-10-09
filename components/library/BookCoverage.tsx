@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import type { Chapter, ChapterText, Flashcard, KnownWord, Source } from '../../types';
-import { buildProfile, coverageOf, knownByFrom, savedProfile, saveProfile, VERDICT_TEXT, type BookProfile, type Coverage } from '../../services/coverage';
+import { buildProfile, coverageOf, CoverageError, knownByFrom, savedProfile, saveProfile, VERDICT_TEXT, type BookProfile, type Coverage } from '../../services/coverage';
 import { callProxy } from '../../services/apiService';
 import { learnerStep } from '../../services/wordLevel';
 import { fa } from '../common/ui';
@@ -61,7 +61,11 @@ export const BookCoverage: React.FC<BookCoverageProps> = ({ source, chapters, ca
       setProfile(built);
     } catch (e) {
       console.error('Book evaluation failed:', e);
-      setError('سنجش انجام نشد؛ اتصال را بررسی کن و دوباره امتحان کن.');
+      setError(e instanceof CoverageError && e.reason === 'no-words'
+        ? 'در این متن واژهٔ انگلیسی‌ای برای سنجیدن پیدا نشد.'
+        : e instanceof CoverageError
+          ? 'بیشتر واژه‌ها سنجیده نشدند (اتصال کند یا شلوغ بود)؛ کمی بعد دوباره امتحان کن.'
+          : 'سنجش انجام نشد؛ اتصال را بررسی کن و دوباره امتحان کن.');
     } finally {
       setBusy(null);
     }
@@ -94,7 +98,7 @@ export const BookCoverage: React.FC<BookCoverageProps> = ({ source, chapters, ca
             </div>
           </div>
           <ul className="flex flex-wrap gap-2 text-sm">
-            <li className="rounded-full bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-100 px-3 py-1">سطح متن: <bdi className="font-en">{coverage.textLevel === 'C2+' ? 'C2 و بالاتر' : coverage.textLevel}</bdi></li>
+            <li className="rounded-full bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-100 px-3 py-1">سطح متن: {coverage.textLevel === 'C2+' ? <><bdi className="font-en">C2</bdi> و بالاتر</> : <bdi className="font-en">{coverage.textLevel}</bdi>}</li>
             <li className="rounded-full bg-slate-100 dark:bg-slate-700 px-3 py-1">حدود {fa(coverage.unknownPer300)} واژهٔ ناآشنا در هر بخش</li>
             {coverage.personal > 0 && <li className="rounded-full bg-emerald-100 text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100 px-3 py-1">{fa(coverage.personal)}٪ از کارت‌ها و «بلدم»</li>}
             <li className="rounded-full bg-slate-100 dark:bg-slate-700 px-3 py-1">{fa(profile.types)} واژهٔ متفاوت</li>

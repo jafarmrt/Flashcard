@@ -81,7 +81,7 @@ const App: React.FC = () => {
         updateSettings, handleCheckAchievements, handleGoalUpdate, studyCards,
         handleCompleteCardDetails, handleAutoFixCards, handleStopAutoFix, autoFixProgress,
         handleCloseAutoFixReport, handleSaveExtractedCards, previousViewRef,
-        syncStatus, studyMode, studyLogs, studySessionId, sources, chapters, occurrences,
+        syncStatus, studyMode, studySourceId, studyLogs, studySessionId, sources, chapters, occurrences,
         activeSourceId, activeChapterId, activeChunk, startQuickReview, openStudySetup,
         handleAddSource, handleOpenSource, handleOpenChapter, handleOpenChunk, handleDeleteSource,
         handleCompleteChunk, loadChapterText, handleSaveReaderCards,
@@ -206,6 +206,7 @@ const App: React.FC = () => {
                     goal={{ progress: studyGoal?.progress || 0, target: studyGoal?.target || DEFAULT_DAILY_REVIEW_GOAL }}
                     onExit={handleSessionEnd}
                     places={places}
+                    sourceId={studySourceId}
                     aiOptions={aiRequestOptions(settings)}
                 />;
             case 'PRACTICE':
