@@ -186,20 +186,31 @@ export const useAppLogic = () => {
   };
 
   // Toasts take turns, so one never hides another (a level-up arrives with
-  // "chapter finished", a finished goal right after).
+  // "chapter finished", a finished goal right after). One that others are
+  // waiting for stays only long enough to be read, so an answer to a tap is
+  // not held back.
+  const TOAST_MS = 3000;
+  const TOAST_MIN_MS = 1500;
   const toastQueue = useRef<string[]>([]);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastShownAt = useRef(0);
   const nextToast = () => {
     const message = toastQueue.current.shift();
     setToastMessage(message ?? null);
-    toastTimer.current = message === undefined ? null : setTimeout(nextToast, toastQueue.current.length ? 2200 : 3000);
+    toastShownAt.current = Date.now();
+    toastTimer.current = message === undefined ? null : setTimeout(nextToast, toastQueue.current.length ? TOAST_MIN_MS : TOAST_MS);
   };
   const showToast = (message: string) => {
     const queue = toastQueue.current;
     if (queue[queue.length - 1] === message) return;
-    if (queue.length >= 4) queue.shift();
+    if (queue.length >= 3) queue.shift();
     queue.push(message);
-    if (!toastTimer.current) nextToast();
+    if (!toastTimer.current) {
+      nextToast();
+      return;
+    }
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(nextToast, Math.max(0, TOAST_MIN_MS - (Date.now() - toastShownAt.current)));
   };
 
   const checkAndRefreshDailyGoals = async (profile: UserProfile, currentStreak: number) => {
