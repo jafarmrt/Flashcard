@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import {
   hashPassword, verifyPassword, createSessionToken, verifySessionToken, readCookie,
   sessionCookieHeader, sessionUser, SESSION_COOKIE, loginLockMinutes, recordLoginFailure,
-  clearLoginFailures, isAllowedAudioUrl, PUBLIC_ACTIONS,
+  clearLoginFailures, isAllowedAudioUrl, PUBLIC_ACTIONS, registrationAllowed,
 } from '../server/auth';
+import { aiErrorMessage, cleanAiBaseUrl } from '../server/api';
 
 const SECRET = 'x'.repeat(40);
 
@@ -84,4 +85,36 @@ test('the audio proxy only accepts https dictionary hosts', () => {
   ]) {
     assert.equal(isAllowedAudioUrl(url), false, url);
   }
+});
+
+test('registration: the first account is allowed, later ones only when ALLOW_REGISTRATION=true', () => {
+  const saved = process.env.ALLOW_REGISTRATION;
+  try {
+    delete process.env.ALLOW_REGISTRATION;
+    assert.equal(registrationAllowed(false), true, 'first account');
+    assert.equal(registrationAllowed(true), false, 'closed once an account exists');
+    process.env.ALLOW_REGISTRATION = 'true';
+    assert.equal(registrationAllowed(true), true);
+    process.env.ALLOW_REGISTRATION = 'false';
+    assert.equal(registrationAllowed(false), false);
+  } finally {
+    if (saved === undefined) delete process.env.ALLOW_REGISTRATION; else process.env.ALLOW_REGISTRATION = saved;
+  }
+});
+
+test('AI errors say why they failed', () => {
+  assert.equal(
+    aiErrorMessage('Gemini', 429, JSON.stringify({ error: { message: 'Resource has been exhausted.' } })),
+    'Gemini (429): the free quota is used up for now - Resource has been exhausted.',
+  );
+  assert.match(aiErrorMessage('api.groq.com', 401, '{"error":{"message":"Invalid API Key"}}'), /key is wrong.*Invalid API Key/);
+  assert.equal(aiErrorMessage('Gemini', 500, ''), 'Gemini (500): request failed');
+});
+
+test('the AI base URL must be an http(s) address without credentials', () => {
+  assert.equal(cleanAiBaseUrl('https://api.groq.com/openai/v1/'), 'https://api.groq.com/openai/v1');
+  assert.equal(cleanAiBaseUrl(undefined), 'https://api.groq.com/openai/v1');
+  assert.throws(() => cleanAiBaseUrl('file:///etc/passwd'));
+  assert.throws(() => cleanAiBaseUrl('not a url'));
+  assert.throws(() => cleanAiBaseUrl('https://user:pass@example.com/v1'));
 });

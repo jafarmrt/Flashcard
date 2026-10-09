@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { Buffer } from 'buffer';
 import { newerSettings } from '../services/settingsSync.js';
+import { studyLogKey } from '../services/syncState.js';
 import { fetchDictionaryEntries, freeEnrich, freeTranslate, lookupFrequencies } from './freeLookup.js';
 import {
   PUBLIC_ACTIONS, USERNAME_PATTERN, MIN_PASSWORD_LENGTH, registrationAllowed,
@@ -45,32 +46,45 @@ const kvConfig = () => {
 
 let fileStore: Map<string, any> | null = null;
 
+const storeFile = () => path.join(dataDir(), '.data_store.json');
+
 function loadFileStore(): Map<string, any> {
   if (fileStore) return fileStore;
   if (process.env.VERCEL) {
     throw new Error('Cloud storage is not set up. Connect Upstash Redis to this Vercel project so KV_REST_API_URL and KV_REST_API_TOKEN are set.');
   }
-  fileStore = new Map<string, any>();
-  const file = path.join(dataDir(), '.data_store.json');
-  try {
-    if (fs.existsSync(file)) {
-      Object.entries(JSON.parse(fs.readFileSync(file, 'utf-8'))).forEach(([k, v]) => fileStore!.set(k, v));
+  const file = storeFile();
+  const store = new Map<string, any>();
+  if (fs.existsSync(file)) {
+    // A file that cannot be read is never replaced by an empty store: that
+    // would delete the account on the next save. Restore it from a backup.
+    let parsed: Record<string, any>;
+    try {
+      parsed = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    } catch (e) {
+      throw new Error(`The data file ${file} is damaged (${(e as Error).message}). Restore it from a backup; the server will not overwrite it.`);
     }
-  } catch (e) {
-    console.warn('Could not load local data store file:', e);
+    Object.entries(parsed).forEach(([k, v]) => store.set(k, v));
   }
+  fileStore = store;
   return fileStore;
 }
 
+// Written to a temporary file first and then renamed over the old one, so a
+// crash or a full disk mid-write leaves the previous file intact. A failed
+// write is an error: the caller must not report the data as saved.
 function persistStore(store: Map<string, any>) {
-  const file = path.join(dataDir(), '.data_store.json');
+  const file = storeFile();
+  const tmp = `${file}.${process.pid}.tmp`;
+  const obj: Record<string, any> = {};
+  store.forEach((v, k) => { obj[k] = v; });
   try {
-    const obj: Record<string, any> = {};
-    store.forEach((v, k) => { obj[k] = v; });
-    fs.writeFileSync(file, JSON.stringify(obj, null, 2), { encoding: 'utf-8', mode: 0o600 });
-    fs.chmodSync(file, 0o600); // user data and password hashes: owner only
+    fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), { encoding: 'utf-8', mode: 0o600 });
+    fs.chmodSync(tmp, 0o600); // user data and password hashes: owner only
+    fs.renameSync(tmp, file);
   } catch (e) {
-    console.warn('Could not persist local data store to file:', e);
+    try { fs.rmSync(tmp, { force: true }); } catch { /* nothing to clean up */ }
+    throw new Error(`Could not save the data file ${file}: ${(e as Error).message}`);
   }
 }
 
@@ -102,15 +116,69 @@ async function setUser(userData: any): Promise<void> {
     return;
   }
   const store = loadFileStore();
+  const previous = store.get(key);
   store.set(key, userData);
-  persistStore(store);
+  try {
+    persistStore(store);
+  } catch (e) {
+    // Keep memory and disk the same, so nothing looks saved that is not.
+    if (previous === undefined) store.delete(key); else store.set(key, previous);
+    throw e;
+  }
+}
+
+// Whether any account exists yet; registration closes after the first one.
+async function anyAccountExists(): Promise<boolean> {
+  const kv = kvConfig();
+  if (kv) {
+    const kvResponse = await fetch(`${kv.url}/keys/user:*`, { headers: { Authorization: `Bearer ${kv.token}` } });
+    if (!kvResponse.ok) throw new Error(`Cloud storage read failed (${kvResponse.status}).`);
+    const { result } = await kvResponse.json();
+    return Array.isArray(result) && result.length > 0;
+  }
+  return Array.from(loadFileStore().keys()).some(k => k.startsWith('user:'));
+}
+
+// --- AI HELPERS ---
+const AI_TIMEOUT_MS = 50_000; // under Vercel's 60 s function limit
+
+// One short line saying why an AI request failed ("Gemini (429): quota
+// exceeded"), shown to the user instead of a bare "API error".
+export function aiErrorMessage(provider: string, status: number, body: string): string {
+  let reason = '';
+  try {
+    const json = JSON.parse(body);
+    reason = json?.error?.message || json?.message || (typeof json?.error === 'string' ? json.error : '');
+  } catch {
+    reason = body;
+  }
+  reason = String(reason || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  const hint = status === 401 || status === 403 ? 'the API key is wrong or not allowed'
+    : status === 429 ? 'the free quota is used up for now'
+    : status === 404 ? 'the model name is not available'
+    : '';
+  return `${provider} (${status}): ${[hint, reason].filter(Boolean).join(' - ') || 'request failed'}`;
+}
+
+// Base URL of an OpenAI-compatible provider: http(s) only.
+export function cleanAiBaseUrl(baseUrl: string | undefined): string {
+  const raw = (baseUrl || 'https://api.groq.com/openai/v1').trim().replace(/\/+$/, '');
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error('The AI base URL is not a valid address.');
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('The AI base URL must start with https://');
+  if (url.username || url.password) throw new Error('Put the API key in the key field, not in the base URL.');
+  return raw;
 }
 
 // --- GEMINI API HANDLER ---
 async function handleGeminiGenerate(payload: any, res: ProxyResponse, apiKey: string) {
   const { model, contents, config } = payload;
   // Support gemini-2.5-flash / gemini-2.5-pro or standard gemini-2.5-flash
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model || 'gemini-2.5-flash'}:generateContent`;
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model || 'gemini-2.5-flash')}:generateContent`;
 
   const {
     systemInstruction,
@@ -133,21 +201,17 @@ async function handleGeminiGenerate(payload: any, res: ProxyResponse, apiKey: st
     ...(Object.keys(generationConfig).length > 0 && { generationConfig }),
   };
 
-  const geminiResponse = await fetch(`${endpoint}?key=${apiKey}`, {
+  const geminiResponse = await fetch(endpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
     body: JSON.stringify(googleApiBody),
+    signal: AbortSignal.timeout(AI_TIMEOUT_MS),
   });
 
   if (!geminiResponse.ok) {
     const errorText = await geminiResponse.text();
     console.error('Google API Error:', errorText);
-    try {
-      const errorJson = JSON.parse(errorText);
-      return res.status(geminiResponse.status).json({ error: 'Google API Error', details: errorJson });
-    } catch (e) {
-      return res.status(geminiResponse.status).json({ error: 'Google API Error', details: errorText });
-    }
+    return res.status(geminiResponse.status).json({ error: aiErrorMessage('Gemini', geminiResponse.status, errorText) });
   }
 
   const responseData = await geminiResponse.json();
@@ -161,7 +225,12 @@ async function handleGeminiGenerate(payload: any, res: ProxyResponse, apiKey: st
 
 // --- OPENAI-COMPATIBLE (GROQ, OPENROUTER, DEEPSEEK, OLLAMA, TOGETHER, ETC.) HANDLER ---
 async function handleOpenAiGenerate(payload: any, res: ProxyResponse, apiKey: string, baseUrl?: string) {
-  const cleanBaseUrl = (baseUrl || 'https://api.groq.com/openai/v1').replace(/\/+$/, '');
+  let cleanBaseUrl: string;
+  try {
+    cleanBaseUrl = cleanAiBaseUrl(baseUrl);
+  } catch (e) {
+    return res.status(400).json({ error: (e as Error).message });
+  }
   const endpoint = `${cleanBaseUrl}/chat/completions`;
   const { model, contents, config } = payload;
   
@@ -204,17 +273,13 @@ async function handleOpenAiGenerate(payload: any, res: ProxyResponse, apiKey: st
     method: 'POST',
     headers,
     body: JSON.stringify(requestBody),
+    signal: AbortSignal.timeout(AI_TIMEOUT_MS),
   });
 
   if (!apiResponse.ok) {
     const errorText = await apiResponse.text();
     console.error('OpenAI-compatible API Error:', errorText);
-    try {
-      const errorJson = JSON.parse(errorText);
-      return res.status(apiResponse.status).json({ error: errorJson.error?.message || 'AI API Error', details: errorJson });
-    } catch {
-      return res.status(apiResponse.status).json({ error: 'AI API Error', details: errorText });
-    }
+    return res.status(apiResponse.status).json({ error: aiErrorMessage(new URL(endpoint).hostname, apiResponse.status, errorText) });
   }
 
   const responseData = await apiResponse.json();
@@ -256,28 +321,19 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) LinguaCards/1.0',
               'Accept': 'application/json',
             },
-            signal: AbortSignal.timeout(2000),
+            signal: AbortSignal.timeout(3000),
           });
-          if (dictResponse.ok) {
-            return res.status(200).json({ message: 'pong' });
-          }
+          if (dictResponse.ok) return res.status(200).json({ message: 'pong' });
         } catch {
-          // Quietly fallback
+          // unreachable: reported below
         }
-        return res.status(200).json({ message: 'pong' });
+        return res.status(503).json({ error: 'The free dictionary cannot be reached from the server.' });
       }
 
       case 'ping-mw': {
-        const mwApiKeyPing = process.env.MW_API_KEY;
-        if (!mwApiKeyPing) return res.status(200).json({ message: 'unconfigured' });
-        try {
-          const mwResponse = await fetch(`https://www.dictionaryapi.com/api/v3/references/collegiate/json/test?key=${mwApiKeyPing}`, {
-            signal: AbortSignal.timeout(3000),
-          });
-          return res.status(mwResponse.ok ? 200 : 503).json({ message: mwResponse.ok ? 'pong' : 'api unreachable' });
-        } catch {
-          return res.status(503).json({ error: 'Merriam-Webster unreachable' });
-        }
+        // Only says whether a key is set: calling Merriam-Webster here would
+        // spend its quota on every page load.
+        return res.status(200).json({ message: process.env.MW_API_KEY ? 'configured' : 'unconfigured' });
       }
 
       case 'gemini-generate': {
@@ -382,7 +438,7 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
 
       case 'auth-register': {
         const { username, password } = payload;
-        if (!registrationAllowed()) return res.status(403).json({ error: 'Registration is closed on this server.' });
+        if (!registrationAllowed(await anyAccountExists())) return res.status(403).json({ error: 'Registration is closed on this server. Sign in with your account instead.' });
         if (typeof username !== 'string' || typeof password !== 'string') return res.status(400).json({ error: 'Username and password are required.' });
         if (!USERNAME_PATTERN.test(username)) return res.status(400).json({ error: 'Username must be 3-32 letters, digits, dots, dashes or underscores.' });
         if (password.length < MIN_PASSWORD_LENGTH) return res.status(400).json({ error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` });
@@ -460,14 +516,18 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
 
         const cloudData = user.data || { decks: [], cards: [], studyHistory: [], userProfile: null, userAchievements: [] };
 
+        // Decks: the newest rename wins (decks from before updatedAt existed
+        // count as oldest); a deck deleted anywhere stays deleted.
         const mergeDecks = (cloudItems: any[], clientItems: any[]) => {
           const mergedMap = new Map<string, any>();
           (cloudItems || []).forEach(item => mergedMap.set(item.id, item));
           (clientItems || []).forEach(clientItem => {
             const cloudItem = mergedMap.get(clientItem.id);
             if (cloudItem) {
-              const isDeleted = cloudItem.isDeleted || clientItem.isDeleted;
-              mergedMap.set(clientItem.id, { ...clientItem, isDeleted });
+              const clientTime = new Date(clientItem.updatedAt || 0).getTime();
+              const cloudTime = new Date(cloudItem.updatedAt || 0).getTime();
+              const winner = clientTime >= cloudTime ? clientItem : cloudItem;
+              mergedMap.set(clientItem.id, { ...winner, isDeleted: !!(cloudItem.isDeleted || clientItem.isDeleted) });
             } else {
               mergedMap.set(clientItem.id, clientItem);
             }
@@ -495,12 +555,26 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
 
         const mergedDecks = mergeDecks(cloudData.decks, clientData.decks);
         const mergedCards = mergeFlashcards(cloudData.cards, clientData.cards);
-        // Texts on the reading path merge like cards: newest updatedAt wins.
-        const mergedTexts = mergeFlashcards(cloudData.texts || [], clientData.texts || []);
+        // Texts on the reading path merge like cards (newest updatedAt wins),
+        // but a section finished on any device stays finished.
+        const cloudTexts = new Map<string, any>((cloudData.texts || []).map((t: any) => [t.id, t]));
+        const clientTexts = new Map<string, any>((clientData.texts || []).map((t: any) => [t.id, t]));
+        const mergedTexts = mergeFlashcards(cloudData.texts || [], clientData.texts || []).map((t: any) => {
+          const done = new Set<number>([...(cloudTexts.get(t.id)?.completed || []), ...(clientTexts.get(t.id)?.completed || [])]);
+          return { ...t, completed: Array.from(done).sort((a, b) => a - b) };
+        });
 
+        // One entry per review: logs carry a uid that is the same on every
+        // device (older logs fall back to card, day and rating). Device-local
+        // ids are not kept: another device's id 1 is not this one's.
         const studyHistoryMap = new Map<string, any>();
-        (cloudData.studyHistory || []).forEach((log: any) => studyHistoryMap.set(`${log.cardId}-${log.date}-${log.rating}`, log));
-        (clientData.studyHistory || []).forEach((log: any) => studyHistoryMap.set(`${log.cardId}-${log.date}-${log.rating}`, log));
+        [...(cloudData.studyHistory || []), ...(clientData.studyHistory || [])].forEach((log: any) => {
+          const key = studyLogKey(log);
+          if (!studyHistoryMap.has(key)) {
+            const { id: _deviceId, ...rest } = log;
+            studyHistoryMap.set(key, rest);
+          }
+        });
         const mergedStudyHistory = Array.from(studyHistoryMap.values());
 
         let mergedUserProfile: any = null;
@@ -587,6 +661,11 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
     }
   } catch (error) {
     console.error(`Error in proxy action '${action}':`, error);
-    return res.status(500).json({ error: 'An internal server error occurred.', details: (error as Error).message });
+    const name = (error as Error)?.name;
+    if (name === 'TimeoutError' || name === 'AbortError') {
+      return res.status(504).json({ error: 'The outside service took too long to answer. Try again.' });
+    }
+    // Only a signed-in user sees the reason; it can name files or services.
+    return res.status(500).json({ error: signedInUser ? `Server error: ${(error as Error).message}` : 'An internal server error occurred.' });
   }
 }
