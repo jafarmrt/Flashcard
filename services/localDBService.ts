@@ -1,5 +1,11 @@
 import Dexie, { type Table } from 'dexie';
-import { Flashcard, Deck, StudyLog, UserProfile, UserAchievement, TextDoc } from '../types';
+import { Flashcard, Deck, StudyLog, UserProfile, UserAchievement, TextDoc, Source, Chapter, ChapterText, Occurrence } from '../types';
+
+// Small values this browser keeps for itself, such as how far it has synced.
+export interface MetaRow {
+  key: string;
+  value: any;
+}
 
 export class LinguaCardsDB extends Dexie {
   flashcards!: Table<Flashcard>; 
@@ -8,6 +14,11 @@ export class LinguaCardsDB extends Dexie {
   userProfile!: Table<UserProfile>;
   userAchievements!: Table<UserAchievement>;
   texts!: Table<TextDoc>;
+  sources!: Table<Source>;
+  chapters!: Table<Chapter>;
+  chapterTexts!: Table<ChapterText>;
+  occurrences!: Table<Occurrence>;
+  meta!: Table<MetaRow>;
 
   constructor() {
     super('LinguaCardsDB');
@@ -152,6 +163,23 @@ export class LinguaCardsDB extends Dexie {
         userProfile: 'id, firstName, lastName, bio',
         userAchievements: '&achievementId',
         texts: 'id, updatedAt, isDeleted'
+    });
+
+    // Version 12: the library. Books, articles and texts with chapters; a
+    // chapter's text is kept apart from its progress; occurrences say where a
+    // card's term was met. Old texts move over at start-up (services/library).
+    (this as any).version(12).stores({
+        flashcards: 'id, deckId, front, back, dueDate, isDeleted, createdAt, updatedAt',
+        decks: 'id, name, isDeleted',
+        studyHistory: '++id, cardId, date',
+        userProfile: 'id, firstName, lastName, bio',
+        userAchievements: '&achievementId',
+        texts: 'id, updatedAt, isDeleted',
+        sources: 'id, updatedAt',
+        chapters: 'id, sourceId, updatedAt',
+        chapterTexts: 'id, sourceId',
+        occurrences: 'id, cardId, sourceId, chapterId',
+        meta: 'key'
     });
   }
 }

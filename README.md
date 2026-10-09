@@ -19,12 +19,28 @@ Prerequisite: Node.js 20 or newer.
 builds the browser app into `dist/`, and `npm start` serves `dist/` with the
 API in production mode.
 
+## The library
+
+Add a book (EPUB or .txt), an article (by its link) or pasted text. An EPUB's
+chapters come from the book's own table of contents and are read in the
+browser; an article's main text is taken out of the page with Mozilla
+Readability. Each chapter is read in sections of about 300 words.
+
+Every card remembers who made it (which AI model, the free dictionary, by
+hand) and where its word was met: book, chapter, section and sentence. A word
+met in another book gets that sentence added to its card instead of a second
+card, and each book has a word list by chapter with search and CSV export.
+
 ## Where the data lives
 
-- Cards, texts and study history are kept in the browser (IndexedDB) first.
-- With an account they sync to the server: `DATA_DIR/.data_store.json` on a
+- Everything is kept in the browser (IndexedDB) first.
+- With an account it syncs to the server: `DATA_DIR/.data_store.json` on a
   VPS (back this file up), or Upstash Redis on Vercel (`KV_REST_API_URL`,
   `KV_REST_API_TOKEN`).
+- A sync sends only what changed since the last one, in batches small enough
+  for Vercel's request limit. Chapter texts are stored apart from the account
+  and fetched the first time a chapter is opened on another device. Sound
+  recorded on a device stays on it.
 
 ## Accounts
 

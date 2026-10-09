@@ -9,6 +9,7 @@ import { levenshtein } from '../services/stringSimilarity';
 import { fetchAudioData } from '../services/dictionaryService';
 import { isSpeechSupported, speakText } from '../services/ttsService';
 import { dayString } from '../services/streakService';
+import { CardPlace, originText } from '../services/library';
 import { fa, Icon, Kbd, StageDots } from './common/ui';
 
 const RATINGS: { rating: PerformanceRating; label: string; key: string; className: string }[] = [
@@ -32,6 +33,7 @@ interface StudyViewProps {
   studiedToday: boolean;
   goal: { progress: number; target: number };
   onExit: (updatedCards: Flashcard[], summary: SessionSummary, next?: 'home' | 'more') => void;
+  places?: Map<string, CardPlace[]>; // where each card was met while reading
 }
 
 // Reads a word, phrase or sentence aloud with the browser's speech synthesis.
@@ -54,16 +56,46 @@ const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title
   </div>
 );
 
+const MAX_PLACES = 3;
+
+// The books and articles a card's term was met in, with the sentences.
+const Places: React.FC<{ places: CardPlace[] }> = ({ places }) => {
+  const sourceCount = new Set(places.map(p => p.sourceId)).size;
+  return (
+    <Section title={sourceCount > 1 ? `دیده‌شده در ${fa(sourceCount)} کتاب و متن` : 'دیده‌شده در'}>
+      <ul className="flex flex-col gap-2.5">
+        {places.slice(0, MAX_PLACES).map((p, i) => (
+          <li key={i} className="flex flex-col gap-0.5 min-w-0">
+            <p dir="rtl" className="text-xs font-bold text-ink dark:text-slate-200 truncate">
+              <bdi dir="auto" className="font-en">{p.sourceTitle}</bdi>
+              {p.chapterTitle && <> · <bdi dir="auto" className="font-en font-normal">{p.chapterTitle}</bdi></>}
+            </p>
+            {p.sentence && (
+              <p dir="ltr" className="flex items-start gap-1 text-[15px] leading-7 text-slate-700 dark:text-slate-200">
+                <span className="flex-1">{p.sentence}</span><SpeakButton text={p.sentence} />
+              </p>
+            )}
+          </li>
+        ))}
+      </ul>
+      {places.length > MAX_PLACES && <p dir="rtl" className="text-xs text-ink-muted dark:text-slate-400">و {fa(places.length - MAX_PLACES)} جای دیگر</p>}
+    </Section>
+  );
+};
+
 // The answer side: meaning, sentences, expressions and notes.
-const CardAnswer: React.FC<{ card: Flashcard }> = ({ card }) => {
+const CardAnswer: React.FC<{ card: Flashcard; places?: CardPlace[] }> = ({ card, places = [] }) => {
   const definitions = asList(card.definition);
   const examples = asList(card.exampleSentenceTarget);
+  const sentenceInPlaces = !!card.sourceSentence && places.some(p => p.sentence?.trim() === card.sourceSentence!.trim());
+  const madeBy = originText(card.origin);
   return (
     <div className="flex flex-col gap-4 animate-reveal">
       <div className="h-px bg-slate-200 dark:bg-slate-700" />
       <p dir="rtl" className="text-2xl md:text-3xl font-extrabold text-center text-ink dark:text-white break-words">{card.back}</p>
       <div className="grid gap-3 md:grid-cols-2">
-        {card.sourceSentence && (
+        {places.length > 0 && <Places places={places} />}
+        {card.sourceSentence && !sentenceInPlaces && (
           <Section title="در متن خودت">
             <p dir="ltr" className="flex items-start gap-1 text-[15px] leading-7 text-slate-700 dark:text-slate-200">
               <span className="flex-1">{card.sourceSentence}</span><SpeakButton text={card.sourceSentence} />
@@ -103,6 +135,7 @@ const CardAnswer: React.FC<{ card: Flashcard }> = ({ card }) => {
           </Section>
         )}
       </div>
+      {madeBy && <p dir="rtl" className="text-xs text-center text-ink-muted dark:text-slate-400">سازنده: <bdi dir="auto">{madeBy}</bdi></p>}
     </div>
   );
 };
@@ -135,7 +168,7 @@ interface Snapshot {
   card?: Flashcard; // the card as it was before this answer
 }
 
-export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak, studiedToday, goal, onExit }) => {
+export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak, studiedToday, goal, onExit, places }) => {
   const [queue, setQueue] = useState<Flashcard[]>([]);
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
@@ -396,7 +429,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
                   {answerState === 'correct' ? 'درست نوشتی.' : `نوشتی: «${typed}»`}
                 </p>
               )}
-              <CardAnswer card={card} />
+              <CardAnswer card={card} places={places?.get(card.id)} />
             </>
           ) : mode === 'flip' ? (
             <button type="button" onClick={() => setRevealed(true)}

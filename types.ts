@@ -69,6 +69,16 @@ export interface Collocation {
   meaning?: string; // Persian meaning of the whole expression
 }
 
+// Who filled in a card: an AI (with provider and model), the free
+// dictionaries, the user by hand, or a CSV import. Cards made before this was
+// recorded have no origin.
+export interface CardOrigin {
+  by: 'ai' | 'dictionary' | 'manual' | 'import';
+  provider?: string; // "Gemini", "Groq", "OpenRouter"…
+  model?: string;
+  at?: string; // ISO
+}
+
 export interface Flashcard {
   id: string;
   deckId: string;
@@ -84,6 +94,7 @@ export interface Flashcard {
   collocations?: Collocation[];
   grammarPattern?: string; // Grammar cards: the structure, e.g. "had + past participle"
   practicePrompt?: string; // Grammar cards: a sentence-building exercise
+  origin?: CardOrigin;
   isDeleted?: boolean;
   createdAt: string; // ISO string
   updatedAt?: string; // ISO string for timestamp-based sync
@@ -120,7 +131,60 @@ export interface Settings {
     updatedAt?: string; // when settings last changed; the newest wins across devices
 }
 
-// A long text the user reads section by section (the "path").
+// A book, an article or a pasted text in the library. Its words go to one
+// deck (by id, so renaming the deck keeps the link).
+export type SourceKind = 'book' | 'article' | 'text';
+
+export interface Source {
+  id: string;
+  kind: SourceKind;
+  title: string;
+  author?: string;
+  url?: string; // where an article came from
+  deckId: string;
+  position?: { chapterId: string; chunk: number }; // where reading stopped
+  createdAt: string;
+  updatedAt: string;
+  isDeleted?: boolean;
+}
+
+// A chapter of a source. Its text lives apart (ChapterText): it never changes,
+// so it is uploaded once instead of travelling with every sync.
+export interface Chapter {
+  id: string;
+  sourceId: string;
+  order: number; // 1, 2, 3… within the source
+  title: string;
+  chunkCount: number; // sections of at most 300 words
+  wordCount: number;
+  completed: number[]; // indexes of finished sections
+  createdAt: string;
+  updatedAt: string;
+  isDeleted?: boolean;
+}
+
+export interface ChapterText {
+  id: string; // the chapter's id
+  sourceId: string;
+  chunks: string[];
+  uploaded?: boolean; // this device: the server has a copy
+}
+
+// Where a card's term was met: one row per card and chapter.
+export interface Occurrence {
+  id: string; // `${cardId}@${chapterId}`
+  cardId: string;
+  sourceId: string;
+  chapterId: string;
+  chunk: number; // section index within the chapter
+  sentence?: string;
+  createdAt: string;
+  updatedAt: string;
+  isDeleted?: boolean;
+}
+
+// Before the library: a long text read section by section. Kept only to move
+// old texts into the library.
 export interface TextDoc {
   id: string;
   title: string;
@@ -146,6 +210,7 @@ export interface ExtractedWordCard {
   grammarPattern?: string;
   practicePrompt?: string;
   audioSrc?: string;
+  origin?: CardOrigin;
   selected?: boolean;
   alreadyInDeck?: boolean; // A card with the same term already exists
 }

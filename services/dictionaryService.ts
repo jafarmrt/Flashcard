@@ -127,6 +127,8 @@ export const fetchFromMerriamWebster = async (word: string): Promise<DictionaryR
 
 // --- Audio Fetcher ---
 export const fetchAudioData = async (url: string): Promise<string> => {
+  // Sound already kept in the card (recorded, or saved earlier) plays as it is.
+  if (/^(data|blob):/i.test(url)) return url;
   const response = await fetch('/api/proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

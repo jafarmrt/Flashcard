@@ -5,6 +5,7 @@
 
 import { ExtractedWordCard } from '../types';
 import { callProxy } from './apiService';
+import { dictionaryOrigin } from './aiSettings';
 import { candidatePhrasalVerbs, candidateWords, pickHardWords } from './freeCandidates';
 
 export interface FreeEnrichment {
@@ -53,6 +54,7 @@ export const enrichmentToCard = (term: string, sentence: string | undefined, e: 
   collocations: e.collocations,
   audioSrc: e.audioUrl,
   selected: true,
+  origin: dictionaryOrigin(),
 });
 
 const MAX_PHRASAL_CHECKED = 10;

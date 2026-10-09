@@ -11,8 +11,14 @@ export class ProxyError extends Error {
   }
 }
 
+export type ProxyAction =
+  | 'auth-register' | 'auth-login' | 'auth-session' | 'auth-logout'
+  | 'sync' | 'chapter-put' | 'chapter-get' | 'fetch-page'
+  | 'ping' | 'ping-free-dict' | 'ping-mw' | 'gemini-generate' | 'test-ai-key'
+  | 'dictionary-free' | 'dictionary-mw' | 'fetch-audio' | 'word-frequencies' | 'free-enrich' | 'free-translate';
+
 // A helper function to call our secure proxy
-export const callProxy = async (action: 'auth-register' | 'auth-login' | 'auth-session' | 'auth-logout' | 'sync-load' | 'sync-merge' | 'ping' | 'ping-free-dict' | 'ping-mw' | 'gemini-generate' | 'test-ai-key' | 'dictionary-free' | 'dictionary-mw' | 'fetch-audio' | 'word-frequencies' | 'free-enrich' | 'free-translate', payload: object) => {
+export const callProxy = async (action: ProxyAction, payload: object) => {
     const response = await fetch('/api/proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

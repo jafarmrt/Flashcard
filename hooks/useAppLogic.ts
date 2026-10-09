@@ -1,18 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile, UserAchievement, ExtractedWordCard, StudyLog, TextDoc } from '../types';
+import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile, UserAchievement, ExtractedWordCard, StudyLog, Source, Chapter, ChapterText, Occurrence } from '../types';
 import { db } from '../services/localDBService';
 import { calculateLevel, calculateStreak, checkAndAwardAchievements } from '../services/gamificationService';
 import { generateNewDailyGoals, updateGoalProgress, reviewGoalId } from '../services/dailyGoalsService';
 import { availableFreezes, dayString, daysToFreeze, MAX_HELD_FREEZES } from '../services/streakService';
 import { CHUNK_COMPLETE_XP, DEFAULT_DAILY_REVIEW_GOAL, isChestSection } from '../services/xpRules';
-import { completeChunk, createTextDoc } from '../services/textLibrary';
+import { buildSource, cardIndex, cardsInText, chaptersOf, findCard, markChunkDone, migrateTexts, newOccurrence, SourceInput } from '../services/library';
+import { normalizeTerm } from '../services/vocabMerge';
 import { ALL_ACHIEVEMENTS } from '../services/achievements';
 import { aiRequestOptions } from '../services/aiSettings';
 import { AUTH_REQUIRED_EVENT, callProxy } from '../services/apiService';
 import { applicableRows, cardStamp, deckStamp, newStudyLogs, profileStamp, stampMap, syncFingerprint } from '../services/syncState';
+import {
+  confirmReceived, confirmSent, freshSyncState, isEmptyOutgoing, LocalData, markAllSynced, nextLogCursor, nextOutgoing,
+  SyncState, SYNC_TABLES, SyncTable, usableSyncState, withLocalAudio,
+} from '../services/syncClient';
 import { isDue, isNewCard } from '../services/srsService';
 import { applyIncomingSettings, toSyncedSettings } from '../services/settingsSync';
-import { convertToCSV, parseCollocations, parseCSV, parseKind, splitList } from '../services/csvService';
+import { convertToCSV, downloadCSV, parseCollocations, parseCSV, parseKind, splitList } from '../services/csvService';
 import { freeEnrich, FreeEnrichment } from '../services/freeExtractionService';
 import { 
   generatePersianDetails,
@@ -24,6 +29,7 @@ import {
   DictionaryResult
 } from '../services/dictionaryService';
 import { AutoFixStats } from '../components/AutoFixReportModal';
+import { fa } from '../components/common/ui';
 
 // Types used within the hook and exported for the App component
 export type View = 'TODAY' | 'ME' | 'TEXTS' | 'READER' | 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS' | 'PROFILE' | 'AI_EXTRACT';
@@ -70,6 +76,35 @@ const defaultSettings: Settings = {
     dailyReviewGoal: DEFAULT_DAILY_REVIEW_GOAL,
 };
 
+// A new card from an extracted or looked-up term.
+const cardFromExtracted = (cardData: ExtractedWordCard, deckId: string, now: Date): Flashcard => {
+  const at = now.toISOString();
+  return {
+    id: crypto.randomUUID(),
+    deckId,
+    front: cardData.front,
+    back: cardData.back,
+    pronunciation: cardData.pronunciation || '',
+    partOfSpeech: cardData.partOfSpeech || '',
+    definition: cardData.definition || [],
+    exampleSentenceTarget: cardData.exampleSentenceTarget || [],
+    notes: cardData.notes || '',
+    kind: cardData.kind,
+    sourceSentence: cardData.sourceSentence,
+    collocations: cardData.collocations || [],
+    grammarPattern: cardData.grammarPattern,
+    practicePrompt: cardData.practicePrompt,
+    audioSrc: cardData.audioSrc,
+    ...(cardData.origin ? { origin: cardData.origin } : {}),
+    repetition: 0,
+    easinessFactor: 2.5,
+    interval: 0,
+    createdAt: at,
+    updatedAt: at,
+    dueDate: at,
+  };
+};
+
 export const useAppLogic = () => {
   // App State
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
@@ -95,9 +130,12 @@ export const useAppLogic = () => {
   const [studyMode, setStudyMode] = useState<StudyMode>('flip');
   const [studyLogs, setStudyLogs] = useState<StudyLog[]>([]);
 
-  // Reading path State
-  const [texts, setTexts] = useState<TextDoc[]>([]);
-  const [activeTextId, setActiveTextId] = useState<string | null>(null);
+  // Library State
+  const [sources, setSources] = useState<Source[]>([]);
+  const [chapters, setChapters] = useState<Chapter[]>([]);
+  const [occurrences, setOccurrences] = useState<Occurrence[]>([]);
+  const [activeSourceId, setActiveSourceId] = useState<string | null>(null);
+  const [activeChapterId, setActiveChapterId] = useState<string | null>(null);
   const [activeChunk, setActiveChunk] = useState(0);
   
   // Auto-Fix State
@@ -169,12 +207,45 @@ export const useAppLogic = () => {
     return profile;
   };
 
+  // Texts from before the library become one-chapter sources, once. Rows the
+  // account already sent (the server moves the same texts the same way) are
+  // left as they are; the old texts stay in their table as a backup.
+  const migrateOldTexts = async () => {
+    if (await db.meta.get('textsMigrated')) return;
+    await (db as any).transaction('rw', [db.texts, db.decks, db.flashcards, db.sources, db.chapters, db.chapterTexts, db.occurrences, db.meta], async () => {
+      if (await db.meta.get('textsMigrated')) return;
+      const texts = await db.texts.toArray();
+      if (texts.length > 0) {
+        const moved = migrateTexts(texts, await db.decks.toArray(), await db.flashcards.toArray());
+        const addMissing = async <T extends { id: string }>(table: any, rows: T[]) => {
+          const have = new Set(((await table.bulkGet(rows.map(r => r.id))) as (T | undefined)[]).filter(Boolean).map(r => r!.id));
+          const fresh = rows.filter(r => !have.has(r.id));
+          if (fresh.length) await table.bulkPut(fresh);
+        };
+        await addMissing(db.sources, moved.sources);
+        await addMissing(db.chapters, moved.chapters);
+        await addMissing(db.chapterTexts, moved.chapterTexts.map(t => ({ ...t, uploaded: false })));
+        await addMissing(db.occurrences, moved.occurrences);
+      }
+      await db.meta.put({ key: 'textsMigrated', value: new Date().toISOString() });
+    });
+  };
+
   const fetchData = async () => {
+    try {
+      await migrateOldTexts();
+    } catch (error) {
+      console.error('Moving old texts into the library failed:', error);
+    }
     const allCards = await db.flashcards.toArray();
     const allDecks = await db.decks.toArray();
     const allAchievements = await db.userAchievements.toArray();
-    const allTexts = await db.texts.toArray();
-    setTexts(allTexts);
+    const allSources = await db.sources.toArray();
+    const allChapters = await db.chapters.toArray();
+    const allOccurrences = await db.occurrences.toArray();
+    setSources(allSources);
+    setChapters(allChapters);
+    setOccurrences(allOccurrences);
     setFlashcards(allCards);
     setDecks(allDecks);
     setEarnedAchievements(allAchievements);
@@ -209,7 +280,10 @@ export const useAppLogic = () => {
     }
     setUserProfile(profile);
     
-    return { cards: allCards, decks: allDecks, texts: allTexts, logs: allLogs, profile, achievements: allAchievements };
+    return {
+      cards: allCards, decks: allDecks, sources: allSources, chapters: allChapters, occurrences: allOccurrences,
+      logs: allLogs, profile, achievements: allAchievements,
+    };
   };
   
   // Reads everything from the database: React state can be a step behind
@@ -332,69 +406,114 @@ export const useAppLogic = () => {
   // knows nothing changed since.
   const rememberSynced = (fresh: Awaited<ReturnType<typeof fetchData>>) => {
     lastSyncedFingerprint.current = syncFingerprint({
-      cards: fresh.cards, decks: fresh.decks, texts: fresh.texts, profile: fresh.profile,
-      achievements: fresh.achievements, settingsUpdatedAt: readSavedSettings().updatedAt,
+      cards: fresh.cards, decks: fresh.decks, sources: fresh.sources, chapters: fresh.chapters, occurrences: fresh.occurrences,
+      profile: fresh.profile, achievements: fresh.achievements, settingsUpdatedAt: readSavedSettings().updatedAt,
     });
   };
 
-  // Send everything in this browser to the account and take back the merged
-  // result. Nothing local is dropped: the server merges, it never replaces.
-  // Rows edited here while the request was in flight keep their local version
-  // and go out with the next sync.
-  const mergeWithCloud = async () => {
+  const readLocal = async (): Promise<LocalData> => ({
+    decks: await db.decks.toArray(),
+    cards: await db.flashcards.toArray(),
+    sources: await db.sources.toArray(),
+    chapters: await db.chapters.toArray(),
+    occurrences: await db.occurrences.toArray(),
+    logs: await db.studyHistory.toArray(),
+    profile: await db.userProfile.get(1),
+    achievements: await db.userAchievements.toArray(),
+    settings: toSyncedSettings(readSavedSettings()),
+  });
+
+  const SYNC_DB_TABLES: Record<SyncTable, any> = {
+    decks: db.decks, cards: db.flashcards, sources: db.sources, chapters: db.chapters, occurrences: db.occurrences,
+  };
+  const stampOf = (table: SyncTable) => (table === 'decks' ? deckStamp : cardStamp) as (row: any) => string;
+
+  // Chapter texts are uploaded once, apart from the sync, a few per sync.
+  // A chapter the server refuses stays here and is tried again next time.
+  const uploadChapterTexts = async () => {
+    const pending = (await db.chapterTexts.toArray()).filter(t => !t.uploaded);
+    if (pending.length === 0) return;
+    const live = new Set((await db.chapters.toArray()).filter(c => !c.isDeleted).map(c => c.id));
+    for (const text of pending.filter(t => live.has(t.id)).slice(0, 20)) {
+      try {
+        await callProxy('chapter-put', { id: text.id, sourceId: text.sourceId, chunks: text.chunks });
+        await db.chapterTexts.update(text.id, { uploaded: true });
+      } catch (error) {
+        if (isNetworkError(error)) throw error;
+        console.warn(`Uploading chapter ${text.id} failed:`, error);
+      }
+    }
+  };
+
+  // Send what changed here since the last sync and take what changed on
+  // other devices, in rounds: each request carries a few hundred rows at
+  // most, and a first download comes in pages. Rows edited here while a
+  // request was out keep their local version and go with the next round.
+  // `pullOnly` (a device signing in for the first time) takes the account as
+  // it is.
+  const mergeWithCloud = async (options: { pullOnly?: boolean } = {}) => {
+    const user = signedInUser.current;
+    if (!user) return;
     if (syncInFlight.current) { syncAgain.current = true; return; }
     syncInFlight.current = true;
     setSyncStatus('syncing');
     try {
-        const allCards = await db.flashcards.toArray();
-        const allDecks = await db.decks.toArray();
-        const allStudyHistory = await db.studyHistory.toArray();
-        const profile = await db.userProfile.get(1);
-        const allAchievements = await db.userAchievements.toArray();
-        const allTexts = await db.texts.toArray();
-        const sent = {
-            cards: stampMap(allCards, cardStamp),
-            decks: stampMap(allDecks, deckStamp),
-            texts: stampMap(allTexts, cardStamp),
-            profile: profileStamp(profile),
-        };
+        let state: SyncState = usableSyncState((await db.meta.get('sync'))?.value, user);
+        if (options.pullOnly) state = markAllSynced(freshSyncState(user), await readLocal());
+        await uploadChapterTexts();
 
-        const localData = {
-            texts: allTexts,
-            decks: allDecks,
-            cards: allCards,
-            studyHistory: allStudyHistory,
-            userProfile: profile,
-            userAchievements: allAchievements,
-            settings: toSyncedSettings(readSavedSettings()),
-        };
+        let needPull = true;
+        for (let round = 0; round < 40; round++) {
+            const local = await readLocal();
+            const out = nextOutgoing(local, state);
+            if (isEmptyOutgoing(out) && !needPull) break;
+            const before = Object.fromEntries(SYNC_TABLES.map(t => [t, stampMap(local[t] as any[], stampOf(t))])) as Record<SyncTable, Map<string, string>>;
+            const profileBefore = profileStamp(local.profile);
 
-        const response = await callProxy('sync-merge', { data: localData });
-        
-        const { data: mergedData } = response;
-        let skipped = 0;
-        if (mergedData) {
-            await (db as any).transaction('rw', [db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements, db.texts], async () => {
-                const decks = applicableRows<Deck>(mergedData.decks, sent.decks, stampMap(await db.decks.toArray(), deckStamp));
-                const cards = applicableRows<Flashcard>(mergedData.cards, sent.cards, stampMap(await db.flashcards.toArray(), cardStamp));
-                const textRows = applicableRows<TextDoc>(mergedData.texts, sent.texts, stampMap(await db.texts.toArray(), cardStamp));
-                skipped = decks.skipped + cards.skipped + textRows.skipped;
-                if (decks.rows.length) await db.decks.bulkPut(decks.rows);
-                if (cards.rows.length) await db.flashcards.bulkPut(cards.rows);
-                if (textRows.rows.length) await db.texts.bulkPut(textRows.rows);
-                const logs = newStudyLogs(await db.studyHistory.toArray(), mergedData.studyHistory);
-                if (logs.length) await db.studyHistory.bulkAdd(logs);
-                if (mergedData.userProfile) {
-                    if (profileStamp(await db.userProfile.get(1)) === sent.profile) await db.userProfile.put(mergedData.userProfile);
-                    else skipped++;
+            const response = await callProxy('sync', { since: state.rev, storeId: state.storeId, changes: out.changes });
+            const changes = response.changes || {};
+            state = response.reset ? { ...freshSyncState(user), storeId: response.storeId } : confirmSent(state, out);
+
+            let maxBefore = 0;
+            let maxAfter = 0;
+            await (db as any).transaction('rw', [db.decks, db.flashcards, db.sources, db.chapters, db.occurrences, db.studyHistory, db.userProfile, db.userAchievements], async () => {
+                for (const table of SYNC_TABLES) {
+                    const incoming = changes[table];
+                    if (!Array.isArray(incoming) || incoming.length === 0) continue;
+                    const current = await SYNC_DB_TABLES[table].toArray();
+                    let { rows } = applicableRows<any>(incoming, before[table], stampMap(current, stampOf(table)));
+                    if (table === 'cards') {
+                        const byId = new Map<string, Flashcard>(current.map((c: Flashcard) => [c.id, c]));
+                        rows = rows.map((c: Flashcard) => withLocalAudio(c, byId.get(c.id)));
+                    }
+                    if (rows.length) await SYNC_DB_TABLES[table].bulkPut(rows);
+                    state = confirmReceived(state, table, rows);
                 }
-                if (mergedData.userAchievements) await db.userAchievements.bulkPut(mergedData.userAchievements);
+                const logs = await db.studyHistory.toArray();
+                maxBefore = logs.reduce((m, l) => Math.max(m, l.id || 0), 0);
+                const newLogs = newStudyLogs(logs, changes.studyHistory);
+                if (newLogs.length) await db.studyHistory.bulkAdd(newLogs);
+                maxAfter = newLogs.length ? (await db.studyHistory.toArray()).reduce((m, l) => Math.max(m, l.id || 0), 0) : maxBefore;
+                if (changes.userProfile && profileStamp(await db.userProfile.get(1)) === profileBefore) {
+                    await db.userProfile.put(changes.userProfile);
+                    state = { ...state, profile: profileStamp(changes.userProfile) };
+                }
+                if (Array.isArray(changes.userAchievements) && changes.userAchievements.length) await db.userAchievements.bulkPut(changes.userAchievements);
             });
-            adoptCloudSettings(mergedData.settings);
-            const fresh = await fetchData();
-            if (skipped === 0) rememberSynced(fresh);
-            else lastSyncedFingerprint.current = null; // local edits still to send
+            if (changes.settings) {
+                adoptCloudSettings(changes.settings);
+                if (readSavedSettings().updatedAt === changes.settings.updatedAt) state = { ...state, settings: changes.settings.updatedAt };
+            }
+            state = {
+                ...state,
+                rev: response.rev,
+                storeId: response.storeId,
+                logCursor: response.reset ? 0 : nextLogCursor(state, out, maxBefore, maxAfter),
+            };
+            await db.meta.put({ key: 'sync', value: state });
+            needPull = !!response.more || !!response.reset;
         }
+        rememberSynced(await fetchData());
         lastSyncAt.current = Date.now();
         setSyncStatus('synced');
     } catch (error) {
@@ -407,38 +526,8 @@ export const useAppLogic = () => {
             setTimeout(() => handleSync(), 0);
         }
     }
-};
-
-  const loadDataFromCloud = async (username: string) => {
-    if (!username) return;
-    setSyncStatus('syncing');
-    try {
-      await (db as any).delete().then(() => (db as any).open());
-      
-      const response = await callProxy('sync-load', {});
-      if (response.data) {
-        const { decks, cards, studyHistory, userProfile, userAchievements, texts } = response.data;
-        await (db as any).transaction('rw', [db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements, db.texts], async () => {
-            if (texts) await db.texts.bulkPut(texts);
-            if (decks) await db.decks.bulkPut(decks);
-            if (cards) await db.flashcards.bulkPut(cards);
-            if (studyHistory) await db.studyHistory.bulkAdd(newStudyLogs([], studyHistory));
-            if (userProfile) await db.userProfile.put(userProfile);
-            if (userAchievements) await db.userAchievements.bulkPut(userAchievements);
-        });
-        adoptCloudSettings(response.data.settings);
-      }
-      rememberSynced(await fetchData());
-      lastSyncAt.current = Date.now();
-      setSyncStatus('synced');
-      showToast('Profile loaded successfully!');
-    } catch (error) {
-      console.error("Failed to load from cloud", error);
-      showToast('Failed to load profile. Please try again.');
-      setSyncStatus('error');
-    }
   };
-  
+
   useEffect(() => {
     // The server knows who is signed in from its HttpOnly session cookie.
     const checkSession = async () => {
@@ -533,13 +622,13 @@ export const useAppLogic = () => {
     }
 
     const fingerprint = syncFingerprint({
-        cards: flashcards, decks, texts, profile: userProfile, achievements: earnedAchievements, settingsUpdatedAt: settings.updatedAt,
+        cards: flashcards, decks, sources, chapters, occurrences, profile: userProfile, achievements: earnedAchievements, settingsUpdatedAt: settings.updatedAt,
     });
     if (fingerprint === lastSyncedFingerprint.current) return;
 
     const handler = setTimeout(() => handleSync(), 2000);
     return () => clearTimeout(handler);
-  }, [flashcards, decks, userProfile, earnedAchievements, texts, isLoggedIn, autoFixProgress, settings.updatedAt]); // Added autoFixProgress dependency
+  }, [flashcards, decks, userProfile, earnedAchievements, sources, chapters, occurrences, isLoggedIn, autoFixProgress, settings.updatedAt]);
 
 
   const updateSettings = (changes: Partial<Settings>) => {
@@ -606,6 +695,7 @@ export const useAppLogic = () => {
       const now = new Date().toISOString();
       const newCard: Flashcard = {
         ...cardData,
+        origin: { by: 'manual', at: now },
         id: crypto.randomUUID(),
         deckId: deck!.id,
         repetition: 0,
@@ -691,30 +781,8 @@ export const useAppLogic = () => {
       deck = newDeck;
     }
 
-    const now = new Date().toISOString();
-    const newCards: Flashcard[] = cardsToSave.map((cardData) => ({
-      id: crypto.randomUUID(),
-      deckId: deck!.id,
-      front: cardData.front,
-      back: cardData.back,
-      pronunciation: cardData.pronunciation || '',
-      partOfSpeech: cardData.partOfSpeech || '',
-      definition: cardData.definition || [],
-      exampleSentenceTarget: cardData.exampleSentenceTarget || [],
-      notes: cardData.notes || '',
-      kind: cardData.kind,
-      sourceSentence: cardData.sourceSentence,
-      collocations: cardData.collocations || [],
-      grammarPattern: cardData.grammarPattern,
-      practicePrompt: cardData.practicePrompt,
-      audioSrc: cardData.audioSrc,
-      repetition: 0,
-      easinessFactor: 2.5,
-      interval: 0,
-      createdAt: now,
-      updatedAt: now,
-      dueDate: now,
-    }));
+    const now = new Date();
+    const newCards: Flashcard[] = cardsToSave.map(cardData => cardFromExtracted(cardData, deck!.id, now));
 
     if (newCards.length > 0) {
       await db.flashcards.bulkAdd(newCards);
@@ -751,26 +819,14 @@ export const useAppLogic = () => {
 
   const handleExportCSV = () => {
     try {
-      const date = new Date().toISOString().split('T')[0];
-      const a = document.createElement('a');
-      document.body.appendChild(a);
-      a.style.display = 'none';
-      
       const cardsToExport = flashcards.filter(c => !c.isDeleted);
-
       if (cardsToExport.length === 0) {
         showToast('No cards to export.');
         return;
       }
-      const csvData = convertToCSV(cardsToExport, decks);
-      const blob = new Blob([`\uFEFF${csvData}`], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      a.href = url;
-      a.download = `lingua-cards-export-${date}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const date = new Date().toISOString().split('T')[0];
+      downloadCSV(`lingua-cards-export-${date}.csv`, convertToCSV(cardsToExport, decks));
       showToast('All cards exported as CSV!');
-      document.body.removeChild(a);
     } catch (error) {
         console.error('Export failed:', error);
         showToast('Export failed.');
@@ -832,6 +888,7 @@ export const useAppLogic = () => {
                 collocations: parseCollocations(row.collocations),
                 grammarPattern: row.grammarPattern || undefined,
                 practicePrompt: row.practicePrompt || undefined,
+                origin: { by: 'import', at: now },
                 repetition: 0,
                 easinessFactor: 2.5,
                 interval: 0,
@@ -937,52 +994,103 @@ export const useAppLogic = () => {
     setIsStudySetupModalOpen(true);
   };
 
-  // --- Reading path ---
+  // --- Library ---
 
-  const saveText = async (doc: TextDoc) => {
-    await db.texts.put(doc);
-    setTexts(prev => [...prev.filter(t => t.id !== doc.id), doc]);
+  // The deck named `name`, made when there is none.
+  const deckNamed = async (name: string): Promise<Deck> => {
+    const wanted = name.trim() || 'Reading';
+    const found = (await db.decks.toArray()).find(d => !d.isDeleted && d.name.trim().toLowerCase() === wanted.toLowerCase());
+    if (found) return found;
+    const deck: Deck = { id: crypto.randomUUID(), name: wanted, updatedAt: new Date().toISOString() };
+    await db.decks.add(deck);
+    return deck;
   };
 
-  const handleCreateText = async (title: string, text: string) => {
-    const doc = createTextDoc(title, text);
-    if (doc.chunks.length === 0) {
+  // A book, article or text into the library; its words go to the deck of
+  // its title.
+  const handleAddSource = async (input: Omit<SourceInput, 'deckId'>): Promise<boolean> => {
+    const built = buildSource({ ...input, deckId: '' });
+    if (built.chapters.length === 0) {
       showToast('متن خالی است.');
-      return;
+      return false;
     }
-    await saveText(doc);
-    setActiveTextId(doc.id);
+    const deck = await deckNamed(built.source.title);
+    const source = { ...built.source, deckId: deck.id };
+    await (db as any).transaction('rw', [db.sources, db.chapters, db.chapterTexts], async () => {
+      await db.sources.put(source);
+      await db.chapters.bulkPut(built.chapters);
+      await db.chapterTexts.bulkPut(built.texts.map(t => ({ ...t, uploaded: false })));
+    });
+    await fetchData();
+    setActiveSourceId(source.id);
+    setActiveChapterId(built.chapters.length === 1 ? built.chapters[0].id : null);
+    setView('TEXTS');
+    return true;
+  };
+
+  const handleOpenSource = (sourceId: string | null) => {
+    setActiveSourceId(sourceId);
+    const list = sourceId ? chaptersOf(sourceId, chapters) : [];
+    setActiveChapterId(list.length === 1 ? list[0].id : null);
     setView('TEXTS');
   };
 
-  const handleOpenText = (textId: string | null) => {
-    setActiveTextId(textId);
+  const handleOpenChapter = (chapterId: string | null) => {
+    setActiveChapterId(chapterId);
     setView('TEXTS');
   };
 
-  const handleOpenChunk = (textId: string, index: number) => {
-    setActiveTextId(textId);
+  // Opening a section remembers it as the place to continue from, on every device.
+  const handleOpenChunk = async (chapter: Chapter, index: number) => {
+    setActiveSourceId(chapter.sourceId);
+    setActiveChapterId(chapter.id);
     setActiveChunk(index);
     setView('READER');
+    const source = await db.sources.get(chapter.sourceId);
+    if (source && (source.position?.chapterId !== chapter.id || source.position?.chunk !== index)) {
+      const updated: Source = { ...source, position: { chapterId: chapter.id, chunk: index }, updatedAt: new Date().toISOString() };
+      await db.sources.put(updated);
+      setSources(prev => prev.map(s => (s.id === updated.id ? updated : s)));
+    }
   };
 
-  const handleDeleteText = async (textId: string) => {
-    const doc = texts.find(t => t.id === textId);
-    if (!doc) return;
-    await saveText({ ...doc, isDeleted: true, updatedAt: new Date().toISOString() });
-    setActiveTextId(null);
+  // The source and its chapters leave the library; cards made from it stay.
+  const handleDeleteSource = async (sourceId: string) => {
+    const now = new Date().toISOString();
+    await (db as any).transaction('rw', [db.sources, db.chapters, db.chapterTexts], async () => {
+      await db.sources.update(sourceId, { isDeleted: true, updatedAt: now });
+      const list = await db.chapters.where('sourceId').equals(sourceId).toArray();
+      if (list.length) await db.chapters.bulkPut(list.map(c => ({ ...c, isDeleted: true, updatedAt: now })));
+      await db.chapterTexts.where('sourceId').equals(sourceId).delete();
+    });
+    await fetchData();
+    setActiveSourceId(null);
+    setActiveChapterId(null);
   };
 
-  const handleCompleteChunk = async (textId: string, index: number) => {
-    const doc = texts.find(t => t.id === textId);
-    if (!doc) return;
-    const { doc: updated, firstTime } = completeChunk(doc, index);
+  // Finishing a section also notes the cards met in it again: a card with no
+  // place in this book yet gets this sentence, so it shows in how many books
+  // the word was seen.
+  const handleCompleteChunk = async (chapterId: string, index: number) => {
+    const chapter = await db.chapters.get(chapterId);
+    if (!chapter) return;
+    const { chapter: updated, firstTime } = markChunkDone(chapter, index);
     if (!firstTime) {
       setView('TEXTS');
       return;
     }
-    await saveText(updated);
-    await awardXP(CHUNK_COMPLETE_XP, `بخش ${index + 1} تمام شد. +${CHUNK_COMPLETE_XP} امتیاز`);
+    const text = (await db.chapterTexts.get(chapterId))?.chunks[index] || '';
+    const placed = new Set((await db.occurrences.where('sourceId').equals(chapter.sourceId).toArray()).filter(o => !o.isDeleted).map(o => o.cardId));
+    const now = new Date();
+    const seenAgain = cardsInText(text, (await db.flashcards.toArray()).filter(c => !placed.has(c.id)))
+      .map(({ card, sentence }) => newOccurrence(card, chapter, index, sentence, now));
+    await (db as any).transaction('rw', [db.chapters, db.occurrences], async () => {
+      await db.chapters.put(updated);
+      if (seenAgain.length) await db.occurrences.bulkPut(seenAgain);
+    });
+    setChapters(prev => prev.map(c => (c.id === updated.id ? updated : c)));
+    if (seenAgain.length) setOccurrences(prev => [...prev.filter(o => !seenAgain.some(s => s.id === o.id)), ...seenAgain]);
+    await awardXP(CHUNK_COMPLETE_XP, `بخش ${fa(index + 1)} تمام شد. +${fa(CHUNK_COMPLETE_XP)} امتیاز${seenAgain.length ? `؛ ${fa(seenAgain.length)} واژهٔ کارت‌دار در این بخش دوباره دیده شد` : ''}`);
     if (isChestSection(index)) {
       const result = await updateProfile(p => (availableFreezes(p.streakFreezesEarned, p.frozenDates) < MAX_HELD_FREEZES
         ? { ...p, streakFreezesEarned: (p.streakFreezesEarned || 0) + 1 }
@@ -994,12 +1102,70 @@ export const useAppLogic = () => {
     setView('TEXTS');
   };
 
+  // A chapter's text: from this browser, or from the server the first time
+  // the chapter is opened on this device.
+  const loadChapterText = async (chapterId: string): Promise<ChapterText> => {
+    const local = await db.chapterTexts.get(chapterId);
+    if (local) return local;
+    const remote = await callProxy('chapter-get', { id: chapterId });
+    const text: ChapterText = { id: remote.id, sourceId: remote.sourceId, chunks: remote.chunks, uploaded: true };
+    await db.chapterTexts.put(text);
+    return text;
+  };
+
+  // Cards picked while reading. A term that already has a card, in any deck
+  // and in any form ("decided" for "decide"), gets this place added to it
+  // instead of a second card.
+  const handleSaveReaderCards = async (items: ExtractedWordCard[], chapterId: string, chunk: number) => {
+    const chapter = await db.chapters.get(chapterId);
+    let source = chapter ? await db.sources.get(chapter.sourceId) : undefined;
+    if (!chapter || !source) throw new Error('This chapter is no longer in the library.');
+    let deck = source.deckId ? await db.decks.get(source.deckId) : undefined;
+    if (!deck || deck.isDeleted) {
+      deck = await deckNamed(source.title);
+      source = { ...source, deckId: deck.id, updatedAt: new Date().toISOString() };
+      await db.sources.put(source);
+    }
+    const now = new Date();
+    const index = cardIndex(await db.flashcards.toArray());
+    const newCards: Flashcard[] = [];
+    const places: Occurrence[] = [];
+    let attached = 0;
+    for (const item of items) {
+      const existing = findCard(item.front, index);
+      const card = existing || cardFromExtracted(item, deck.id, now);
+      if (existing) attached++;
+      else {
+        newCards.push(card);
+        index.set(normalizeTerm(card.front), card);
+      }
+      places.push(newOccurrence(card, chapter, chunk, item.sourceSentence, now));
+    }
+    const have = new Set(((await db.occurrences.bulkGet(places.map(p => p.id))) as (Occurrence | undefined)[]).filter(Boolean).map(o => o!.id));
+    await (db as any).transaction('rw', [db.flashcards, db.occurrences], async () => {
+      if (newCards.length) await db.flashcards.bulkAdd(newCards);
+      const fresh = places.filter(p => !have.has(p.id));
+      if (fresh.length) await db.occurrences.bulkPut(fresh);
+    });
+    await fetchData();
+    handleCheckAchievements();
+    const parts = [];
+    if (newCards.length) parts.push(`${fa(newCards.length)} کارت تازه در «${deck.name}»`);
+    if (attached) parts.push(`${fa(attached)} واژه که کارت داشت، این جمله را هم گرفت`);
+    showToast(parts.join('؛ ') || 'چیزی برای ذخیره نبود.');
+  };
+
   const handleNavigate = (newView: View) => {
     if (newView === 'STUDY') {
         setStudyDeckId(null);
         setIsStudySetupModalOpen(true);
     } else if (newView === 'LIST' && view !== 'LIST') {
         setView('DECKS');
+    } else if (newView === 'TEXTS') {
+        // The library tab opens the shelf.
+        setActiveSourceId(null);
+        setActiveChapterId(null);
+        setView('TEXTS');
     } else {
         setView(newView);
     }
@@ -1039,7 +1205,7 @@ export const useAppLogic = () => {
 
   // Cards made before signing in (or with an older version that kept them
   // only in this browser) must survive signing in.
-  const hasLocalData = async () => (await db.flashcards.count()) + (await db.texts.count()) > 0;
+  const hasLocalData = async () => (await db.flashcards.count()) + (await db.sources.count()) + (await db.texts.count()) > 0;
 
   const handleLogin = async (username: string, password: string) => {
       setAuthLoading(true);
@@ -1047,8 +1213,7 @@ export const useAppLogic = () => {
           const res = await callProxy('auth-login', { username, password });
           const user = { username: res.username || username };
           signIn(user.username);
-          if (await hasLocalData()) await mergeWithCloud();
-          else await loadDataFromCloud(user.username);
+          await mergeWithCloud({ pullOnly: !(await hasLocalData()) });
           setIsLoggedIn(true);
           showToast(`Welcome back, ${username}!`);
       } catch(e) {
@@ -1230,7 +1395,8 @@ export const useAppLogic = () => {
   return {
       // State
       flashcards, decks, view, editingCard, toastMessage, isLoggedIn, currentUser, authLoading, appLoading,
-      syncStatus, studyDeckId, studyCards, studySessionId, isStudySetupModalOpen, studyMode, studyLogs, texts, activeTextId, activeChunk, dbStatus, apiStatus,
+      syncStatus, studyDeckId, studyCards, studySessionId, isStudySetupModalOpen, studyMode, studyLogs, dbStatus, apiStatus,
+      sources, chapters, occurrences, activeSourceId, activeChapterId, activeChunk,
       freeDictApiStatus, mwDictApiStatus, settings, userProfile, streak, earnedAchievements,
       previousViewRef, autoFixProgress, autoFixReport,
       // Handlers
@@ -1240,7 +1406,7 @@ export const useAppLogic = () => {
       handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
       updateSettings, handleCheckAchievements, handleGoalUpdate, handleCompleteCardDetails,
       handleAutoFixCards, handleStopAutoFix, handleCloseAutoFixReport, handleSaveExtractedCards,
-      startQuickReview, openStudySetup, setStudyMode, handleCreateText, handleOpenText, handleOpenChunk,
-      handleDeleteText, handleCompleteChunk
+      startQuickReview, openStudySetup, setStudyMode, handleAddSource, handleOpenSource, handleOpenChapter, handleOpenChunk,
+      handleDeleteSource, handleCompleteChunk, loadChapterText, handleSaveReaderCards
   };
 };

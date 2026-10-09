@@ -6,6 +6,7 @@
 import { ExtractedWordCard } from '../types';
 import { ProxyError } from './apiService';
 import { AiRequestOptions, extractVocabularyFromText } from './geminiService';
+import { aiOrigin, dictionaryOrigin } from './aiSettings';
 import { extractWithFreeDictionaries } from './freeExtractionService';
 import { DEFAULT_CHUNK_WORDS, findSentence, splitIntoChunks } from './textChunker';
 import { existingTermsInText, markExisting, mergeExtracted, normalizeTerm } from './vocabMerge';
@@ -73,11 +74,13 @@ export const extractFromLongText = async (params: LongTextExtractionParams): Pro
     if (signal?.aborted) break;
     const exclude = existingTermsInText(section, known);
     let found: ExtractedWordCard[] = [];
+    let byAi = false;
 
     try {
       if (source === 'ai' && !aiDisabled) {
         try {
           found = await extractAi({ text: section, level, count: perSection, exclude, includeGrammar, options: aiOptions });
+          byAi = true;
         } catch (error) {
           if (signal?.aborted) break;
           console.warn('AI extraction failed for a section, using free dictionaries:', error);
@@ -97,8 +100,9 @@ export const extractFromLongText = async (params: LongTextExtractionParams): Pro
       failedSections++;
     }
 
+    const origin = byAi ? aiOrigin(aiOptions) : dictionaryOrigin();
     for (const card of found) {
-      collected.push({ ...card, sourceSentence: card.sourceSentence || findSentence(section, card.front) });
+      collected.push({ ...card, origin: card.origin || origin, sourceSentence: card.sourceSentence || findSentence(section, card.front) });
       known.add(normalizeTerm(card.front));
     }
     done++;

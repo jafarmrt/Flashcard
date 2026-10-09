@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback, memo, useEffect } from 'react';
 import { Flashcard } from '../types';
 import { AiRequestOptions, generatePersianDetails } from '../services/geminiService';
 import { fetchFromFreeDictionary, fetchFromMerriamWebster, fetchAudioData, DictionaryResult } from '../services/dictionaryService';
+import { aiOrigin } from '../services/aiSettings';
 
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted'>;
 
@@ -243,9 +244,11 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                     return;
                 }
                 updateWordState(word, draft => { draft.details.audio.status = 'loading'; });
-                const audioDataUrl = await fetchAudioData(audioUrl);
+                // The sound is checked once, and the card keeps its address
+                // (not the sound itself), so it syncs to other devices.
+                await fetchAudioData(audioUrl);
                 updateWordState(word, draft => {
-                    draft.card.audioSrc = audioDataUrl;
+                    draft.card.audioSrc = audioUrl;
                     draft.details.audio = { status: 'done' };
                 });
             }
@@ -373,7 +376,10 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
 
     const handleSave = async () => {
         setIsSaving(true);
-        const cardsToSave = processedWords.filter(pw => pw.status === 'done' && pw.card).map(pw => pw.card as FlashcardFormData);
+        const cardsToSave = processedWords.filter(pw => pw.status === 'done' && pw.card).map(pw => ({
+            ...(pw.card as FlashcardFormData),
+            origin: aiOrigin(aiOptions),
+        }));
         if (cardsToSave.length > 0) {
             await onSave(cardsToSave, deckName);
         } else {
