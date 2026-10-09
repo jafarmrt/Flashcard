@@ -128,6 +128,7 @@ export interface Settings {
     userLevel?: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2' | 'IELTS' | 'TOEFL';
     extractionSource?: 'ai' | 'free';
     dailyReviewGoal?: number; // reviews per day for the daily goal
+    preReadAuto?: boolean; // the reader shows a section's hard words before it
     updatedAt?: string; // when settings last changed; the newest wins across devices
 }
 
@@ -178,6 +179,17 @@ export interface Occurrence {
   chapterId: string;
   chunk: number; // section index within the chapter
   sentence?: string;
+  createdAt: string;
+  updatedAt: string;
+  isDeleted?: boolean;
+}
+
+// A term the user already knows: never suggested again, in any book. Ids are
+// random so a term removed from the list can be added again (a deleted row
+// stays deleted on every device).
+export interface KnownWord {
+  id: string;
+  term: string; // normalized: lower case, single spaces
   createdAt: string;
   updatedAt: string;
   isDeleted?: boolean;

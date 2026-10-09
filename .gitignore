@@ -24,3 +24,5 @@ dist-ssr
 *.sw?
 .session_secret
 .data_store.json
+.lookup_cache.json
+*.tmp

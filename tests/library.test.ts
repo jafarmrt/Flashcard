@@ -245,7 +245,7 @@ test('files are read from a ZIP archive, stored or compressed', async () => {
 // --- What a browser sends at each sync ---
 
 const local = (over: Partial<LocalData> = {}): LocalData => ({
-  decks: [], cards: [], sources: [], chapters: [], occurrences: [], logs: [], achievements: [], ...over,
+  decks: [], cards: [], sources: [], chapters: [], occurrences: [], knownWords: [], logs: [], achievements: [], ...over,
 });
 const log = (id: number): StudyLog => ({ id, cardId: 'c1', date: '2026-10-01', rating: 'GOOD' } as StudyLog);
 
@@ -280,7 +280,7 @@ test('only rows changed since the last confirmed sync are sent, in batches', () 
 
 test('the log cursor skips logs taken from the server but not a review saved meanwhile', () => {
   const state = { ...freshSyncState('ann'), logCursor: 10 };
-  const sent = { changes: {}, sent: { decks: {}, cards: {}, sources: {}, chapters: {}, occurrences: {} }, remaining: 0, lastLogId: 12 };
+  const sent = { changes: {}, sent: { decks: {}, cards: {}, sources: {}, chapters: {}, occurrences: {}, knownWords: {} }, remaining: 0, lastLogId: 12 };
   assert.equal(nextLogCursor(state, sent, 12, 20), 20, 'nothing new here: skip past the received logs');
   assert.equal(nextLogCursor(state, sent, 13, 20), 12, 'a review saved meanwhile is sent next time');
   const none = { ...sent, lastLogId: undefined };
@@ -308,4 +308,11 @@ test('a first sign-in takes the account as it is, and a week later everything is
   const due = usableSyncState(saved, 'ann', NOW.getTime() + FULL_PUSH_EVERY_MS + 1);
   assert.deepEqual([due.storeId, due.rev, Object.keys(due.stamps.decks).length], ['S', 9, 0]);
   assert.equal(usableSyncState(saved, 'bob').rev, 0, 'another account starts over');
+
+  // Saved by a version without the known-words table: take everything again
+  // once, keeping what was sent.
+  const { knownWords: _none, ...olderStamps } = saved.stamps;
+  const older = usableSyncState({ ...saved, stamps: olderStamps as typeof saved.stamps }, 'ann', NOW.getTime() + 1000);
+  assert.deepEqual([older.rev, older.storeId, older.stamps.knownWords, older.stamps.decks], [0, 'S', {}, saved.stamps.decks]);
+  assert.equal(usableSyncState(older, 'ann', NOW.getTime() + 2000), older, 'only once');
 });

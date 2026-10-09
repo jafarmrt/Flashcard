@@ -1,10 +1,18 @@
 import Dexie, { type Table } from 'dexie';
-import { Flashcard, Deck, StudyLog, UserProfile, UserAchievement, TextDoc, Source, Chapter, ChapterText, Occurrence } from '../types';
+import { Flashcard, Deck, StudyLog, UserProfile, UserAchievement, TextDoc, Source, Chapter, ChapterText, Occurrence, KnownWord } from '../types';
 
 // Small values this browser keeps for itself, such as how far it has synced.
 export interface MetaRow {
   key: string;
   value: any;
+}
+
+// A word looked up in the free dictionaries, kept so a second tap is instant
+// and works offline (services/lookupCache).
+export interface LookupRow {
+  term: string;
+  value: any;
+  until: number; // ms; asked again after this
 }
 
 export class LinguaCardsDB extends Dexie {
@@ -19,6 +27,8 @@ export class LinguaCardsDB extends Dexie {
   chapterTexts!: Table<ChapterText>;
   occurrences!: Table<Occurrence>;
   meta!: Table<MetaRow>;
+  knownWords!: Table<KnownWord>;
+  lookups!: Table<LookupRow>;
 
   constructor() {
     super('LinguaCardsDB');
@@ -180,6 +190,24 @@ export class LinguaCardsDB extends Dexie {
         chapterTexts: 'id, sourceId',
         occurrences: 'id, cardId, sourceId, chapterId',
         meta: 'key'
+    });
+
+    // Version 13: reading mode. Words the user already knows (synced), and
+    // dictionary lookups kept on this device.
+    (this as any).version(13).stores({
+        flashcards: 'id, deckId, front, back, dueDate, isDeleted, createdAt, updatedAt',
+        decks: 'id, name, isDeleted',
+        studyHistory: '++id, cardId, date',
+        userProfile: 'id, firstName, lastName, bio',
+        userAchievements: '&achievementId',
+        texts: 'id, updatedAt, isDeleted',
+        sources: 'id, updatedAt',
+        chapters: 'id, sourceId, updatedAt',
+        chapterTexts: 'id, sourceId',
+        occurrences: 'id, cardId, sourceId, chapterId',
+        meta: 'key',
+        knownWords: 'id, term, updatedAt',
+        lookups: 'term'
     });
   }
 }

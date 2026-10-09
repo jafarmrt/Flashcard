@@ -12,7 +12,7 @@ import { newerSettings } from '../services/settingsSync.js';
 import { studyLogKey } from '../services/syncState.js';
 
 export const STORE_VERSION = 2;
-export const ROW_TABLES = ['decks', 'cards', 'sources', 'chapters', 'occurrences'] as const;
+export const ROW_TABLES = ['decks', 'cards', 'sources', 'chapters', 'occurrences', 'knownWords'] as const;
 export type RowTable = (typeof ROW_TABLES)[number];
 
 type Row = { id: string; updatedAt?: string; isDeleted?: boolean; _rev?: number; [key: string]: any };
@@ -26,6 +26,7 @@ export interface StoreData {
   sources: Row[];
   chapters: Row[];
   occurrences: Row[];
+  knownWords: Row[];
   studyHistory: any[];
   userProfile: any | null;
   userAchievements: any[];
@@ -39,6 +40,7 @@ export interface SyncChanges {
   sources?: Row[];
   chapters?: Row[];
   occurrences?: Row[];
+  knownWords?: Row[];
   studyHistory?: any[];
   userProfile?: any;
   userAchievements?: any[];
@@ -56,7 +58,7 @@ const withoutLocalAudio = (card: Row): Row => {
 
 const emptyStore = (storeId: string): StoreData => ({
   version: STORE_VERSION, storeId, rev: 0,
-  decks: [], cards: [], sources: [], chapters: [], occurrences: [],
+  decks: [], cards: [], sources: [], chapters: [], occurrences: [], knownWords: [],
   studyHistory: [], userProfile: null, userAchievements: [],
 });
 
@@ -75,7 +77,11 @@ export const canonical = (value: unknown): string => JSON.stringify(value, (key,
 // their chunks out of the record, sound data is dropped, and every row gets a
 // rev of its own so the first download can come in pages.
 export const upgradeStore = (data: any, newId: () => string): { store: StoreData; chapterTexts: ChapterText[] } => {
-  if (data && data.version === STORE_VERSION) return { store: data as StoreData, chapterTexts: [] };
+  if (data && data.version === STORE_VERSION) {
+    // Tables added since the store was saved start empty.
+    for (const table of ROW_TABLES) if (!Array.isArray(data[table])) data[table] = [];
+    return { store: data as StoreData, chapterTexts: [] };
+  }
   const old = data && typeof data === 'object' ? data : {};
   const store = emptyStore(newId());
   const arr = (v: unknown) => (Array.isArray(v) ? v : []);

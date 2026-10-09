@@ -15,8 +15,8 @@ import { Sidebar, BottomTabs, AddFab } from './components/layout/Navigation';
 import { TodayView } from './components/TodayView';
 import { MeView } from './components/MeView';
 import { LibraryView } from './components/LibraryView';
-import { ReaderScreen } from './components/ChunkReaderView';
 import { chaptersOf, placesByCard } from './services/library';
+import { knownTermSet } from './services/knownWords';
 import { isDue, isNewCard } from './services/srsService';
 import { dayString } from './services/streakService';
 import { DEFAULT_DAILY_REVIEW_GOAL } from './services/xpRules';
@@ -32,6 +32,7 @@ const SCREENS = {
     achievements: () => import('./components/AchievementsView'),
     profile: () => import('./components/ProfileView'),
     aiExtract: () => import('./components/AiTextExtractorView'),
+    reader: () => import('./components/ChunkReaderView'),
 };
 const StatsView = lazy(() => SCREENS.stats().then(m => ({ default: m.StatsView })));
 const PracticeView = lazy(() => SCREENS.practice().then(m => ({ default: m.PracticeView })));
@@ -40,6 +41,7 @@ const BulkAddView = lazy(() => SCREENS.bulkAdd().then(m => ({ default: m.BulkAdd
 const AchievementsView = lazy(() => SCREENS.achievements().then(m => ({ default: m.AchievementsView })));
 const ProfileView = lazy(() => SCREENS.profile().then(m => ({ default: m.ProfileView })));
 const AiTextExtractorView = lazy(() => SCREENS.aiExtract().then(m => ({ default: m.AiTextExtractorView })));
+const ReaderScreen = lazy(() => SCREENS.reader().then(m => ({ default: m.ReaderScreen })));
 
 // A screen that fails to load (offline before it was ever opened) or to
 // draw shows a message instead of taking the whole app down.
@@ -80,10 +82,12 @@ const App: React.FC = () => {
         syncStatus, studyMode, studyLogs, studySessionId, sources, chapters, occurrences,
         activeSourceId, activeChapterId, activeChunk, startQuickReview, openStudySetup,
         handleAddSource, handleOpenSource, handleOpenChapter, handleOpenChunk, handleDeleteSource,
-        handleCompleteChunk, loadChapterText, handleSaveReaderCards
+        handleCompleteChunk, loadChapterText, handleSaveReaderCards,
+        knownWords, sectionReview, handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview,
     } = useAppLogic();
 
-    const visibleFlashcards = flashcards.filter(c => !c.isDeleted);
+    const visibleFlashcards = useMemo(() => flashcards.filter(c => !c.isDeleted), [flashcards]);
+    const knownTerms = useMemo(() => Array.from(knownTermSet(knownWords)), [knownWords]);
     const visibleDecks = decks.filter(d => !d.isDeleted);
     const dueCards = visibleFlashcards.filter(c => isDue(c));
     const health = [
@@ -101,6 +105,9 @@ const App: React.FC = () => {
     const places = useMemo(() => placesByCard(occurrences, sources, chapters), [occurrences, sources, chapters]);
 
     useEffect(() => {
+        // The reader is fetched at once so a book opens offline even right
+        // after an update; the other screens a little later.
+        SCREENS.reader().catch(() => {});
         const timer = setTimeout(() => Object.values(SCREENS).forEach(load => load().catch(() => {})), 5000);
         return () => clearTimeout(timer);
     }, []);
@@ -153,6 +160,11 @@ const App: React.FC = () => {
                     onOpenChunk={handleOpenChunk}
                     onDeleteSource={handleDeleteSource}
                     onNavigate={handleNavigate}
+                    knownWords={knownWords}
+                    onUnmarkKnown={handleUnmarkKnown}
+                    sectionReview={sectionReview}
+                    onStartSectionReview={handleStartSectionReview}
+                    onDismissSectionReview={dismissSectionReview}
                 />;
             case 'READER':
                 if (!activeSource || !activeChapter) return null;
@@ -163,7 +175,11 @@ const App: React.FC = () => {
                     index={activeChunk}
                     loadText={loadChapterText}
                     settings={settings}
-                    existingFronts={existingFronts}
+                    cards={visibleFlashcards}
+                    knownTerms={knownTerms}
+                    onMarkKnown={handleMarkKnown}
+                    onUnmarkKnown={handleUnmarkKnown}
+                    onUpdateSettings={updateSettings}
                     onSaveCards={cards => handleSaveReaderCards(cards, activeChapter.id, activeChunk)}
                     onComplete={() => handleCompleteChunk(activeChapter.id, activeChunk)}
                     onBack={() => handleOpenChapter(activeChapter.id)}
@@ -193,6 +209,7 @@ const App: React.FC = () => {
                     onUpdateSettings={updateSettings}
                     onSaveExtractedCards={handleSaveExtractedCards}
                     existingFronts={existingFronts}
+                    knownTerms={knownTerms}
                     onCancel={() => setView('TEXTS')}
                     showToast={showToast}
                 />;

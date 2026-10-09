@@ -8,6 +8,7 @@ import { handleProxy, ProxyResponse } from '../server/api';
 import { createSessionToken } from '../server/auth';
 import { migrateTexts } from '../services/library';
 import { checkPublicUrl, fetchPublicPage, isPrivateAddress } from '../server/pageFetch';
+import { packChapter, unpackChapter } from '../server/chapterText';
 
 let ids = 0;
 const newId = () => `store-${++ids}`;
@@ -197,8 +198,45 @@ test('an account saved before the library is upgraded on its first sync', async 
   assert.deepEqual(res.body.changes.sources.map((s: any) => s.id), ['text-1']);
   const saved = JSON.parse(fs.readFileSync(path.join(dir, '.data_store.json'), 'utf-8'));
   assert.equal(saved['user:old'].data.version, 2);
-  assert.deepEqual(saved['chapter:old:text-1-c1'].chunks, legacyText.chunks);
+  assert.deepEqual(unpackChapter(saved['chapter:old:text-1-c1']).chunks, legacyText.chunks);
+  assert.equal(saved['chapter:old:text-1-c1'].chunks, undefined, 'kept compressed');
   assert.equal((await call({ action: 'chapter-get', id: 'text-1-c1' }, 'old')).body.chunks.length, 2);
+});
+
+test('the "I know it" list syncs between devices, and a store saved before it gets the table', async () => {
+  const { store } = upgradeStore({ ...upgradeStore(null, newId).store, knownWords: undefined }, newId);
+  assert.deepEqual(store.knownWords, []);
+
+  setupServer();
+  assert.equal((await call({ action: 'auth-register', username: 'jafar', password: 'long-enough-password' })).status, 201);
+  const row = { id: 'k1', term: 'take into account', createdAt: T0, updatedAt: T0 };
+  assert.equal((await call({ action: 'sync', since: 0, changes: { knownWords: [row] } }, 'jafar')).status, 200);
+  const other = await call({ action: 'sync', since: 0, changes: {} }, 'jafar');
+  assert.deepEqual(other.body.changes.knownWords, [row]);
+
+  // Taken off the list on one device: gone everywhere, and a new row for
+  // the same term (added again later) lives.
+  const removed = { ...row, isDeleted: true, updatedAt: T1 };
+  await call({ action: 'sync', since: other.body.rev, changes: { knownWords: [removed, { ...row, id: 'k2', createdAt: T2, updatedAt: T2 }] } }, 'jafar');
+  const later = await call({ action: 'sync', since: 0, changes: { knownWords: [row] } }, 'jafar');
+  const byId = Object.fromEntries(later.body.changes.knownWords.map((k: any) => [k.id, k]));
+  assert.equal(byId.k1.isDeleted, true, 'an old copy cannot bring it back');
+  assert.equal(byId.k2.isDeleted, undefined);
+});
+
+test('chapter texts are kept compressed, and older plain ones are still read', async () => {
+  const chunks = Array.from({ length: 5 }, (_, i) => `Section ${i}. ${'It is a truth universally acknowledged. '.repeat(60)}`);
+  const packed = packChapter({ id: 'c', sourceId: 's', chunks });
+  assert.ok(packed.gz!.length < JSON.stringify(chunks).length / 5, 'much smaller');
+  assert.deepEqual(unpackChapter(packed), { id: 'c', sourceId: 's', chunks });
+  assert.deepEqual(unpackChapter({ id: 'c', sourceId: 's', chunks: ['plain'] }).chunks, ['plain']);
+
+  const dir = setupServer();
+  await call({ action: 'auth-register', username: 'jafar', password: 'long-enough-password' });
+  assert.equal((await call({ action: 'chapter-put', id: 's1-c1', sourceId: 's1', chunks }, 'jafar')).status, 200);
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, '.data_store.json'), 'utf-8'));
+  assert.equal(typeof saved['chapter:jafar:s1-c1'].gz, 'string');
+  assert.deepEqual((await call({ action: 'chapter-get', id: 's1-c1' }, 'jafar')).body.chunks, chunks);
 });
 
 test('only public web pages are fetched for articles', async () => {

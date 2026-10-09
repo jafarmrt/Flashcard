@@ -6,7 +6,7 @@
 //   - protection for edits made while a sync request is in flight;
 //   - study logs keyed the same way on every device.
 
-import type { Chapter, Deck, Flashcard, Occurrence, Source, StudyLog, TextDoc, UserAchievement, UserProfile } from '../types';
+import type { Chapter, Deck, Flashcard, KnownWord, Occurrence, Source, StudyLog, TextDoc, UserAchievement, UserProfile } from '../types';
 
 type Row = { id: string };
 
@@ -16,15 +16,16 @@ export interface SyncSnapshotInput {
   sources: Source[];
   chapters: Chapter[];
   occurrences: Occurrence[];
+  knownWords: KnownWord[];
   profile: UserProfile | null | undefined;
   achievements: UserAchievement[];
   settingsUpdatedAt?: string;
 }
 
 // What identifies one version of a row. Every edit of a card, source,
-// chapter or occurrence stamps updatedAt; decks older than updatedAt also
-// count their name and deletion.
-type Dated = Flashcard | TextDoc | Source | Chapter | Occurrence;
+// chapter, occurrence or known word stamps updatedAt; decks older than
+// updatedAt also count their name and deletion.
+type Dated = Flashcard | TextDoc | Source | Chapter | Occurrence | KnownWord;
 export const cardStamp = (c: Dated) => `${c.updatedAt || ''}|${c.isDeleted ? 1 : 0}`;
 export const deckStamp = (d: Deck) => `${d.updatedAt || ''}|${d.name}|${d.isDeleted ? 1 : 0}`;
 export const profileStamp = (p: UserProfile | null | undefined) => (p ? JSON.stringify(p) : '');
@@ -38,6 +39,7 @@ export const syncFingerprint = (s: SyncSnapshotInput): string => [
   stampAll(s.sources, cardStamp),
   stampAll(s.chapters, cardStamp),
   stampAll(s.occurrences, cardStamp),
+  stampAll(s.knownWords, cardStamp),
   profileStamp(s.profile),
   s.achievements.map(a => a.achievementId).sort().join(','),
   s.settingsUpdatedAt || '',
