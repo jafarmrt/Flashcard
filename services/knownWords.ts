@@ -12,12 +12,17 @@ export const knownTermSet = (rows: KnownWord[]): Set<string> => {
   return set;
 };
 
-export const isKnownTerm = (term: string, known: Set<string>): boolean => {
-  if (known.size === 0) return false;
+// The list's entry a term falls under: itself or a base form of it
+// ("decide" for "decided").
+export const knownMatch = (term: string, known: Set<string>): string | undefined => {
+  if (known.size === 0) return undefined;
   const key = normalizeTerm(term);
-  if (!key) return false;
-  return known.has(key) || lemmaCandidates(key).some(form => known.has(normalizeTerm(form)));
+  if (!key) return undefined;
+  if (known.has(key)) return key;
+  return lemmaCandidates(key).map(normalizeTerm).find(form => known.has(form));
 };
+
+export const isKnownTerm = (term: string, known: Set<string>): boolean => knownMatch(term, known) !== undefined;
 
 // Known terms of a text as written there, so extraction can be told to skip
 // them.

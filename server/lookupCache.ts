@@ -1,26 +1,23 @@
-// Free dictionary lookups kept on the server for 90 days, for every device:
-// a word looked up once comes back at once, and the daily MyMemory quota is
-// spent once per word, not once per tap. In Redis when cloud storage is set
-// up (each key expires by itself), else in a file of its own next to the
-// data file, written a few seconds after the last change.
+// Free dictionary lookups kept on the server, for every device: a word looked
+// up once comes back at once, and the daily MyMemory quota is spent once per
+// word, not once per tap. How long each is kept: services/lookupLifetime. In
+// Redis when cloud storage is set up (each key expires by itself), else in a
+// file of its own next to the data file, written a little after the last
+// change.
 
 import fs from 'fs';
 import type { FreeEnrichment } from './freeLookup.js';
+import { lookupKeepMs, lookupKey } from '../services/lookupLifetime.js';
 
-export const LOOKUP_TTL_MS = 90 * 24 * 60 * 60 * 1000;
-const MAX_FILE_ENTRIES = 20_000;
-const WRITE_DELAY_MS = 5_000;
+const MAX_FILE_ENTRIES = 5_000;
+const WRITE_DELAY_MS = 15_000;
 
 export interface LookupStore {
   get(key: string): Promise<FreeEnrichment | null>;
-  set(key: string, value: FreeEnrichment): Promise<void>;
+  set(key: string, value: FreeEnrichment, keepMs: number): Promise<void>;
 }
 
-export const lookupCacheKey = (term: string) => `lookup:v1:${term.trim().toLowerCase().replace(/\s+/g, ' ')}`;
-
-// Only a lookup that brought a translation is kept: one without (the
-// translation quota ran out, the service failed) is tried again next time.
-export const worthCaching = (value: FreeEnrichment | null | undefined) => !!value?.translation;
+export const lookupCacheKey = (term: string) => `lookup:v1:${lookupKey(term)}`;
 
 // The cache never fails a lookup: when it cannot be read or written, the
 // dictionaries answer as if it were not there.
@@ -35,9 +32,10 @@ export async function cachedEnrich(term: string, store: LookupStore | null, load
     }
   }
   const value = await load();
-  if (store && worthCaching(value)) {
+  const keepMs = lookupKeepMs(value);
+  if (store && keepMs > 0) {
     try {
-      await store.set(key, value);
+      await store.set(key, value, keepMs);
     } catch (e) {
       console.warn('Saving to the lookup cache failed:', (e as Error).message);
     }
@@ -45,7 +43,7 @@ export async function cachedEnrich(term: string, store: LookupStore | null, load
   return value;
 }
 
-type Entry = { v: FreeEnrichment; at: number };
+type Entry = { v: FreeEnrichment; until: number };
 
 export function fileLookupStore(file: string, now: () => number = Date.now): LookupStore & { flush(): void } {
   let entries: Map<string, Entry> | null = null;
@@ -58,7 +56,7 @@ export function fileLookupStore(file: string, now: () => number = Date.now): Loo
       if (fs.existsSync(file)) {
         const saved = JSON.parse(fs.readFileSync(file, 'utf-8')) as Record<string, Entry>;
         for (const [key, entry] of Object.entries(saved)) {
-          if (entry && now() - entry.at < LOOKUP_TTL_MS) entries.set(key, entry);
+          if (entry && now() < entry.until) entries.set(key, entry);
         }
       }
     } catch (e) {
@@ -84,13 +82,13 @@ export function fileLookupStore(file: string, now: () => number = Date.now): Loo
     async get(key) {
       const entry = load().get(key);
       if (!entry) return null;
-      if (now() - entry.at >= LOOKUP_TTL_MS) { load().delete(key); return null; }
+      if (now() >= entry.until) { load().delete(key); return null; }
       return entry.v;
     },
-    async set(key, value) {
+    async set(key, value, keepMs) {
       const map = load();
       map.delete(key);
-      map.set(key, { v: value, at: now() });
+      map.set(key, { v: value, until: now() + keepMs });
       // The oldest lookups go first when the file grows too large.
       while (map.size > MAX_FILE_ENTRIES) map.delete(map.keys().next().value!);
       if (!timer) {

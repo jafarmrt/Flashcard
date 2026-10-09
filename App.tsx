@@ -105,6 +105,9 @@ const App: React.FC = () => {
     const places = useMemo(() => placesByCard(occurrences, sources, chapters), [occurrences, sources, chapters]);
 
     useEffect(() => {
+        // The reader is fetched at once so a book opens offline even right
+        // after an update; the other screens a little later.
+        SCREENS.reader().catch(() => {});
         const timer = setTimeout(() => Object.values(SCREENS).forEach(load => load().catch(() => {})), 5000);
         return () => clearTimeout(timer);
     }, []);

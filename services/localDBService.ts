@@ -12,7 +12,7 @@ export interface MetaRow {
 export interface LookupRow {
   term: string;
   value: any;
-  at: number; // ms
+  until: number; // ms; asked again after this
 }
 
 export class LinguaCardsDB extends Dexie {

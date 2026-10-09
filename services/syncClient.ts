@@ -49,6 +49,12 @@ export const usableSyncState = (saved: SyncState | undefined, user: string, now 
   if (now - (saved.fullAt || 0) > FULL_PUSH_EVERY_MS) {
     return { ...freshSyncState(user, now), storeId: saved.storeId, rev: saved.rev };
   }
+  // A table this version of the app added: an older version may have synced
+  // past rows of it without keeping them, so everything is taken again once.
+  const missing = SYNC_TABLES.filter(table => !saved.stamps[table]);
+  if (missing.length > 0) {
+    return { ...saved, rev: 0, stamps: { ...saved.stamps, ...Object.fromEntries(missing.map(t => [t, {}])) } };
+  }
   return saved;
 };
 

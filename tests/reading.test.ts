@@ -9,7 +9,8 @@ import { phraseRanges, rangeText, readerSection, sentenceOf } from '../services/
 import {
   buildSensePrompt, buildSentencePrompt, grammarCards, parseSenses, parseSentenceAnalysis, SenseBatcher, SenseRequest,
 } from '../services/senseService';
-import { cachedEnrich, fileLookupStore, LOOKUP_TTL_MS, lookupCacheKey } from '../server/lookupCache';
+import { cachedEnrich, fileLookupStore, lookupCacheKey } from '../server/lookupCache';
+import { LOOKUP_KEEP_MS, lookupKeepMs, PARTIAL_LOOKUP_KEEP_MS } from '../services/lookupLifetime';
 import type { FreeEnrichment } from '../server/freeLookup';
 import type { ExtractedWordCard, KnownWord } from '../types';
 
@@ -160,37 +161,53 @@ test('taps close together go to the AI as one request', async () => {
 
 // --- Lookups kept on the server ---
 
-const enrichment = (translation: string): FreeEnrichment => ({
-  found: true, headword: 'ample', pronunciation: '', partOfSpeech: 'adj.', definitions: [], examples: [], translation, collocations: [],
+const enrichment = (translation: string, extra: Partial<FreeEnrichment> = {}): FreeEnrichment => ({
+  found: true, headword: 'ample', pronunciation: '', partOfSpeech: 'adj.', definitions: [], examples: [], translation,
+  collocations: [{ phrase: 'ample time' }], ...extra,
 });
 
-test('a lookup is kept only when it brought a translation, and the cache never breaks a lookup', async () => {
-  const saved = new Map<string, FreeEnrichment>();
-  const store = { get: async (k: string) => saved.get(k) || null, set: async (k: string, v: FreeEnrichment) => { saved.set(k, v); } };
+test('a full lookup is kept for 90 days, a partial one for a day, one without a translation not at all', () => {
+  assert.equal(lookupKeepMs(enrichment('فراوان')), LOOKUP_KEEP_MS);
+  assert.equal(lookupKeepMs(enrichment('فراوان', { found: false })), PARTIAL_LOOKUP_KEEP_MS, 'the dictionary may have timed out');
+  assert.equal(lookupKeepMs(enrichment('فراوان', { collocations: [] })), PARTIAL_LOOKUP_KEEP_MS, 'the expressions service may have failed');
+  assert.equal(lookupKeepMs(enrichment('')), 0);
+  assert.equal(lookupKeepMs(null), 0);
+});
+
+test('the server keeps lookups by their lifetime, and the cache never breaks a lookup', async () => {
+  const saved = new Map<string, { v: FreeEnrichment; keepMs: number }>();
+  const store = { get: async (k: string) => saved.get(k)?.v || null, set: async (k: string, v: FreeEnrichment, keepMs: number) => { saved.set(k, { v, keepMs }); } };
   let loads = 0;
-  const load = (t: string) => async () => { loads++; return enrichment(t); };
+  const load = (t: string, extra: Partial<FreeEnrichment> = {}) => async () => { loads++; return enrichment(t, extra); };
 
   assert.equal((await cachedEnrich('  Ample ', store, load(''))).translation, '');
   assert.equal(saved.size, 0, 'no translation: asked again next time');
   await cachedEnrich('ample', store, load('فراوان'));
   assert.deepEqual([...saved.keys()], [lookupCacheKey('AMPLE')]);
+  assert.equal(saved.get(lookupCacheKey('ample'))!.keepMs, LOOKUP_KEEP_MS);
   assert.equal((await cachedEnrich('Ample', store, load('other'))).translation, 'فراوان');
   assert.equal(loads, 2);
+  await cachedEnrich('take stock', store, load('ارزیابی', { found: false, collocations: [] }));
+  assert.equal(saved.get(lookupCacheKey('take stock'))!.keepMs, PARTIAL_LOOKUP_KEEP_MS);
 
   const broken = { get: async () => { throw new Error('down'); }, set: async () => { throw new Error('down'); } };
   assert.equal((await cachedEnrich('ample', broken, load('فراوان'))).translation, 'فراوان');
   assert.equal((await cachedEnrich('ample', null, load('x'))).translation, 'x');
 });
 
-test('the lookup file keeps lookups for 90 days', async () => {
+test('the lookup file keeps each lookup until its time is up', async () => {
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'lc-lookups-')), '.lookup_cache.json');
   let now = T0.getTime();
   const store = fileLookupStore(file, () => now);
-  await store.set('lookup:v1:ample', enrichment('فراوان'));
+  await store.set('lookup:v1:ample', enrichment('فراوان'), LOOKUP_KEEP_MS);
+  await store.set('lookup:v1:brief', enrichment('کوتاه'), PARTIAL_LOOKUP_KEEP_MS);
   store.flush();
   const again = fileLookupStore(file, () => now);
   assert.equal((await again.get('lookup:v1:ample'))?.translation, 'فراوان');
-  now += LOOKUP_TTL_MS;
+  now += PARTIAL_LOOKUP_KEEP_MS;
+  assert.equal(await again.get('lookup:v1:brief'), null);
+  assert.equal((await again.get('lookup:v1:ample'))?.translation, 'فراوان');
+  now += LOOKUP_KEEP_MS;
   assert.equal(await again.get('lookup:v1:ample'), null);
   assert.equal(await fileLookupStore(file, () => now).get('lookup:v1:ample'), null, 'old entries are dropped on load');
   fs.writeFileSync(file, 'not json');

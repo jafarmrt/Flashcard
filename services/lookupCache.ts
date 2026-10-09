@@ -1,17 +1,11 @@
 // File: /services/lookupCache.ts
-// Dictionary lookups kept on this device for 90 days: a word tapped once
-// opens at once the next time, also offline. The server keeps its own copy
-// for the other devices.
+// Dictionary lookups kept on this device: a word tapped once opens at once
+// the next time, also offline. The server keeps its own copy for the other
+// devices. How long each is kept: services/lookupLifetime.
 
 import type { FreeEnrichment } from './freeExtractionService';
 import { db } from './localDBService';
-
-export const LOOKUP_FRESH_MS = 90 * 24 * 60 * 60 * 1000;
-
-export const lookupKey = (term: string) => term.trim().toLowerCase().replace(/\s+/g, ' ');
-
-// Same rule as the server: a lookup without a translation is tried again.
-export const worthKeeping = (value: FreeEnrichment | null | undefined) => !!value?.translation;
+import { lookupKeepMs, lookupKey } from './lookupLifetime';
 
 // No IndexedDB (tests, old browsers): nothing is kept.
 const lookupsTable = () => (typeof indexedDB === 'undefined' ? null : db.lookups);
@@ -22,14 +16,15 @@ export async function cachedLookup(term: string, load: () => Promise<FreeEnrichm
   if (table) {
     try {
       const row = await table.get(key);
-      if (row && Date.now() - row.at < LOOKUP_FRESH_MS) return row.value;
+      if (row && Date.now() < row.until) return row.value;
     } catch (e) {
       console.warn('Reading saved lookups failed:', e);
     }
   }
   const value = await load();
-  if (table && worthKeeping(value)) {
-    table.put({ term: key, value, at: Date.now() }).catch(e => console.warn('Saving a lookup failed:', e));
+  const keepMs = lookupKeepMs(value);
+  if (table && keepMs > 0) {
+    table.put({ term: key, value, until: Date.now() + keepMs }).catch(e => console.warn('Saving a lookup failed:', e));
   }
   return value;
 }

@@ -6,7 +6,7 @@ import { extractFromLongText, ExtractionSource, isPermanentAiError } from '../se
 import { lemmaCandidates, tokensOf } from '../services/lemma';
 import { enrichmentToCard, freeEnrich, FreeEnrichment, freeTranslate } from '../services/freeExtractionService';
 import { cardsInText, isChunkOpen } from '../services/library';
-import { isKnownTerm } from '../services/knownWords';
+import { isKnownTerm, knownMatch } from '../services/knownWords';
 import { masteryStage } from '../services/masteryService';
 import { phraseRanges, rangeText, readerSection, sentenceOf } from '../services/readerText';
 import { analyzeSentence, grammarCards, Sense, SenseBatcher, sensesInContext } from '../services/senseService';
@@ -121,8 +121,9 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   if (!batcher.current) batcher.current = new SenseBatcher(list => sensesInContext(list, level, optionsRef.current));
 
   // Leaving the section stops a running search, waiting AI requests and
-  // reading aloud.
-  useEffect(() => () => { abortRef.current?.abort(); batcher.current?.cancel(); stopSpeech(); }, []);
+  // reading aloud; answers that come later are dropped quietly.
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; abortRef.current?.abort(); batcher.current?.cancel(); stopSpeech(); }, []);
 
   const existingFronts = useMemo(() => cards.map(c => c.front), [cards]);
   const deckKeys = useMemo(() => new Set(existingFronts.map(normalizeTerm)), [existingFronts]);
@@ -213,7 +214,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   const aiFailed = (error: unknown, what: string) => {
     console.warn(`${what} failed:`, error);
     if (isPermanentAiError(error)) aiOff.current = true;
-    if (aiWarned.current) return;
+    if (aiWarned.current || !alive.current) return;
     aiWarned.current = true;
     showToast(`هوش مصنوعی جواب نداد؛ ${what === 'sense' ? 'معنی دیکشنری ماند' : 'دوباره امتحان کن'}.${error instanceof Error && error.message ? ` ${ltr(error.message)}` : ''}`);
   };
@@ -269,11 +270,14 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
       : Promise.resolve(null);
     try {
       let entry: FreeEnrichment | null = null;
+      let unreachable = false;
       try {
         entry = await freeEnrich(surface);
       } catch (error) {
         console.warn('Dictionary lookup failed:', error);
+        unreachable = true;
       }
+      if (!alive.current) return;
       const known = !!entry && (entry.found || !!entry.translation);
       if (known) {
         settle(temp.uid, it => {
@@ -284,16 +288,17 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
         });
         setSaved(false);
       } else if (!wantSense) {
-        showToast(`واژهٔ «${ltr(term)}» در دیکشنری پیدا نشد.`);
+        showToast(unreachable ? 'جست‌وجوی واژه ناموفق بود. اتصال را بررسی کن.' : `واژهٔ «${ltr(term)}» در دیکشنری پیدا نشد.`);
         drop(temp.uid);
         return;
       }
       const s = await sense;
+      if (!alive.current) return;
       if (s) {
         settle(temp.uid, it => withSense(it, s));
         setSaved(false);
       } else if (!known) {
-        showToast(`معنی «${ltr(term)}» پیدا نشد.`);
+        showToast(unreachable ? 'جست‌وجوی واژه ناموفق بود. اتصال را بررسی کن.' : `معنی «${ltr(term)}» پیدا نشد.`);
         drop(temp.uid);
       } else {
         settle(temp.uid, it => ({ ...it, senseLoading: false }));
@@ -512,6 +517,9 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     : aiOff.current ? 'هوش مصنوعی در دسترس نیست؛ کلید را در تنظیمات بررسی کن.' : undefined;
   const preReadItems = preRead ? preRead.uids.map(uid => items.find(it => it.uid === resolve(uid))).filter((it): it is Item => !!it) : [];
   const detailPlace = detail ? placeOf(detail) : null;
+  const detailKnownAs = detail ? knownMatch(detail.front, knownSet) : undefined;
+  // A translation or grammar found for another pick is not shown under this one.
+  const result = sentenceResult && selection && sentenceResult.range.from === selection.from && sentenceResult.range.to === selection.to ? sentenceResult : null;
   const sheetOpen = !!selection || (!!detail && !detail.loading);
 
   return (
@@ -672,8 +680,8 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
               wholeSentence={selectionIsSentence}
               aiNote={aiNote}
               busy={busy}
-              translation={sentenceResult?.translation}
-              structures={sentenceResult?.structures}
+              translation={result?.translation}
+              structures={result?.structures}
               onGrow={grow}
               onWholeSentence={() => wholeSentence(selection)}
               onMeaning={() => { const r = selection; lookUp(r.from, r.to); }}
@@ -734,8 +742,8 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
                     کارت ساخته شود
                   </label>
                 )}
-                {detail.kind !== 'grammar' && (isKnownTerm(detail.front, knownSet)
-                  ? <button type="button" onClick={() => onUnmarkKnown(detail.front)} className="min-h-[40px] px-3 rounded-xl text-sm border border-slate-200 dark:border-slate-600">در فهرست «بلدم» است؛ بردار</button>
+                {detail.kind !== 'grammar' && (detailKnownAs
+                  ? <button type="button" onClick={() => onUnmarkKnown(detailKnownAs)} className="min-h-[40px] px-3 rounded-xl text-sm border border-slate-200 dark:border-slate-600">در فهرست «بلدم» است؛ بردار</button>
                   : !detail.alreadyInDeck && <button type="button" onClick={() => markKnown(detail)} className="min-h-[40px] px-3 rounded-xl text-sm font-bold bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-900/40 dark:text-emerald-200">بلدم</button>)}
                 <span className="flex-1" />
                 {toSave.length > 0 && (

@@ -6,7 +6,7 @@ import { fetchDictionaryEntries, freeEnrich, freeTranslate, lookupFrequencies } 
 import { applyChanges, changesSince, upgradeStore } from './syncStore.js';
 import { fetchPublicPage, PageFetchError } from './pageFetch.js';
 import { packChapter, unpackChapter } from './chapterText.js';
-import { cachedEnrich, fileLookupStore, LOOKUP_TTL_MS, LookupStore } from './lookupCache.js';
+import { cachedEnrich, fileLookupStore, LookupStore } from './lookupCache.js';
 import {
   PUBLIC_ACTIONS, USERNAME_PATTERN, MIN_PASSWORD_LENGTH, registrationAllowed,
   hashPassword, verifyPassword, getSessionSecret, createSessionToken, sessionUser,
@@ -143,7 +143,7 @@ function lookupStore(): LookupStore | null {
   if (kv) {
     return {
       get: async key => { const result = await kvCommand(kv, ['GET', key]); return result ? JSON.parse(result) : null; },
-      set: async (key, value) => { await kvCommand(kv, ['SET', key, JSON.stringify(value), 'EX', Math.round(LOOKUP_TTL_MS / 1000)]); },
+      set: async (key, value, keepMs) => { await kvCommand(kv, ['SET', key, JSON.stringify(value), 'PX', Math.round(keepMs)]); },
     };
   }
   if (process.env.VERCEL) return null;

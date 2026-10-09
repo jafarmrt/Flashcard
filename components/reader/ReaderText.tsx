@@ -28,7 +28,9 @@ const wordAt = (x: number, y: number): number | null => {
 // the first word), or shift-clicking, picks a phrase or a sentence.
 export const ReaderText: React.FC<ReaderTextProps> = ({ section, selection, classFor, onTap, onSelect }) => {
   const [drag, setDrag] = useState<Range | null>(null);
-  const gesture = useRef<{ id: number; start: number; x: number; y: number; touch: boolean; active: boolean; moved: boolean; timer?: ReturnType<typeof setTimeout> } | null>(null);
+  // `last`: the last word the pointer was over, for a release on a space or
+  // a full stop.
+  const gesture = useRef<{ id: number; start: number; last: number; x: number; y: number; touch: boolean; active: boolean; moved: boolean; timer?: ReturnType<typeof setTimeout> } | null>(null);
   const suppressClick = useRef(false);
   const anchor = useRef<number | null>(null);
   const box = useRef<HTMLDivElement>(null);
@@ -57,7 +59,7 @@ export const ReaderText: React.FC<ReaderTextProps> = ({ section, selection, clas
     if (!target) return;
     const start = Number(target.dataset.wi);
     const touch = e.pointerType !== 'mouse';
-    const g = { id: e.pointerId, start, x: e.clientX, y: e.clientY, touch, active: !touch, moved: false } as NonNullable<typeof gesture.current>;
+    const g = { id: e.pointerId, start, last: start, x: e.clientX, y: e.clientY, touch, active: !touch, moved: false } as NonNullable<typeof gesture.current>;
     if (touch) {
       g.timer = setTimeout(() => {
         if (gesture.current !== g) return;
@@ -72,12 +74,15 @@ export const ReaderText: React.FC<ReaderTextProps> = ({ section, selection, clas
   const onPointerMove = (e: React.PointerEvent) => {
     const g = gesture.current;
     if (!g || g.id !== e.pointerId) return;
+    // The button was let go outside the text, where no pointerup reached us.
+    if (!g.touch && e.buttons === 0) { end(); return; }
     if (!g.active) {
       if (Math.hypot(e.clientX - g.x, e.clientY - g.y) > SCROLL_SLOP_PX) end(); // a scroll
       return;
     }
     const at = wordAt(e.clientX, e.clientY);
     if (at === null) return;
+    g.last = at;
     if (at !== g.start && !g.moved) {
       g.moved = true;
       (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
@@ -91,7 +96,7 @@ export const ReaderText: React.FC<ReaderTextProps> = ({ section, selection, clas
     if (g.active && (g.moved || g.touch)) {
       // A finger that rested on one word and lifted picks that word, so it
       // can be widened from the bar.
-      const at = g.moved ? wordAt(e.clientX, e.clientY) ?? g.start : g.start;
+      const at = g.moved ? wordAt(e.clientX, e.clientY) ?? g.last : g.start;
       suppressClick.current = true;
       onSelect(ordered(g.start, at));
       anchor.current = g.start;
