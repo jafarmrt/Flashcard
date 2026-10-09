@@ -4,8 +4,9 @@ import { db } from '../services/localDBService';
 import { calculateLevel, calculateStreak, checkAndAwardAchievements } from '../services/gamificationService';
 import { generateNewDailyGoals, updateGoalProgress, reviewGoalId } from '../services/dailyGoalsService';
 import { availableFreezes, dayString, daysToFreeze, MAX_HELD_FREEZES } from '../services/streakService';
-import { CHUNK_COMPLETE_XP, DEFAULT_DAILY_REVIEW_GOAL, isChestSection } from '../services/xpRules';
-import { buildSource, cardIndex, cardsInText, chaptersOf, findCard, markChunkDone, migrateTexts, newOccurrence, SourceInput } from '../services/library';
+import { BOOK_COMPLETE_XP, CHAPTER_COMPLETE_XP, CHUNK_COMPLETE_XP, DEFAULT_DAILY_REVIEW_GOAL, isChestSection, SECTION_GOAL_REVIEWS } from '../services/xpRules';
+import { buildSource, cardIndex, cardsInText, chaptersOf, findCard, isChapterFinished, markChunkDone, migrateTexts, newOccurrence, SourceInput } from '../services/library';
+import { cardsOfSource, pickBookReview } from '../services/readingStats';
 import { normalizeTerm } from '../services/vocabMerge';
 import { forgetRows, newKnownWord } from '../services/knownWords';
 import { ALL_ACHIEVEMENTS } from '../services/achievements';
@@ -42,7 +43,7 @@ export type HealthStatus = 'ok' | 'error' | 'checking';
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted' | 'createdAt' | 'updatedAt'>;
 type User = { username: string };
 
-export type StudyMode = 'flip' | 'type';
+export type StudyMode = 'flip' | 'type' | 'cloze'; // cloze: the word left out of the book's sentence
 export interface SessionSummary { xp: number; reviews: number }
 
 // Settings are kept in localStorage; read the review goal straight from there so
@@ -309,6 +310,9 @@ export const useAppLogic = () => {
         userProfile: profile,
         earnedAchievements: await db.userAchievements.toArray(),
         quizScore,
+        sources: await db.sources.toArray(),
+        chapters: await db.chapters.toArray(),
+        occurrences: await db.occurrences.toArray(),
     }).catch(error => {
         console.error('Achievement check failed:', error);
         return [];
@@ -320,7 +324,7 @@ export const useAppLogic = () => {
             const achievementData = ALL_ACHIEVEMENTS.find(a => a.id === ua.achievementId);
             if (achievementData) {
                 setTimeout(() => {
-                  showToast(`Achievement Unlocked: ${achievementData.name} ${achievementData.icon}`);
+                  showToast(`نشان تازه: ${achievementData.name} ${achievementData.icon}`);
                 }, 500);
             }
         });
@@ -350,7 +354,7 @@ export const useAppLogic = () => {
     });
     if (!result) return;
     if (result.after.level > result.before.level) {
-        showToast(`Level Up! You reached Level ${result.after.level}! 🎉`);
+        showToast(`به سطح ${fa(result.after.level)} رسیدی! 🎉`);
     } else if (message) {
         showToast(message);
     }
@@ -378,11 +382,11 @@ export const useAppLogic = () => {
     if (xpGained > 0) await awardXP(xpGained);
 
     newlyCompletedGoals.forEach(goal => {
-        setTimeout(() => showToast(`Goal Complete: ${goal.description} (+${goal.xp} XP)`), 500);
+        setTimeout(() => showToast(`هدف امروز کامل شد. +${fa(goal.xp)} امتیاز`), 500);
     });
 
     if (result.after.dailyGoals?.allCompleteAwarded && !result.before.dailyGoals?.allCompleteAwarded) {
-        setTimeout(() => showToast(`All goals complete! Bonus +50 XP! ✨`), newlyCompletedGoals.length > 0 ? 1000 : 500);
+        setTimeout(() => showToast(`همهٔ هدف‌های امروز کامل شد! +${fa(50)} امتیاز ✨`), newlyCompletedGoals.length > 0 ? 1000 : 500);
     }
   };
 
@@ -396,7 +400,7 @@ export const useAppLogic = () => {
       if (!logs.some(l => l.date === today)) return;
       const newStreak = calculateStreak(logs, profile.frozenDates);
       await updateProfile(p => ({ ...p, lastStreakCheck: today }));
-      if (newStreak >= 2) await awardXP(newStreak * 10, `Streak Bonus: ${newStreak} days! 🔥`);
+      if (newStreak >= 2) await awardXP(newStreak * 10, `جایزهٔ زنجیرهٔ ${fa(newStreak)} روزه: +${fa(newStreak * 10)} امتیاز 🔥`);
       await handleGoalUpdate('STREAK', newStreak);
   };
 
@@ -573,7 +577,7 @@ export const useAppLogic = () => {
         signedInUser.current = null;
         setIsLoggedIn(false);
         setCurrentUser(null);
-        showToast('Your session has expired. Please sign in again.');
+        showToast('نشست حسابت تمام شده؛ دوباره وارد شو.');
     };
     window.addEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
 
@@ -674,13 +678,13 @@ export const useAppLogic = () => {
   const handleDeleteCard = async (id: string) => {
     await db.flashcards.update(id, { isDeleted: true, updatedAt: new Date().toISOString() });
     await fetchData();
-    showToast('Card deleted successfully!');
+    showToast('کارت حذف شد.');
   };
 
   const handleSaveCard = async (cardData: FlashcardFormData, deckName: string) => {
     const trimmedDeckName = deckName.trim();
     if (!trimmedDeckName) {
-      showToast('Deck name cannot be empty.');
+      showToast('نام دسته خالی است.');
       return;
     }
     
@@ -706,7 +710,7 @@ export const useAppLogic = () => {
         updatedAt: now,
       };
       await db.flashcards.put(updatedCard);
-      showToast('Card updated successfully!');
+      showToast('کارت ذخیره شد.');
     } else {
       const now = new Date().toISOString();
       const newCard: Flashcard = {
@@ -722,7 +726,7 @@ export const useAppLogic = () => {
         dueDate: now,
       };
       await db.flashcards.add(newCard);
-      showToast('Card added successfully!');
+      showToast('کارت اضافه شد.');
     }
     await fetchData();
     handleCheckAchievements();
@@ -739,13 +743,13 @@ export const useAppLogic = () => {
     };
     await db.userProfile.put(updatedProfile);
     setUserProfile(updatedProfile);
-    showToast("Profile updated successfully!");
+    showToast('نمایه ذخیره شد.');
   };
   
   const handleBulkSaveCards = async (cardsToSave: FlashcardFormData[], deckName: string) => {
     const trimmedDeckName = deckName.trim();
     if (!trimmedDeckName) {
-        showToast('Deck name cannot be empty.');
+        showToast('نام دسته خالی است.');
         return;
     }
 
@@ -777,14 +781,14 @@ export const useAppLogic = () => {
     
     await fetchData();
     handleCheckAchievements();
-    showToast(`${newCards.length} cards added to "${trimmedDeckName}"!`);
+    showToast(`${fa(newCards.length)} کارت به «${trimmedDeckName}» اضافه شد.`);
     setView('DECKS');
   };
 
   const handleSaveExtractedCards = async (cardsToSave: ExtractedWordCard[], deckName: string, options: { stay?: boolean } = {}) => {
     const trimmedDeckName = deckName.trim();
     if (!trimmedDeckName) {
-      showToast('Deck name cannot be empty.');
+      showToast('نام دسته خالی است.');
       return;
     }
 
@@ -810,7 +814,7 @@ export const useAppLogic = () => {
       showToast(`${newCards.length} کارت به «${trimmedDeckName}» اضافه شد.`);
       return;
     }
-    showToast(`${newCards.length} cards added to "${trimmedDeckName}"!`);
+    showToast(`${fa(newCards.length)} کارت به «${trimmedDeckName}» اضافه شد.`);
     setView('DECKS');
   };
 
@@ -837,27 +841,27 @@ export const useAppLogic = () => {
     try {
       const cardsToExport = flashcards.filter(c => !c.isDeleted);
       if (cardsToExport.length === 0) {
-        showToast('No cards to export.');
+        showToast('کارتی برای خروجی نیست.');
         return;
       }
       const date = new Date().toISOString().split('T')[0];
       downloadCSV(`lingua-cards-export-${date}.csv`, convertToCSV(cardsToExport, decks));
-      showToast('All cards exported as CSV!');
+      showToast('همهٔ کارت‌ها در فایل CSV ذخیره شد.');
     } catch (error) {
         console.error('Export failed:', error);
-        showToast('Export failed.');
+        showToast('ساختن فایل خروجی ناموفق بود.');
     }
   };
 
   const handleImportCSV = async (csvText: string) => {
     if (!csvText) {
-        showToast('Import file is empty.');
+        showToast('فایل خالی است.');
         return;
     }
     try {
         const parsedData = parseCSV(csvText);
         if (parsedData.length === 0) {
-            showToast('No valid card data found in the file.');
+            showToast('در فایل کارت درستی پیدا نشد.');
             return;
         }
 
@@ -924,13 +928,13 @@ export const useAppLogic = () => {
         handleCheckAchievements();
         const skippedRows = parsedData.length - newCards.length;
         showToast(skippedRows > 0
-            ? `${newCards.length} cards imported; ${skippedRows} row(s) skipped (no front or back).`
-            : `${newCards.length} cards imported successfully!`);
+            ? `${fa(newCards.length)} کارت وارد شد؛ ${fa(skippedRows)} سطر بی‌واژه یا بی‌معنی کنار گذاشته شد.`
+            : `${fa(newCards.length)} کارت وارد شد.`);
         setView('DECKS');
 
     } catch (error) {
         console.error("CSV Import failed:", error);
-        showToast("Failed to import CSV. Please check file format.");
+        showToast('خواندن فایل CSV ناموفق بود؛ قالب فایل را بررسی کن.');
     }
   };
   
@@ -980,7 +984,7 @@ export const useAppLogic = () => {
     }
     
     if (cardsToStudy.length === 0) {
-        showToast("No cards match your selected criteria.");
+        showToast('کارتی با این انتخاب پیدا نشد.');
         return false;
     }
 
@@ -1115,7 +1119,20 @@ export const useAppLogic = () => {
     setChapters(prev => prev.map(c => (c.id === updated.id ? updated : c)));
     if (seenAgain.length) setOccurrences(prev => [...prev.filter(o => !seenAgain.some(s => s.id === o.id)), ...seenAgain]);
     offerReview(await db.occurrences.where('chapterId').equals(chapterId).toArray());
-    await awardXP(CHUNK_COMPLETE_XP, `بخش ${fa(index + 1)} تمام شد. +${fa(CHUNK_COMPLETE_XP)} امتیاز${seenAgain.length ? `؛ ${fa(seenAgain.length)} واژهٔ کارت‌دار در این بخش دوباره دیده شد` : ''}`);
+    // The last section of a chapter, or of a book, earns a bonus on top.
+    const chapterDone = isChapterFinished(updated);
+    const siblings = chaptersOf(chapter.sourceId, (await db.chapters.where('sourceId').equals(chapter.sourceId).toArray()).map(c => (c.id === updated.id ? updated : c)));
+    const bookDone = chapterDone && siblings.length > 1 && siblings.every(isChapterFinished);
+    const bonus = (chapterDone ? CHAPTER_COMPLETE_XP : 0) + (bookDone ? BOOK_COMPLETE_XP : 0);
+    const met = seenAgain.length ? `؛ ${fa(seenAgain.length)} واژهٔ کارت‌دار در این بخش دوباره دیده شد` : '';
+    const message = bookDone
+      ? `کتاب را تمام کردی! 🏁 +${fa(CHUNK_COMPLETE_XP + bonus)} امتیاز`
+      : chapterDone
+        ? `فصل تمام شد! 📖 +${fa(CHUNK_COMPLETE_XP + bonus)} امتیاز${met}`
+        : `بخش ${fa(index + 1)} تمام شد. +${fa(CHUNK_COMPLETE_XP)} امتیاز${met}`;
+    await awardXP(CHUNK_COMPLETE_XP + bonus, message);
+    // Reading counts toward the daily goal.
+    await handleGoalUpdate('STUDY', SECTION_GOAL_REVIEWS);
     if (isChestSection(index)) {
       const result = await updateProfile(p => (availableFreezes(p.streakFreezesEarned, p.frozenDates) < MAX_HELD_FREEZES
         ? { ...p, streakFreezesEarned: (p.streakFreezesEarned || 0) + 1 }
@@ -1141,7 +1158,7 @@ export const useAppLogic = () => {
   // Cards picked while reading. A term that already has a card, in any deck
   // and in any form ("decided" for "decide"), gets this place added to it
   // instead of a second card.
-  const handleSaveReaderCards = async (items: ExtractedWordCard[], chapterId: string, chunk: number) => {
+  const handleSaveReaderCards = async (items: ExtractedWordCard[], chapterId: string, chunk: number, options: { quiet?: boolean } = {}) => {
     const chapter = await db.chapters.get(chapterId);
     let source = chapter ? await db.sources.get(chapter.sourceId) : undefined;
     if (!chapter || !source) throw new Error('This chapter is no longer in the library.');
@@ -1174,10 +1191,13 @@ export const useAppLogic = () => {
     });
     await fetchData();
     handleCheckAchievements();
-    const parts = [];
-    if (newCards.length) parts.push(`${fa(newCards.length)} کارت تازه در «${deck.name}»`);
-    if (attached) parts.push(`${fa(attached)} واژه که کارت داشت، این جمله را هم گرفت`);
-    showToast(parts.join('؛ ') || 'چیزی برای ذخیره نبود.');
+    if (!options.quiet) {
+      const parts = [];
+      if (newCards.length) parts.push(`${fa(newCards.length)} کارت تازه در «${deck.name}»`);
+      if (attached) parts.push(`${fa(attached)} واژه که کارت داشت، این جمله را هم گرفت`);
+      showToast(parts.join('؛ ') || 'چیزی برای ذخیره نبود.');
+    }
+    return { cardIds: places.map(p => p.cardId), added: newCards.length, attached };
   };
 
   // The "I know it" list: one tap and the term is never suggested again, in
@@ -1228,6 +1248,50 @@ export const useAppLogic = () => {
     handleStartStudySession({ filter: 'all-cards', limit: 0 }, null, flashcards.filter(c => ids.has(c.id)), 'TEXTS');
   };
 
+  // Review the cards of one book or chapter: the due ones, or the weakest
+  // when none is due. Back to the book afterwards.
+  const handleStartSourceReview = (sourceId: string, chapterId?: string, mode: StudyMode = 'flip') => {
+    const mine = cardsOfSource(occurrences, flashcards, sourceId, chapterId);
+    if (mine.length === 0) {
+      showToast(chapterId ? 'هنوز از این فصل کارتی نساخته‌ای.' : 'هنوز از این کتاب کارتی نساخته‌ای.');
+      return;
+    }
+    const { cards: picked, due } = pickBookReview(mine);
+    if (!due) showToast(`کارت موعدداری نمانده؛ ${fa(picked.length)} کارتِ ضعیف‌تر مرور می‌شود.`);
+    setStudyMode(mode);
+    setStudyDeckId(null);
+    handleStartStudySession({ filter: 'all-cards', limit: 0 }, null, picked, 'TEXTS');
+  };
+
+  // Any cards, by id (the hardest words on the stats page, say).
+  const handleReviewCards = (ids: string[], returnTo: View = 'TODAY', mode: StudyMode = 'flip') => {
+    const wanted = new Set(ids);
+    setStudyMode(mode);
+    setStudyDeckId(null);
+    return handleStartStudySession({ filter: 'all-cards', limit: 0 }, null, flashcards.filter(c => wanted.has(c.id)), returnTo);
+  };
+
+  // A chapter's hard words, picked before reading it: saved as cards at the
+  // section each was found in, then reviewed at once.
+  const handlePrestudyChapter = async (chapterId: string, picks: { item: ExtractedWordCard; chunk: number }[]) => {
+    if (picks.length === 0) return;
+    const byChunk = new Map<number, ExtractedWordCard[]>();
+    for (const { item, chunk } of picks) byChunk.set(chunk, [...(byChunk.get(chunk) || []), item]);
+    const ids: string[] = [];
+    let added = 0;
+    for (const [chunk, items] of byChunk) {
+      const result = await handleSaveReaderCards(items, chapterId, chunk, { quiet: true });
+      ids.push(...result.cardIds);
+      added += result.added;
+    }
+    const wanted = new Set(ids);
+    const fresh = (await db.flashcards.bulkGet([...wanted])).filter((c): c is Flashcard => !!c && !c.isDeleted);
+    showToast(added ? `${fa(added)} کارت تازه برای پیش‌مطالعه ساخته شد.` : 'این واژه‌ها کارت داشتند؛ مرورشان کن.');
+    setStudyMode('flip');
+    setStudyDeckId(null);
+    handleStartStudySession({ filter: 'all-cards', limit: 0 }, null, fresh, 'TEXTS');
+  };
+
   const handleNavigate = (newView: View) => {
     if (newView === 'STUDY') {
         setStudyDeckId(null);
@@ -1249,12 +1313,12 @@ export const useAppLogic = () => {
     if (!name) return;
     const existingDeck = decks.find(d => !d.isDeleted && d.id !== deckId && d.name.trim().toLowerCase() === name.toLowerCase());
     if (existingDeck) {
-        showToast('A deck with this name already exists.');
+        showToast('دسته‌ای با این نام هست.');
         return;
     }
     await db.decks.update(deckId, { name, updatedAt: new Date().toISOString() });
     await fetchData();
-    showToast('Deck renamed successfully!');
+    showToast('نام دسته عوض شد.');
   };
 
   const handleDeleteDeck = async (deckId: string) => {
@@ -1269,10 +1333,10 @@ export const useAppLogic = () => {
           await db.decks.update(deckId, { isDeleted: true, updatedAt: now });
       });
       await fetchData(); 
-      showToast('Deck and its cards deleted successfully!');
+      showToast('دسته و کارت‌هایش حذف شد.');
     } catch (error) {
         console.error("Failed to delete deck:", error);
-        showToast("Error: Could not delete the deck.");
+        showToast('حذف دسته ناموفق بود.');
     }
   };
 
@@ -1288,9 +1352,9 @@ export const useAppLogic = () => {
           signIn(user.username);
           await mergeWithCloud({ pullOnly: !(await hasLocalData()) });
           setIsLoggedIn(true);
-          showToast(`Welcome back, ${username}!`);
+          showToast(`خوش برگشتی، ${username}!`);
       } catch(e) {
-          showToast((e as Error).message || 'Login failed.');
+          showToast((e as Error).message || 'ورود ناموفق بود.');
       } finally {
           setAuthLoading(false);
       }
@@ -1305,9 +1369,9 @@ export const useAppLogic = () => {
           if (await hasLocalData()) await mergeWithCloud();
           else await fetchData();
           setIsLoggedIn(true);
-          showToast(`Account created! Welcome, ${username}!`);
+          showToast(`حساب ساخته شد. خوش آمدی، ${username}!`);
       } catch (e) {
-          showToast((e as Error).message || 'Registration failed.');
+          showToast((e as Error).message || 'ساختن حساب ناموفق بود.');
       } finally {
           setAuthLoading(false);
       }
@@ -1330,7 +1394,7 @@ export const useAppLogic = () => {
     const updates = { audio: false, def: false, ex: false, pron: false, trans: false };
     
     if (!cardToComplete) {
-        if (!options.silent) showToast("Card not found.");
+        if (!options.silent) showToast('کارت پیدا نشد.');
         return { success: false, updates };
     }
 
@@ -1387,12 +1451,12 @@ export const useAppLogic = () => {
         // Performance Fix: Surgically update the state instead of re-fetching everything.
         setFlashcards(prev => prev.map(c => c.id === updatedCard.id ? updatedCard : c));
 
-        if (!options.silent) showToast(`Card "${cardToComplete.front}" updated!`);
+        if (!options.silent) showToast(`کارت «${cardToComplete.front}» کامل شد.`);
         return { success: true, updates };
 
     } catch (error) {
         console.error("Failed to complete card details:", error);
-        if (!options.silent) showToast(`Could not complete details for "${cardToComplete.front}".`);
+        if (!options.silent) showToast(`کامل کردن «${cardToComplete.front}» ناموفق بود.`);
         return { success: false, updates };
     }
   };
@@ -1411,7 +1475,7 @@ export const useAppLogic = () => {
     );
 
     if (incompleteCards.length === 0) {
-        showToast("All cards are already complete!");
+        showToast('همهٔ کارت‌ها کامل‌اند.');
         return;
     }
 
@@ -1453,7 +1517,7 @@ export const useAppLogic = () => {
     if (!cancelAutoFixRef.current) {
         setAutoFixReport(stats);
     } else {
-        showToast("Auto-fix stopped.");
+        showToast('کامل کردن خودکار متوقف شد.');
     }
   };
 
@@ -1482,6 +1546,6 @@ export const useAppLogic = () => {
       startQuickReview, openStudySetup, setStudyMode, handleAddSource, handleOpenSource, handleOpenChapter, handleOpenChunk,
       handleDeleteSource, handleCompleteChunk, loadChapterText, handleSaveReaderCards,
       handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview: () => setSectionReview(null),
-      handleCheckCards,
+      handleCheckCards, handleStartSourceReview, handleReviewCards, handlePrestudyChapter,
   };
 };

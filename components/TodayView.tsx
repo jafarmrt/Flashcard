@@ -5,7 +5,7 @@ import { calculateLevel } from '../services/gamificationService';
 import { stageCounts, STAGE_NAMES, MasteryStage } from '../services/masteryService';
 import { availableFreezes, dayString, weekStrip, weeklyReviewCounts } from '../services/streakService';
 import { chaptersOf, continuePoint, sourceProgress } from '../services/library';
-import { DEFAULT_DAILY_REVIEW_GOAL } from '../services/xpRules';
+import { DEFAULT_DAILY_REVIEW_GOAL, SECTION_GOAL_REVIEWS } from '../services/xpRules';
 import { fa, GoalRing, Icon, Kbd, STAGE_COLORS, StreakChip } from './common/ui';
 
 interface TodayViewProps {
@@ -111,6 +111,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                 {dueCount > 0
                   ? `${fa(dueCount)} کارت موعد دارد${newDueCount > 0 ? `، ${fa(newDueCount)} تا تازه` : ''}.`
                   : 'کارت موعدداری نمانده. با مرور آزاد یا یک بخش تازه از متن ادامه بده.'}
+                {remaining > 0 && ` هر بخشی که بخوانی ${fa(SECTION_GOAL_REVIEWS)} مرور حساب می‌شود.`}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -129,6 +130,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
               )}
               <button type="button" onClick={() => onStartReview('type')} disabled={dueCount === 0}
                 className="min-h-[52px] px-4 rounded-2xl bg-white/15 hover:bg-white/25 font-bold disabled:opacity-40">نوشتنی</button>
+              <button type="button" onClick={() => onStartReview('cloze')} disabled={dueCount === 0} title="واژه در جملهٔ کتاب جا افتاده؛ بنویسش"
+                className="min-h-[52px] px-4 rounded-2xl bg-white/15 hover:bg-white/25 font-bold disabled:opacity-40">جای خالی</button>
               <button type="button" onClick={() => onNavigate('PRACTICE')} disabled={totalWords === 0}
                 className="min-h-[52px] px-4 rounded-2xl bg-white/15 hover:bg-white/25 font-bold disabled:opacity-40">مکالمه و آزمون</button>
               <button type="button" onClick={onOpenSetup} disabled={totalWords === 0}

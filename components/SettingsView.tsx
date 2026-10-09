@@ -228,7 +228,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                         {LEVELS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
                     </select>
                 </Row>
-                <Row title="هدف روزانهٔ مرور" hint="تعداد مرور در روز برای حلقهٔ هدف در صفحهٔ امروز. تغییر از همین امروز حساب می‌شود، مگر هدف امروز کامل شده باشد.">
+                <Row title="هدف روزانهٔ مرور" hint="تعداد مرور در روز برای حلقهٔ هدف در صفحهٔ امروز؛ هر بخشی که می‌خوانی ۵ مرور حساب می‌شود. تغییر از همین امروز حساب می‌شود، مگر هدف امروز کامل شده باشد.">
                     <Segmented label="هدف روزانه" value={settings.dailyReviewGoal || 20} onChange={goal => onUpdateSettings({ dailyReviewGoal: goal })}
                         options={[10, 20, 30, 50].map(n => ({ value: n, label: fa(n) }))} />
                 </Row>

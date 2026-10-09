@@ -86,6 +86,7 @@ const App: React.FC = () => {
         handleAddSource, handleOpenSource, handleOpenChapter, handleOpenChunk, handleDeleteSource,
         handleCompleteChunk, loadChapterText, handleSaveReaderCards,
         knownWords, sectionReview, handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview, handleCheckCards,
+        handleStartSourceReview, handleReviewCards, handlePrestudyChapter,
     } = useAppLogic();
 
     const visibleFlashcards = useMemo(() => flashcards.filter(c => !c.isDeleted), [flashcards]);
@@ -169,6 +170,11 @@ const App: React.FC = () => {
                     onDismissSectionReview={dismissSectionReview}
                     aiOptions={aiRequestOptions(settings)}
                     onCheckCards={handleCheckCards}
+                    settings={settings}
+                    knownTerms={knownTerms}
+                    loadText={loadChapterText}
+                    onStartSourceReview={handleStartSourceReview}
+                    onPrestudyChapter={handlePrestudyChapter}
                 />;
             case 'READER':
                 if (!activeSource || !activeChapter) return null;
@@ -259,7 +265,8 @@ const App: React.FC = () => {
                     audioOptions={geminiAudioOptions(settings)}
                 />;
             case 'STATS':
-                return <StatsView onBack={() => setView('DECKS')} />;
+                return <StatsView cards={visibleFlashcards} sources={sources} occurrences={occurrences}
+                    onReviewCards={ids => { handleReviewCards(ids, 'STATS'); }} onOpenSource={handleOpenSource} />;
             case 'USAGE':
                 return <UsageView cards={visibleFlashcards} onBack={() => setView('SETTINGS')} />;
             case 'CHANGELOG':
