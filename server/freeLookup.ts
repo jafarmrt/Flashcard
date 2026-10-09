@@ -5,7 +5,7 @@
 //   - MyMemory: a Persian translation
 // `fetchImpl` is injectable so the parsing can be tested without the network.
 
-import { STOPWORDS } from '../services/freeCandidates';
+import { STOPWORDS } from '../services/freeCandidates.js';
 
 type FetchLike = (url: string, init?: { signal?: AbortSignal; headers?: Record<string, string> }) => Promise<{
   ok: boolean;

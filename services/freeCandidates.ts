@@ -3,7 +3,7 @@
 // stop list, then word frequency (Datamuse, per million words) decides what is
 // hard for the learner's level. Pure functions; the lookups live in freeExtractionService.
 
-import { splitSentences } from './textChunker';
+import { splitSentences } from './textChunker.js';
 
 // Function words and very common words that never deserve a card.
 export const STOPWORDS = new Set(`
