@@ -7,11 +7,12 @@ import { availableFreezes, dayString, daysToFreeze, MAX_HELD_FREEZES } from '../
 import { CHUNK_COMPLETE_XP, DEFAULT_DAILY_REVIEW_GOAL, isChestSection } from '../services/xpRules';
 import { completeChunk, createTextDoc } from '../services/textLibrary';
 import { ALL_ACHIEVEMENTS } from '../services/achievements';
+import { aiRequestOptions } from '../services/aiSettings';
 import { AUTH_REQUIRED_EVENT, callProxy } from '../services/apiService';
 import { applicableRows, cardStamp, deckStamp, newStudyLogs, profileStamp, stampMap, syncFingerprint } from '../services/syncState';
 import { isDue, isNewCard } from '../services/srsService';
 import { applyIncomingSettings, toSyncedSettings } from '../services/settingsSync';
-import { convertToCSV, parseCSV } from '../services/csvService';
+import { convertToCSV, parseCollocations, parseCSV, parseKind, splitList } from '../services/csvService';
 import { freeEnrich, FreeEnrichment } from '../services/freeExtractionService';
 import { 
   generatePersianDetails,
@@ -26,7 +27,10 @@ import { AutoFixStats } from '../components/AutoFixReportModal';
 
 // Types used within the hook and exported for the App component
 export type View = 'TODAY' | 'ME' | 'TEXTS' | 'READER' | 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS' | 'PROFILE' | 'AI_EXTRACT';
-export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
+export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'offline' | 'error';
+
+// A fetch that never reached the server (no connection, filtered network).
+const isNetworkError = (error: unknown) => error instanceof TypeError || (typeof navigator !== 'undefined' && navigator.onLine === false);
 export type HealthStatus = 'ok' | 'error' | 'checking';
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted' | 'createdAt' | 'updatedAt'>;
 type User = { username: string };
@@ -395,7 +399,7 @@ export const useAppLogic = () => {
         setSyncStatus('synced');
     } catch (error) {
         console.error('Sync failed:', error);
-        setSyncStatus('error');
+        setSyncStatus(isNetworkError(error) ? 'offline' : 'error');
     } finally {
         syncInFlight.current = false;
         if (syncAgain.current) {
@@ -455,7 +459,7 @@ export const useAppLogic = () => {
             const lastUser = localStorage.getItem(LAST_USER_KEY);
             if (lastUser && e instanceof TypeError) {
                 await startSignedIn(lastUser);
-                setSyncStatus('error');
+                setSyncStatus('offline');
             }
         }
         setAppLoading(false);
@@ -820,9 +824,14 @@ export const useAppLogic = () => {
                 back: row.back,
                 pronunciation: row.pronunciation || '',
                 partOfSpeech: row.partOfSpeech || '',
-                definition: row.definition?.split(';').map(s => s.trim()) || [],
-                exampleSentenceTarget: row.exampleSentenceTarget?.split(';').map(s => s.trim()) || [],
+                definition: splitList(row.definition),
+                exampleSentenceTarget: splitList(row.exampleSentenceTarget),
                 notes: row.notes || '',
+                kind: parseKind(row.kind),
+                sourceSentence: row.sourceSentence || undefined,
+                collocations: parseCollocations(row.collocations),
+                grammarPattern: row.grammarPattern || undefined,
+                practicePrompt: row.practicePrompt || undefined,
                 repetition: 0,
                 easinessFactor: 2.5,
                 interval: 0,
@@ -1074,13 +1083,6 @@ export const useAppLogic = () => {
     }
   };
 
-  // Return type used to aggregate stats
-  const aiRequestOptions = () => ({
-    aiProvider: settings.aiProvider || 'gemini',
-    aiBaseUrl: settings.aiBaseUrl || undefined,
-    customApiKey: settings.customApiKey || undefined,
-    model: settings.aiModel || undefined,
-  });
 
   const handleCompleteCardDetails = async (cardId: string, options: { silent?: boolean } = {}): Promise<{
     success: boolean;
@@ -1116,7 +1118,7 @@ export const useAppLogic = () => {
         let persianDetails = { back: cardToComplete.back, notes: cardToComplete.notes };
         if (!cardToComplete.back || !cardToComplete.notes) {
              try {
-                const ai = await generatePersianDetails(cardToComplete.front, aiRequestOptions());
+                const ai = await generatePersianDetails(cardToComplete.front, aiRequestOptions(settings));
                 persianDetails = { back: cardToComplete.back || ai.back, notes: cardToComplete.notes || ai.notes };
              } catch (e) {
                  console.error("AI Generation failed during complete, using free translation:", e);
