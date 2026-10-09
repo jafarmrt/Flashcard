@@ -5,6 +5,7 @@ import { aiRequestOptions, providerKey, providerList, providerProblem, withPrima
 import { extractFromLongText, ExtractionProgress, ExtractionSource } from '../services/extractionPipeline';
 import { DEFAULT_CHUNK_WORDS, splitIntoChunks, wordCount as countWords } from '../services/textChunker';
 import { speakText, stopSpeech, pauseSpeech, resumeSpeech, isSpeechSupported, getAvailableVoices } from '../services/ttsService';
+import { fa, Icon } from './common/ui';
 
 interface AiTextExtractorViewProps {
   decks: Deck[];
@@ -18,26 +19,27 @@ interface AiTextExtractorViewProps {
 }
 
 const KIND_LABELS: Record<string, { label: string; className: string }> = {
-  word: { label: 'واژه', className: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300' },
-  phrase: { label: 'عبارت', className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300' },
-  idiom: { label: 'اصطلاح', className: 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300' },
-  grammar: { label: 'ساختار دستوری', className: 'bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300' },
+  word: { label: 'واژه', className: 'bg-brand-100 text-brand-700 dark:bg-brand-900/50 dark:text-brand-200' },
+  phrase: { label: 'عبارت', className: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200' },
+  idiom: { label: 'اصطلاح', className: 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200' },
+  grammar: { label: 'ساختار دستوری', className: 'bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-200' },
 };
 
 const CEFR_LEVELS = [
-  { id: 'A1', label: 'A1 - Beginner' },
-  { id: 'A2', label: 'A2 - Elementary' },
-  { id: 'B1', label: 'B1 - Intermediate' },
-  { id: 'B2', label: 'B2 - Upper Intermediate' },
-  { id: 'C1', label: 'C1 - Advanced' },
-  { id: 'C2', label: 'C2 - Proficient' },
-  { id: 'IELTS', label: 'IELTS / Academic' },
-  { id: 'TOEFL', label: 'TOEFL Vocabulary' },
+  { id: 'A1', label: 'مبتدی' },
+  { id: 'A2', label: 'پایه' },
+  { id: 'B1', label: 'متوسط' },
+  { id: 'B2', label: 'بالاتر از متوسط' },
+  { id: 'C1', label: 'پیشرفته' },
+  { id: 'C2', label: 'تسلط' },
+  { id: 'IELTS', label: 'آیلتس، واژه‌های دانشگاهی' },
+  { id: 'TOEFL', label: 'واژه‌های تافل' },
 ];
 
 export interface ProviderPreset {
   id: string;
   name: string;
+  note: string; // a few Persian words shown after the name
   provider: 'gemini' | 'openai-compatible';
   baseUrl: string;
   defaultModel: string;
@@ -49,27 +51,30 @@ export interface ProviderPreset {
 export const AI_PRESETS: ProviderPreset[] = [
   {
     id: 'gemini',
-    name: 'Google Gemini (Official / Built-in)',
+    name: 'Google Gemini',
+    note: 'رسمی، با کلید سرور',
     provider: 'gemini',
     baseUrl: '',
     defaultModel: 'gemini-2.5-flash',
     models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'],
-    keyPlaceholder: 'AIzaSy... (Leave empty to use built-in server key)',
-    keyHelp: 'Built-in server key is used if empty.',
+    keyPlaceholder: 'AIzaSy…',
+    keyHelp: 'اگر خالی بماند، کلید سرور به کار می‌رود.',
   },
   {
     id: 'groq',
-    name: 'Groq (fast, free tier - Llama 3.3)',
+    name: 'Groq',
+    note: 'سریع، سهمیهٔ رایگان',
     provider: 'openai-compatible',
     baseUrl: 'https://api.groq.com/openai/v1',
     defaultModel: 'llama-3.3-70b-versatile',
     models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
-    keyPlaceholder: 'gsk_...',
-    keyHelp: 'Get a free API key from console.groq.com',
+    keyPlaceholder: 'gsk_…',
+    keyHelp: 'کلید رایگان را از console.groq.com بگیر.',
   },
   {
     id: 'openrouter',
-    name: 'OpenRouter (All Open-Source & Proprietary Models)',
+    name: 'OpenRouter',
+    note: 'مدل‌های متن‌باز و تجاری',
     provider: 'openai-compatible',
     baseUrl: 'https://openrouter.ai/api/v1',
     defaultModel: 'deepseek/deepseek-chat',
@@ -80,40 +85,62 @@ export const AI_PRESETS: ProviderPreset[] = [
       'qwen/qwen-2.5-72b-instruct',
       'mistralai/mistral-large-2411',
     ],
-    keyPlaceholder: 'sk-or-v1-...',
-    keyHelp: 'Get your key from openrouter.ai',
+    keyPlaceholder: 'sk-or-v1-…',
+    keyHelp: 'کلید را از openrouter.ai بگیر.',
   },
   {
     id: 'deepseek',
-    name: 'DeepSeek (Official API)',
+    name: 'DeepSeek',
+    note: 'سرویس رسمی',
     provider: 'openai-compatible',
     baseUrl: 'https://api.deepseek.com/v1',
     defaultModel: 'deepseek-chat',
     models: ['deepseek-chat', 'deepseek-reasoner'],
-    keyPlaceholder: 'sk-...',
-    keyHelp: 'Get your key from platform.deepseek.com',
+    keyPlaceholder: 'sk-…',
+    keyHelp: 'کلید را از platform.deepseek.com بگیر.',
   },
   {
     id: 'ollama',
-    name: 'Ollama / Local AI (Self-Hosted Open-Source)',
+    name: 'Ollama',
+    note: 'روی رایانهٔ خودت',
     provider: 'openai-compatible',
     baseUrl: 'http://localhost:11434/v1',
     defaultModel: 'llama3.3',
     models: ['llama3.3', 'llama3.1', 'mistral', 'qwen2.5:7b', 'deepseek-r1:8b'],
-    keyPlaceholder: 'Not required for local Ollama',
-    keyHelp: 'Runs locally on your machine with Ollama.',
+    keyPlaceholder: '',
+    keyHelp: 'با Ollama روی رایانهٔ خودت اجرا می‌شود؛ کلید لازم نیست.',
   },
   {
     id: 'custom',
-    name: 'Custom OpenAI-Compatible / Self-Hosted',
+    name: 'سرویس دیگر',
+    note: 'سازگار با OpenAI',
     provider: 'openai-compatible',
     baseUrl: '',
     defaultModel: 'custom-model',
     models: [],
-    keyPlaceholder: 'Bearer API Key',
-    keyHelp: 'Compatible with any vLLM, LMStudio, Together, or OpenAI endpoint.',
+    keyPlaceholder: 'Bearer API key',
+    keyHelp: 'با هر سرویس سازگار با OpenAI کار می‌کند؛ مثل vLLM، LM Studio، Together یا خود OpenAI.',
   },
 ];
+
+// Shared looks, in the style of the other Persian screens.
+const panel = 'bg-white dark:bg-slate-800 rounded-3xl p-5 sm:p-6';
+const fieldLabel = 'block text-sm font-bold text-ink dark:text-slate-200 mb-1.5';
+const smallLabel = 'text-xs font-bold text-ink-muted dark:text-slate-400';
+const field = 'w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-ink dark:text-white text-sm focus:border-brand-500 focus:outline-none';
+const primaryButton = 'inline-flex items-center justify-center gap-2 min-h-[48px] px-6 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+const secondaryButton = 'inline-flex items-center justify-center gap-1.5 min-h-[44px] px-5 rounded-xl text-sm font-bold text-ink dark:text-slate-200 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors';
+const smallButton = 'min-h-[36px] px-3 rounded-xl text-sm font-bold bg-slate-100 dark:bg-slate-700 text-ink dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors';
+const segment = (active: boolean) => `min-h-[36px] px-3 rounded-lg text-sm ${active ? 'bg-white dark:bg-slate-600 shadow-sm font-bold text-brand-700 dark:text-white' : 'text-ink-muted dark:text-slate-300'}`;
+
+const PauseIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>;
+const StopIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>;
+const Spinner = () => (
+  <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+  </svg>
+);
 
 export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
   decks,
@@ -130,7 +157,7 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
   const [wordCount, setWordCount] = useState<number>(6);
   const [selectedDeckName, setSelectedDeckName] = useState<string>(decks[0]?.name || 'AI Reading Vocabulary');
   const [isCustomDeck, setIsCustomDeck] = useState(false);
-  
+
   const [isLoading, setIsLoading] = useState(false);
   const [source, setSource] = useState<ExtractionSource>(settings.extractionSource || 'ai');
   const [includeGrammar, setIncludeGrammar] = useState(true);
@@ -138,7 +165,7 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
   const abortRef = useRef<AbortController | null>(null);
   const [extractedCards, setExtractedCards] = useState<ExtractedWordCard[]>([]);
   const [step, setStep] = useState<'input' | 'review'>('input');
-  
+
   // TTS State
   const [isReading, setIsReading] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -149,7 +176,7 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
 
   // AI Config Drawer/Modal
   const [isConfigOpen, setIsConfigOpen] = useState(false);
-  
+
   // The service tried first, with its own key, model and address.
   const savedProviders = providerList(settings);
   const savedEntry = (id: string) => savedProviders.find(p => p.id === id);
@@ -187,7 +214,7 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
 
   const handleToggleReadAloud = () => {
     if (!inputText.trim()) {
-      showToast('Please enter some text to read aloud.');
+      showToast('اول متنی بنویس یا بچسبان تا خوانده شود.');
       return;
     }
 
@@ -212,7 +239,7 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
         onError: () => {
           setIsReading(false);
           setIsPaused(false);
-          showToast('Audio playback stopped.');
+          showToast('پخش صدا متوقف شد.');
         },
       });
     }
@@ -280,7 +307,7 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
       }, customKeyInput),
       userLevel: targetLevel as any,
     });
-    showToast(`AI Provider updated to ${activePreset.name}!`);
+    showToast(`از این به بعد اول ${activePreset.name} امتحان می‌شود.`);
     setIsConfigOpen(false);
   };
 
@@ -297,7 +324,7 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
 
   const handleExtract = async () => {
     if (!inputText.trim()) {
-      showToast('Please enter or paste some text first.');
+      showToast('اول متن انگلیسی را بنویس یا بچسبان.');
       return;
     }
 
@@ -322,22 +349,22 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
 
       if (result.cards.length === 0) {
         showToast(result.failedSections > 0
-          ? `Extraction failed. ${result.aiError ? `AI: ${result.aiError}` : 'Check the AI settings or your connection.'}`
-          : 'No suitable vocabulary could be extracted. Try a longer text or adjust level.');
+          ? `استخراج نشد. ${result.aiError ? `خطای هوش مصنوعی: ${result.aiError}` : 'تنظیمات هوش مصنوعی یا اتصال اینترنت را بررسی کن.'}`
+          : 'واژهٔ مناسبی پیدا نشد. متن بلندتری بده یا سطح را عوض کن.');
         return;
       }
 
       setExtractedCards(result.cards);
       setStep('review');
       const notes = [
-        result.stopped ? 'stopped early' : '',
-        result.fallbackSections ? `${result.fallbackSections} section(s) used free dictionaries${result.aiError ? ` because ${result.aiError}` : ''}` : '',
-        result.failedSections ? `${result.failedSections} section(s) failed` : '',
-      ].filter(Boolean).join(', ');
-      showToast(`Found ${result.cards.length} items in ${result.sections} section(s)${notes ? ` (${notes})` : ''}.`);
+        result.stopped ? 'زودتر متوقف شد' : '',
+        result.fallbackSections ? `${fa(result.fallbackSections)} بخش با دیکشنری رایگان${result.aiError ? `، چون ${result.aiError}` : ''}` : '',
+        result.failedSections ? `${fa(result.failedSections)} بخش ناموفق` : '',
+      ].filter(Boolean).join('؛ ');
+      showToast(`${fa(result.cards.length)} مورد در ${fa(result.sections)} بخش پیدا شد${notes ? ` (${notes})` : ''}.`);
     } catch (error) {
       console.error('Extraction error:', error);
-      showToast((error as Error).message || 'Failed to extract vocabulary.');
+      showToast((error as Error).message || 'استخراج واژه‌ها نشد.');
     } finally {
       abortRef.current = null;
       setIsLoading(false);
@@ -364,143 +391,137 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
   const handleSaveToDeck = async () => {
     const selectedCards = extractedCards.filter(c => c.selected);
     if (selectedCards.length === 0) {
-      showToast('Please select at least one word to save.');
+      showToast('دست‌کم یک مورد را برای ذخیره انتخاب کن.');
       return;
     }
 
     const deckName = selectedDeckName.trim();
     if (!deckName) {
-      showToast('Please choose or enter a deck name.');
+      showToast('یک دسته انتخاب کن یا نام دستهٔ تازه را بنویس.');
       return;
     }
 
     setIsLoading(true);
     try {
       await onSaveExtractedCards(selectedCards, deckName);
-      showToast(`Added ${selectedCards.length} cards to "${deckName}"! 🎉`);
+      showToast(`${fa(selectedCards.length)} کارت به «${deckName}» اضافه شد! 🎉`);
     } catch (e) {
-      showToast('Failed to save flashcards.');
+      showToast('کارت‌ها ذخیره نشدند.');
     } finally {
       setIsLoading(false);
     }
   };
 
   const selectedCount = extractedCards.filter(c => c.selected).length;
+  const activeAi = aiRequestOptions(settings);
+  const levelInfo = CEFR_LEVELS.find(l => l.id === targetLevel);
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div dir="rtl" className="font-fa max-w-4xl mx-auto w-full flex flex-col gap-5">
       {/* Header Banner */}
-      <div className="bg-gradient-to-r from-indigo-700 via-indigo-600 to-purple-700 rounded-2xl p-6 text-white shadow-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <div className="flex items-center gap-2 text-xs text-indigo-200 mb-1">
-            <span>AI Linguistic Engine</span>
+      <header className="bg-brand-500 text-white rounded-3xl p-5 md:p-7 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div className="min-w-0">
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-brand-100 mb-1">
+            <span>هوش مصنوعی</span>
             <span aria-hidden="true">·</span>
-            <span className="font-mono text-white font-semibold">{aiRequestOptions(settings).model}</span>
-            {aiRequestOptions(settings).aiProvider === 'openai-compatible' && (
+            <bdi dir="ltr" className="font-en font-semibold text-white break-all">{activeAi.model}</bdi>
+            {activeAi.aiProvider === 'openai-compatible' && (
               <>
                 <span aria-hidden="true">·</span>
-                <span className="text-emerald-300 font-medium">Open-Source</span>
+                <span className="text-emerald-200 font-medium">متن‌باز</span>
               </>
             )}
-          </div>
-          <h2 className="text-2xl md:text-3xl font-bold tracking-tight">AI Reader & Vocabulary Extractor</h2>
-          <p className="text-sm text-indigo-100 mt-1 max-w-xl leading-relaxed">
-            Paste any English text to read aloud with natural speech, extract level-appropriate vocabulary, and save flashcards with Persian translations and mnemonics.
+          </p>
+          <h1 className="text-2xl md:text-3xl font-extrabold">استخراج یکجا</h1>
+          <p className="text-sm text-brand-100 mt-1 max-w-xl leading-relaxed">
+            متن انگلیسی را بچسبان تا بلند خوانده شود؛ واژه‌ها، عبارت‌ها و ساختارهای هم‌سطح تو پیدا می‌شوند و با معنی فارسی و نکتهٔ حفظ کردن، کارت می‌شوند.
           </p>
         </div>
         <button
+          type="button"
           onClick={() => setIsConfigOpen(true)}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white text-sm font-semibold transition backdrop-blur-sm shrink-0 shadow-sm hover:scale-[1.02] active:scale-95"
+          className="shrink-0 inline-flex items-center gap-2 min-h-[44px] px-4 rounded-xl bg-white/15 hover:bg-white/25 text-white text-sm font-bold transition-colors"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-          <span>AI Model Settings</span>
+          <Icon.Gear size={18} />
+          <span>تنظیمات هوش مصنوعی</span>
         </button>
-      </div>
+      </header>
 
       {step === 'input' && (
-        <div className="space-y-6">
-          {/* Main Input Box */}
-          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-sm border border-slate-200/80 dark:border-slate-700/80 space-y-4">
+        <section className={`${panel} flex flex-col gap-5`}>
+          {/* Text and read-aloud controls */}
+          <div className="flex flex-col gap-3">
             <div className="flex flex-wrap justify-between items-center gap-2">
-              <label htmlFor="ai-text-input" className="font-semibold text-slate-800 dark:text-slate-100 flex items-center gap-2 text-base">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-600 dark:text-indigo-400"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-                <span>Enter English Text</span>
+              <label htmlFor="ai-text-input" className="font-bold text-ink dark:text-white flex items-center gap-2">
+                <Icon.Log size={18} className="text-brand-500 dark:text-brand-300" />
+                <span>متن انگلیسی</span>
               </label>
 
-              {/* TTS Read Aloud Control Bar */}
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {isReading && (
-                  <div className="flex items-center gap-1.5 px-3 py-1 bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 rounded-lg text-xs font-semibold text-indigo-700 dark:text-indigo-300 animate-pulse">
-                    <span className="w-2 h-2 rounded-full bg-indigo-600 animate-ping"></span>
-                    <span>{isPaused ? 'Paused' : 'Reading Aloud...'}</span>
-                  </div>
+                  <span role="status" className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-brand-50 dark:bg-brand-900/40 text-xs font-bold text-brand-700 dark:text-brand-200">
+                    <span className={`w-2 h-2 rounded-full bg-brand-500 ${isPaused ? '' : 'animate-ping'}`}></span>
+                    <span>{isPaused ? 'مکث شده' : 'در حال خواندن…'}</span>
+                  </span>
                 )}
-                
+
                 <button
                   type="button"
                   onClick={handleToggleReadAloud}
-                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm ${
-                    isReading && !isPaused
-                      ? 'bg-amber-500 hover:bg-amber-600 text-white'
-                      : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                  className={`inline-flex items-center gap-1.5 min-h-[36px] px-3.5 rounded-xl text-sm font-bold text-white transition-colors ${
+                    isReading && !isPaused ? 'bg-amber-600 hover:bg-amber-700' : 'bg-brand-500 hover:bg-brand-600'
                   }`}
-                  title="Read the text aloud using Speech Synthesis"
+                  title="متن با صدای مرورگر خوانده می‌شود"
                 >
-                  {isReading && !isPaused ? (
-                    <>
-                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
-                      <span>Pause Audio</span>
-                    </>
-                  ) : (
-                    <>
-                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>
-                      <span>{isPaused ? 'Resume Audio' : '🔊 Read Aloud (روخوانی صوتی)'}</span>
-                    </>
-                  )}
+                  {isReading && !isPaused ? <PauseIcon /> : <Icon.Speaker size={16} />}
+                  <span>{isReading && !isPaused ? 'مکث' : isPaused ? 'ادامهٔ خواندن' : 'بلند بخوان'}</span>
                 </button>
 
                 {isReading && (
                   <button
                     type="button"
                     onClick={handleStopReading}
-                    className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-700 hover:bg-red-100 dark:hover:bg-red-900/40 text-slate-600 hover:text-red-600 transition"
-                    title="Stop Audio"
+                    className="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-red-100 dark:hover:bg-red-900/40 text-ink-muted dark:text-slate-300 hover:text-red-700 transition-colors"
+                    title="توقف خواندن"
+                    aria-label="توقف خواندن"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
+                    <StopIcon />
                   </button>
                 )}
               </div>
             </div>
 
             {/* Audio Options Subbar (Speed & Voice) */}
-            <div className="flex flex-wrap items-center justify-between text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/40 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 gap-3">
-              <div className="flex items-center gap-3">
-                <span className="font-semibold text-slate-700 dark:text-slate-300">Voice Speed:</span>
-                <div className="flex items-center gap-1">
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-ink-muted dark:text-slate-400 bg-slate-50 dark:bg-slate-900/40 p-2.5 rounded-2xl">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-ink dark:text-slate-300">سرعت صدا</span>
+                <div role="group" aria-label="سرعت صدا" className="flex items-center gap-1">
                   {[0.75, 1.0, 1.25, 1.5].map(rate => (
                     <button
                       key={rate}
                       type="button"
                       onClick={() => setReadingSpeed(rate)}
-                      className={`px-2 py-0.5 rounded-md font-mono text-[11px] transition ${
+                      aria-pressed={readingSpeed === rate}
+                      className={`min-h-[28px] px-2 rounded-md transition-colors ${
                         readingSpeed === rate
-                          ? 'bg-indigo-600 text-white font-bold'
-                          : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                          ? 'bg-brand-500 text-white font-bold'
+                          : 'bg-white dark:bg-slate-800 text-ink dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
                       }`}
                     >
-                      {rate}x
+                      {fa(rate)}×
                     </button>
                   ))}
                 </div>
               </div>
 
               {voices.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <span className="font-semibold text-slate-700 dark:text-slate-300">Voice Accent:</span>
+                <label className="flex items-center gap-2 min-w-0 max-w-full">
+                  <span className="font-bold text-ink dark:text-slate-300 shrink-0">صدای گوینده</span>
                   <select
+                    dir="ltr"
                     value={selectedVoiceURI}
                     onChange={e => setSelectedVoiceURI(e.target.value)}
-                    className="max-w-[200px] truncate p-1 text-[11px] rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+                    className="font-en min-w-0 max-w-[200px] truncate min-h-[32px] px-1.5 text-[11px] rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-ink dark:text-slate-200"
                   >
                     {voices.map(v => (
                       <option key={v.voiceURI} value={v.voiceURI}>
@@ -508,408 +529,388 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
                       </option>
                     ))}
                   </select>
-                </div>
+                </label>
               )}
             </div>
 
+            {/* English text: left to right once there is some; the Persian hint reads right to left. */}
             <textarea
               id="ai-text-input"
               rows={11}
+              dir={inputText ? 'ltr' : 'rtl'}
               value={inputText}
               onChange={e => setInputText(e.target.value)}
-              placeholder="Paste English article, speech transcript, book excerpt, story, or paragraph here..."
-              className="w-full p-4 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900/50 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm leading-relaxed"
+              placeholder="مقاله، فصلی از کتاب، داستان یا متن یک سخنرانی را اینجا بچسبان"
+              className={`w-full p-4 rounded-2xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900/50 text-ink dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-brand-500 text-sm leading-relaxed ${inputText ? 'font-en' : ''}`}
             />
 
             {textWordCount > 0 && (
-              <p className="text-xs text-slate-500 dark:text-slate-400" dir="rtl">
-                {textWordCount} کلمه؛ در {sectionCount} بخش حداکثر {DEFAULT_CHUNK_WORDS} کلمه‌ای بررسی می‌شود.
+              <p className="text-xs text-ink-muted dark:text-slate-400">
+                {fa(textWordCount)} واژه؛ در {fa(sectionCount)} بخش (هر بخش حداکثر {fa(DEFAULT_CHUNK_WORDS)} واژه) بررسی می‌شود.
               </p>
             )}
+          </div>
 
-            {/* Extraction source */}
-            <div className="flex flex-wrap items-center gap-3 text-xs" dir="rtl">
-              <span className="font-bold text-slate-600 dark:text-slate-300">منبع استخراج:</span>
-              <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-700 rounded-lg">
-                <button
-                  type="button"
-                  onClick={() => handleSelectSource('ai')}
-                  className={`px-3 py-1 rounded-md font-semibold ${source === 'ai' ? 'bg-white dark:bg-slate-600 shadow text-indigo-700 dark:text-indigo-300' : 'text-slate-600 dark:text-slate-300'}`}
-                >
+          {/* Extraction source */}
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span id="source-label" className="text-sm font-bold text-ink dark:text-slate-200">منبع استخراج</span>
+              <div role="group" aria-labelledby="source-label" className="flex flex-wrap gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-700">
+                <button type="button" onClick={() => handleSelectSource('ai')} aria-pressed={source === 'ai'} className={segment(source === 'ai')}>
                   هوش مصنوعی
                 </button>
-                <button
-                  type="button"
-                  onClick={() => handleSelectSource('free')}
-                  className={`px-3 py-1 rounded-md font-semibold ${source === 'free' ? 'bg-white dark:bg-slate-600 shadow text-indigo-700 dark:text-indigo-300' : 'text-slate-600 dark:text-slate-300'}`}
-                >
-                  دیکشنری‌های رایگان (بدون هوش مصنوعی)
+                <button type="button" onClick={() => handleSelectSource('free')} aria-pressed={source === 'free'} className={segment(source === 'free')}>
+                  دیکشنری رایگان
                 </button>
               </div>
-              {source === 'ai' ? (
-                <label className="flex items-center gap-1.5 text-slate-600 dark:text-slate-300 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={includeGrammar}
-                    onChange={e => setIncludeGrammar(e.target.checked)}
-                    className="accent-indigo-600"
-                  />
-                  <span>ساختارهای دستوری هم پیدا شود</span>
-                </label>
-              ) : (
-                <span className="text-slate-500 dark:text-slate-400">
-                  واژه‌های سخت با بسامد کلمه پیدا می‌شوند؛ ساختار دستوری و نکته حفظ کردن فقط با هوش مصنوعی.
-                </span>
-              )}
             </div>
-
-            {/* Target Level & Options Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-2">
-              {/* Target Level */}
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">
-                  Target Proficiency Level
-                </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                  {CEFR_LEVELS.map(lvl => (
-                    <button
-                      key={lvl.id}
-                      type="button"
-                      onClick={() => setTargetLevel(lvl.id)}
-                      className={`px-2.5 py-2 text-xs font-semibold rounded-xl border transition text-center ${
-                        targetLevel === lvl.id
-                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
-                          : 'bg-slate-50 dark:bg-slate-700 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-600'
-                      }`}
-                    >
-                      {lvl.id}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Number of Words & Deck */}
-              <div className="space-y-3">
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                      Items per {DEFAULT_CHUNK_WORDS}-word section
-                    </label>
-                    <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">
-                      {wordCount} per section{sectionCount > 1 ? ` · up to ${wordCount * sectionCount} total` : ''}
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="2"
-                    max="15"
-                    step="1"
-                    value={wordCount}
-                    onChange={e => setWordCount(parseInt(e.target.value, 10))}
-                    className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-                  />
-                  <div className="flex justify-between text-[10px] text-slate-400 px-1 mt-1 font-mono">
-                    <span>2 (Quick)</span>
-                    <span>6 (Standard)</span>
-                    <span>15 (Deep)</span>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
-                    Target Deck
-                  </label>
-                  {!isCustomDeck ? (
-                    <div className="flex gap-2">
-                      <select
-                        value={selectedDeckName}
-                        onChange={e => setSelectedDeckName(e.target.value)}
-                        className="flex-grow p-2 text-sm rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-slate-100"
-                      >
-                        {decks.map(d => (
-                          <option key={d.id} value={d.name}>{d.name}</option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsCustomDeck(true);
-                          setSelectedDeckName('');
-                        }}
-                        className="px-3 py-2 text-xs font-semibold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 rounded-xl hover:bg-indigo-100 transition"
-                      >
-                        + New Deck
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        placeholder="Enter new deck name..."
-                        value={selectedDeckName}
-                        onChange={e => setSelectedDeckName(e.target.value)}
-                        className="flex-grow p-2 text-sm rounded-xl border border-indigo-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsCustomDeck(false);
-                          setSelectedDeckName(decks[0]?.name || 'Default Deck');
-                        }}
-                        className="px-3 py-2 text-xs font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {progress && (
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400">
-                  <span>Section {Math.min(progress.done + 1, progress.total)} of {progress.total} · {progress.found} items found</span>
-                  {progress.fallbackSections > 0 && (
-                    <span className="text-amber-600 dark:text-amber-400">{progress.fallbackSections} section(s) via free dictionaries</span>
-                  )}
-                </div>
-                <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2">
-                  <div
-                    className="bg-indigo-600 h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }}
-                  />
-                </div>
-              </div>
+            {source === 'ai' ? (
+              <label className="inline-flex items-center gap-2 text-sm text-ink dark:text-slate-300 cursor-pointer self-start">
+                <input
+                  type="checkbox"
+                  checked={includeGrammar}
+                  onChange={e => setIncludeGrammar(e.target.checked)}
+                  className="w-[18px] h-[18px] accent-brand-500"
+                />
+                <span>ساختارهای دستوری هم پیدا شود</span>
+              </label>
+            ) : (
+              <p className="text-xs text-ink-muted dark:text-slate-400 leading-relaxed">
+                بدون هوش مصنوعی، واژه‌های سخت از روی بسامدشان پیدا می‌شوند؛ ساختار دستوری و نکتهٔ حفظ کردن فقط با هوش مصنوعی ساخته می‌شود.
+              </p>
             )}
+          </div>
 
-            {/* Actions */}
-            <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-100 dark:border-slate-700">
-              {isLoading && (
-                <button
-                  type="button"
-                  onClick={handleStopExtraction}
-                  className="px-4 py-2.5 rounded-xl text-sm font-semibold text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 transition"
-                >
-                  Stop
-                </button>
+          {/* Target Level & Options Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {/* Target Level */}
+            <div>
+              <p id="level-label" className={fieldLabel}>سطح هدف</p>
+              <div role="group" aria-labelledby="level-label" className="grid grid-cols-4 gap-1.5">
+                {CEFR_LEVELS.map(lvl => (
+                  <button
+                    key={lvl.id}
+                    type="button"
+                    onClick={() => setTargetLevel(lvl.id)}
+                    aria-pressed={targetLevel === lvl.id}
+                    title={lvl.label}
+                    className={`font-en min-h-[40px] px-1 text-xs font-bold rounded-xl border transition-colors text-center ${
+                      targetLevel === lvl.id
+                        ? 'bg-brand-500 text-white border-brand-500'
+                        : 'bg-slate-50 dark:bg-slate-700 text-ink dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-600'
+                    }`}
+                  >
+                    {lvl.id}
+                  </button>
+                ))}
+              </div>
+              {levelInfo && (
+                <p className="text-xs text-ink-muted dark:text-slate-400 mt-1.5">
+                  <bdi dir="ltr" className="font-en">{levelInfo.id}</bdi>، {levelInfo.label}؛ موردهای خیلی آسان برای این سطح کنار گذاشته می‌شوند.
+                </p>
               )}
-              <button
-                type="button"
-                onClick={onCancel}
-                className="px-5 py-2.5 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition"
-              >
-                Back to Decks
-              </button>
-              <button
-                type="button"
-                disabled={isLoading || !inputText.trim()}
-                onClick={handleExtract}
-                className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-semibold text-sm shadow-md transition transform active:scale-95 disabled:cursor-not-allowed"
-              >
-                {isLoading ? (
-                  <>
-                    <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    <span>Extracting Vocabulary...</span>
-                  </>
+            </div>
+
+            {/* Number of Words & Deck */}
+            <div className="flex flex-col gap-4">
+              <div>
+                <div className="flex flex-wrap justify-between items-baseline gap-x-3 gap-y-0.5 mb-1.5">
+                  <label htmlFor="per-section" className="text-sm font-bold text-ink dark:text-slate-200">
+                    چند مورد از هر بخش {fa(DEFAULT_CHUNK_WORDS)} واژه‌ای
+                  </label>
+                  <span className="text-xs font-bold text-brand-600 dark:text-brand-300">
+                    {fa(wordCount)} از هر بخش{sectionCount > 1 ? ` · تا ${fa(wordCount * sectionCount)} در کل` : ''}
+                  </span>
+                </div>
+                <input
+                  id="per-section"
+                  type="range"
+                  min="2"
+                  max="15"
+                  step="1"
+                  value={wordCount}
+                  onChange={e => setWordCount(parseInt(e.target.value, 10))}
+                  className="w-full h-2 rounded-lg cursor-pointer accent-brand-500"
+                />
+                <div className="flex justify-between text-[11px] text-ink-muted dark:text-slate-400 px-1 mt-1">
+                  <span>{fa(2)} (سریع)</span>
+                  <span>{fa(6)} (معمولی)</span>
+                  <span>{fa(15)} (کامل)</span>
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="target-deck" className={fieldLabel}>دستهٔ مقصد</label>
+                {!isCustomDeck ? (
+                  <div className="flex gap-2">
+                    <select
+                      id="target-deck"
+                      value={selectedDeckName}
+                      onChange={e => setSelectedDeckName(e.target.value)}
+                      className={`${field} flex-1 min-w-0`}
+                    >
+                      {decks.map(d => (
+                        <option key={d.id} value={d.name}>{d.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomDeck(true);
+                        setSelectedDeckName('');
+                      }}
+                      className="shrink-0 inline-flex items-center gap-1 min-h-[44px] px-3 rounded-xl text-sm font-bold text-brand-700 dark:text-brand-200 bg-brand-50 dark:bg-brand-900/40 hover:bg-brand-100 dark:hover:bg-brand-900/60 transition-colors"
+                    >
+                      <Icon.Plus size={16} />
+                      <span>دستهٔ تازه</span>
+                    </button>
+                  </div>
                 ) : (
-                  <>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-                    <span>Extract {source === 'free' ? 'with Free Dictionaries' : 'with AI'} (Level {targetLevel})</span>
-                  </>
+                  <div className="flex gap-2">
+                    <input
+                      id="target-deck"
+                      type="text"
+                      dir="auto"
+                      placeholder="نام دستهٔ تازه"
+                      value={selectedDeckName}
+                      onChange={e => setSelectedDeckName(e.target.value)}
+                      className={`${field} flex-1 min-w-0 border-brand-500`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomDeck(false);
+                        setSelectedDeckName(decks[0]?.name || 'Default Deck');
+                      }}
+                      className="shrink-0 min-h-[44px] px-3 rounded-xl text-sm font-bold text-ink-muted dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"
+                    >
+                      لغو
+                    </button>
+                  </div>
                 )}
-              </button>
+              </div>
             </div>
           </div>
-        </div>
+
+          {progress && (
+            <div role="status" className="flex flex-col gap-1.5">
+              <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5 text-xs text-ink-muted dark:text-slate-400">
+                <span>بخش {fa(Math.min(progress.done + 1, progress.total))} از {fa(progress.total)} · {fa(progress.found)} مورد پیدا شد</span>
+                {progress.fallbackSections > 0 && (
+                  <span className="text-amber-700 dark:text-amber-300">{fa(progress.fallbackSections)} بخش با دیکشنری رایگان</span>
+                )}
+              </div>
+              <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                <div
+                  className="h-full bg-brand-500 rounded-full transition-all duration-300"
+                  style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="pt-4 flex flex-wrap items-center justify-end gap-3 border-t border-slate-100 dark:border-slate-700">
+            {isLoading && (
+              <button
+                type="button"
+                onClick={handleStopExtraction}
+                className="min-h-[44px] px-4 rounded-xl text-sm font-bold text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+              >
+                توقف
+              </button>
+            )}
+            <button type="button" onClick={onCancel} className={secondaryButton}>
+              بازگشت
+            </button>
+            <button
+              type="button"
+              disabled={isLoading || !inputText.trim()}
+              onClick={handleExtract}
+              className={`${primaryButton} w-full sm:w-auto`}
+            >
+              {isLoading ? (
+                <>
+                  <Spinner />
+                  <span>در حال استخراج…</span>
+                </>
+              ) : (
+                <>
+                  <Icon.Bolt size={16} />
+                  <span>
+                    استخراج با {source === 'free' ? 'دیکشنری رایگان' : 'هوش مصنوعی'} (سطح <bdi dir="ltr" className="font-en">{targetLevel}</bdi>)
+                  </span>
+                </>
+              )}
+            </button>
+          </div>
+        </section>
       )}
 
       {step === 'review' && (
-        <div className="space-y-6">
+        <>
           {/* Controls Bar */}
-          <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-            <div>
-              <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-0.5">
-                <span>Extracted Cards</span>
+          <section className={`${panel} flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3`}>
+            <div className="min-w-0">
+              <p className="flex flex-wrap items-center gap-x-2 text-xs text-ink-muted dark:text-slate-400 mb-0.5">
+                <span>{fa(extractedCards.length)} مورد پیدا شد</span>
                 <span aria-hidden="true">·</span>
-                <span>{extractedCards.length} Words Found</span>
-                <span aria-hidden="true">·</span>
-                <span>Target: {targetLevel}</span>
-              </div>
-              <h3 className="font-bold text-slate-800 dark:text-slate-100 text-base">
-                Review Extracted Vocabulary
-              </h3>
+                <span>سطح <bdi dir="ltr" className="font-en">{targetLevel}</bdi></span>
+              </p>
+              <h2 className="text-lg font-extrabold text-ink dark:text-white">
+                موردهای پیدا شده را بررسی کن
+              </h2>
             </div>
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => handleSelectAll(true)}
-                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 transition"
-              >
-                Select All
+              <button type="button" onClick={() => handleSelectAll(true)} className={smallButton}>
+                انتخاب همه
               </button>
-              <button
-                onClick={() => handleSelectAll(false)}
-                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 transition"
-              >
-                Deselect All
+              <button type="button" onClick={() => handleSelectAll(false)} className={smallButton}>
+                هیچ‌کدام
               </button>
             </div>
-          </div>
+          </section>
 
           {/* Cards List */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {extractedCards.map((card, idx) => (
-              <div
+              <article
                 key={idx}
-                className={`rounded-2xl p-5 border transition duration-200 shadow-sm relative ${
+                className={`min-w-0 rounded-3xl p-5 transition duration-200 ${
                   card.selected
-                    ? 'bg-white dark:bg-slate-800 border-indigo-400 dark:border-indigo-600 ring-2 ring-indigo-500/20'
-                    : 'bg-slate-50 dark:bg-slate-900/50 border-slate-200 dark:border-slate-700 opacity-60'
+                    ? 'bg-white dark:bg-slate-800 ring-2 ring-brand-300 dark:ring-brand-700'
+                    : 'bg-slate-50 dark:bg-slate-900/50 ring-1 ring-slate-200 dark:ring-slate-700 opacity-60'
                 }`}
               >
-                <div className="flex items-start justify-between gap-3 mb-3">
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      id={`card-check-${idx}`}
-                      checked={!!card.selected}
-                      onChange={() => toggleSelectCard(idx)}
-                      className="w-5 h-5 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
-                    />
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h4 className="text-xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">{card.front}</h4>
-                        <button
-                          type="button"
-                          onClick={() => handlePlayCardSnippet(card.front, `card-${idx}`)}
-                          className="p-1 rounded-full text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950 transition"
-                          title="Listen to pronunciation"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={playingCardAudioId === `card-${idx}` ? 'text-indigo-600 animate-pulse' : ''}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
-                        </button>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                        {card.kind && KIND_LABELS[card.kind] && (
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${KIND_LABELS[card.kind].className}`}>
-                            {KIND_LABELS[card.kind].label}
-                          </span>
-                        )}
-                        {card.alreadyInDeck && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300">
-                            قبلاً کارت دارد
-                          </span>
-                        )}
-                        {card.pronunciation && <span className="font-mono text-indigo-600 dark:text-indigo-400">{card.pronunciation}</span>}
-                        {card.partOfSpeech && (
-                          <span className="text-slate-400 dark:text-slate-500">
-                            ({card.partOfSpeech})
-                          </span>
-                        )}
-                      </div>
+                <div className="flex items-start gap-3 mb-3">
+                  <input
+                    type="checkbox"
+                    id={`card-check-${idx}`}
+                    checked={!!card.selected}
+                    onChange={() => toggleSelectCard(idx)}
+                    aria-label={`انتخاب ${card.front}`}
+                    className="mt-1.5 w-5 h-5 shrink-0 cursor-pointer accent-brand-500"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <h3 dir="ltr" className="font-en text-xl font-bold text-ink dark:text-white tracking-tight break-words min-w-0">{card.front}</h3>
+                      <button
+                        type="button"
+                        onClick={() => handlePlayCardSnippet(card.front, `card-${idx}`)}
+                        className="w-8 h-8 shrink-0 flex items-center justify-center rounded-full text-ink-muted dark:text-slate-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-slate-700 transition-colors"
+                        title="شنیدن تلفظ"
+                        aria-label={`شنیدن تلفظ ${card.front}`}
+                      >
+                        <Icon.Speaker size={16} className={playingCardAudioId === `card-${idx}` ? 'text-brand-600 dark:text-brand-300 animate-pulse' : ''} />
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-ink-muted dark:text-slate-400 mt-1">
+                      {card.kind && KIND_LABELS[card.kind] && (
+                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${KIND_LABELS[card.kind].className}`}>
+                          {KIND_LABELS[card.kind].label}
+                        </span>
+                      )}
+                      {card.alreadyInDeck && (
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300">
+                          قبلاً کارت دارد
+                        </span>
+                      )}
+                      {card.pronunciation && <bdi dir="ltr" className="text-brand-600 dark:text-brand-300">{card.pronunciation}</bdi>}
+                      {card.partOfSpeech && (
+                        <bdi dir="ltr" className="font-en">({card.partOfSpeech})</bdi>
+                      )}
                     </div>
                   </div>
                 </div>
 
                 {/* Persian Translation input / display */}
-                <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-700/60 text-sm">
-                  <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
-                      ترجمه فارسی (Persian Translation)
-                    </label>
+                <div className="flex flex-col gap-3 pt-3 border-t border-slate-100 dark:border-slate-700/60 text-sm">
+                  <label className="flex flex-col gap-1">
+                    <span className={smallLabel}>معنی فارسی</span>
                     <input
                       type="text"
                       dir="rtl"
                       value={card.back}
                       onChange={e => updateCardField(idx, 'back', e.target.value)}
-                      className="w-full px-3 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-slate-100 font-medium font-persian"
+                      className="w-full min-h-[40px] px-3 text-sm rounded-xl border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-ink dark:text-white font-medium focus:border-brand-500 focus:outline-none"
                     />
-                  </div>
+                  </label>
 
                   {card.definition && card.definition.length > 0 && (
                     <div>
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 block mb-0.5">
-                        Definition:
-                      </span>
-                      <p className="text-xs text-slate-700 dark:text-slate-300 italic">
+                      <p className={`${smallLabel} mb-0.5`}>تعریف</p>
+                      <p dir="ltr" className="font-en text-xs text-slate-700 dark:text-slate-300 italic break-words">
                         {card.definition[0]}
                       </p>
                     </div>
                   )}
 
                   {card.kind === 'grammar' && (card.grammarPattern || card.practicePrompt) && (
-                    <div className="space-y-1">
+                    <div className="flex flex-col gap-1">
                       {card.grammarPattern && (
-                        <p className="text-xs font-mono text-rose-700 dark:text-rose-300">{card.grammarPattern}</p>
+                        <p dir="ltr" className="text-xs font-mono text-rose-700 dark:text-rose-300 break-words">{card.grammarPattern}</p>
                       )}
                       {card.practicePrompt && (
-                        <p dir="rtl" className="text-xs text-slate-600 dark:text-slate-300">✍️ {card.practicePrompt}</p>
+                        <p className="text-xs text-slate-700 dark:text-slate-300">✍️ {card.practicePrompt}</p>
                       )}
                     </div>
                   )}
 
                   {card.sourceSentence && (
                     <div>
-                      <div className="flex items-center justify-between mb-0.5">
-                        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                          From your text:
-                        </span>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <span className={smallLabel}>در متن تو</span>
                         <button
                           type="button"
                           onClick={() => handlePlayCardSnippet(card.sourceSentence!, `src-${idx}`)}
-                          className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
+                          className="inline-flex items-center gap-1 min-h-[28px] text-xs text-brand-600 dark:text-brand-300 hover:underline"
                         >
-                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon></svg>
-                          <span>Listen</span>
+                          <Icon.Speaker size={12} className={playingCardAudioId === `src-${idx}` ? 'animate-pulse' : ''} />
+                          <span>شنیدن</span>
                         </button>
                       </div>
-                      <p className="text-xs text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700/50 p-2.5 rounded-xl font-sans leading-relaxed">
-                        "{card.sourceSentence}"
+                      <p dir="ltr" className="font-en text-xs text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-700/50 p-2.5 rounded-xl leading-relaxed break-words">
+                        “{card.sourceSentence}”
                       </p>
                     </div>
                   )}
 
                   {card.exampleSentenceTarget && card.exampleSentenceTarget.length > 0 && (
                     <div>
-                      <div className="flex items-center justify-between mb-0.5">
-                        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                          Example:
-                        </span>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <span className={smallLabel}>مثال</span>
                         <button
                           type="button"
                           onClick={() => handlePlayCardSnippet(card.exampleSentenceTarget![0], `ex-${idx}`)}
-                          className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
+                          className="inline-flex items-center gap-1 min-h-[28px] text-xs text-brand-600 dark:text-brand-300 hover:underline"
                         >
-                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon></svg>
-                          <span>Listen</span>
+                          <Icon.Speaker size={12} className={playingCardAudioId === `ex-${idx}` ? 'animate-pulse' : ''} />
+                          <span>شنیدن</span>
                         </button>
                       </div>
-                      <p className="text-xs text-slate-600 dark:text-slate-300 italic leading-relaxed">
-                        "{card.exampleSentenceTarget[0]}"
+                      <p dir="ltr" className="font-en text-xs text-slate-700 dark:text-slate-300 italic leading-relaxed break-words">
+                        “{card.exampleSentenceTarget[0]}”
                       </p>
                     </div>
                   )}
 
                   {card.collocations && card.collocations.length > 0 && (
                     <div>
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 block mb-1">
-                        Common expressions:
-                      </span>
-                      <ul className="space-y-1">
+                      <p className={`${smallLabel} mb-1`}>ترکیب‌های رایج</p>
+                      <ul className="flex flex-col gap-1">
                         {card.collocations.map((c, ci) => (
-                          <li key={ci} className="flex items-center gap-2 text-xs">
+                          <li key={ci} className="flex flex-wrap items-center gap-x-2 text-xs">
                             <button
                               type="button"
                               onClick={() => handlePlayCardSnippet(c.phrase, `col-${idx}-${ci}`)}
-                              className="text-slate-400 hover:text-indigo-600"
-                              title="Listen"
+                              className="w-7 h-7 shrink-0 flex items-center justify-center rounded-full text-ink-muted dark:text-slate-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-slate-700"
+                              title="شنیدن"
+                              aria-label={`شنیدن ${c.phrase}`}
                             >
-                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={playingCardAudioId === `col-${idx}-${ci}` ? 'text-indigo-600 animate-pulse' : ''}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon></svg>
+                              <Icon.Speaker size={12} className={playingCardAudioId === `col-${idx}-${ci}` ? 'text-brand-600 animate-pulse' : ''} />
                             </button>
-                            <span className="font-medium text-slate-800 dark:text-slate-200">{c.phrase}</span>
-                            {c.meaning && <span dir="rtl" className="text-slate-500 dark:text-slate-400 font-persian">{c.meaning}</span>}
+                            <bdi dir="ltr" className="font-en font-medium text-ink dark:text-slate-200">{c.phrase}</bdi>
+                            {c.meaning && <span className="text-ink-muted dark:text-slate-400">{c.meaning}</span>}
                           </li>
                         ))}
                       </ul>
@@ -918,78 +919,87 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
 
                   {card.notes && (
                     <div>
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 block mb-0.5">
-                        💡 نکته و راهنمای حفظ (Mnemonic):
-                      </span>
-                      <p dir="rtl" className="text-xs text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 p-2.5 rounded-xl border border-amber-200/80 dark:border-amber-900/40 font-persian leading-relaxed">
+                      <p className="text-xs font-bold text-amber-700 dark:text-amber-300 mb-1">
+                        💡 نکتهٔ حفظ کردن
+                      </p>
+                      <p className="text-xs text-amber-900 dark:text-amber-100 bg-amber-50 dark:bg-amber-950/40 p-2.5 rounded-xl leading-relaxed">
                         {card.notes}
                       </p>
                     </div>
                   )}
                 </div>
-              </div>
+              </article>
             ))}
           </div>
 
-          {/* Sticky Bottom Actions */}
-          <div className="sticky bottom-4 bg-white/95 dark:bg-slate-800/95 backdrop-blur-md p-4 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row justify-between items-center gap-3">
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
-              <span>{selectedCount} of {extractedCards.length} cards selected</span>
+          {/* Sticky Bottom Actions (above the phone's tab bar) */}
+          <div className="sticky bottom-24 md:bottom-4 bg-white/95 dark:bg-slate-800/95 backdrop-blur-md p-4 rounded-3xl shadow-xl ring-1 ring-slate-200 dark:ring-slate-700 flex flex-col sm:flex-row justify-between items-center gap-3">
+            <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 text-sm font-bold text-ink dark:text-slate-200 min-w-0 max-w-full">
+              <span>{fa(selectedCount)} از {fa(extractedCards.length)} کارت انتخاب شده</span>
               <span aria-hidden="true">·</span>
-              <span className="text-xs text-slate-400">Destination: <strong className="text-slate-700 dark:text-slate-200">{selectedDeckName}</strong></span>
+              <span className="flex items-center gap-1 min-w-0 text-xs font-normal text-ink-muted dark:text-slate-400">
+                <span className="shrink-0">دسته:</span>
+                <bdi dir="auto" className="font-en font-bold text-ink dark:text-slate-200 truncate">{selectedDeckName}</bdi>
+              </span>
             </div>
             <div className="flex items-center gap-3 w-full sm:w-auto">
               <button
                 type="button"
                 onClick={() => setStep('input')}
-                className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition"
+                className={`${secondaryButton} flex-1 sm:flex-none`}
               >
-                ← Edit Text
+                <Icon.Back size={16} />
+                <span>ویرایش متن</span>
               </button>
               <button
                 type="button"
                 disabled={isLoading || selectedCount === 0}
                 onClick={handleSaveToDeck}
-                className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-green-600 hover:bg-green-700 disabled:bg-slate-400 text-white font-bold text-sm shadow-md transition active:scale-95"
+                className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 min-h-[44px] px-6 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white font-extrabold text-sm transition-colors"
               >
-                {isLoading ? 'Saving...' : `Save ${selectedCount} Cards to Deck ✨`}
+                {isLoading ? 'در حال ذخیره…' : `ذخیرهٔ ${fa(selectedCount)} کارت ✨`}
               </button>
             </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* AI Settings Modal */}
       {isConfigOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-lg w-full shadow-2xl border border-slate-200 dark:border-slate-700 space-y-5 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-700 pb-3">
-              <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-500"><path d="M12 2a10 10 0 1 0 10 10H12V2z"></path><path d="M12 12L2.1 12.5"></path><path d="M12 12l4.5 8"></path></svg>
-                <span>AI Provider & Model Settings</span>
-              </h3>
+          <div role="dialog" aria-modal="true" aria-labelledby="ai-config-title" className="bg-white dark:bg-slate-800 rounded-3xl p-5 sm:p-6 max-w-lg w-full shadow-2xl flex flex-col gap-5 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center gap-3 border-b border-slate-100 dark:border-slate-700 pb-3">
+              <h2 id="ai-config-title" className="text-lg font-extrabold text-ink dark:text-white flex items-center gap-2">
+                <Icon.Gear size={20} className="text-brand-500 dark:text-brand-300" />
+                <span>تنظیمات هوش مصنوعی</span>
+              </h2>
               <button
+                type="button"
                 onClick={() => setIsConfigOpen(false)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-lg"
+                aria-label="بستن"
+                className="w-9 h-9 flex items-center justify-center rounded-xl text-ink-muted dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"
               >
-                ✕
+                <Icon.Close size={18} />
               </button>
             </div>
 
-            <div className="space-y-4 text-sm">
+            <p className="text-sm text-ink-muted dark:text-slate-400 -mt-2">
+              سرویسی که اینجا انتخاب کنی اول امتحان می‌شود؛ بقیهٔ سرویس‌های تنظیمات پشت سرش می‌مانند.
+            </p>
+
+            <div className="flex flex-col gap-4 text-sm">
               {/* Provider Preset Picker */}
               <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                  AI Provider / Service
-                </label>
+                <label htmlFor="ai-preset" className={fieldLabel}>سرویس</label>
                 <select
+                  id="ai-preset"
                   value={selectedPresetId}
                   onChange={e => handleSelectPreset(e.target.value)}
-                  className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-slate-100 text-sm font-medium"
+                  className={field}
                 >
                   {AI_PRESETS.map(preset => (
                     <option key={preset.id} value={preset.id}>
-                      {preset.name}
+                      {preset.name} ({preset.note})
                     </option>
                   ))}
                 </select>
@@ -998,33 +1008,33 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
               {/* Base URL (if openai-compatible) */}
               {activePreset.provider === 'openai-compatible' && (
                 <div>
-                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                    API Base URL (OpenAI-Compatible)
-                  </label>
+                  <label htmlFor="ai-base-url" className={fieldLabel}>نشانی سرویس (سازگار با OpenAI)</label>
                   <input
+                    id="ai-base-url"
                     type="text"
+                    dir="ltr"
                     value={customBaseUrl}
                     onChange={e => setCustomBaseUrl(e.target.value)}
                     placeholder="https://api.groq.com/openai/v1"
-                    className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-slate-100 font-mono text-xs"
+                    className={`${field} font-en text-xs`}
                   />
-                  <p className="text-xs text-slate-400 mt-1">
-                    Endpoint should support <code className="font-mono">/chat/completions</code>.
+                  <p className="text-xs text-ink-muted dark:text-slate-400 mt-1">
+                    این نشانی باید <code dir="ltr" className="font-mono">/chat/completions</code> را پشتیبانی کند.
                   </p>
                 </div>
               )}
 
               {/* Model Choice / Input */}
               <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                  Model Identifier / Name
-                </label>
+                <label htmlFor="ai-model" className={fieldLabel}>مدل</label>
                 {activePreset.models.length > 0 ? (
-                  <div className="space-y-2">
+                  <div className="flex flex-col gap-2">
                     <select
+                      id="ai-model"
+                      dir="ltr"
                       value={customModelInput}
                       onChange={e => setCustomModelInput(e.target.value)}
-                      className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-slate-100 text-sm font-medium"
+                      className={`${field} font-en`}
                     >
                       {activePreset.models.map(m => (
                         <option key={m} value={m}>{m}</option>
@@ -1032,81 +1042,86 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
                     </select>
                     <input
                       type="text"
-                      placeholder="Or type a custom model name..."
+                      dir="ltr"
+                      placeholder="یا نام مدل دیگری بنویس"
+                      aria-label="نام مدل دیگر"
                       value={customModelInput}
                       onChange={e => setCustomModelInput(e.target.value)}
-                      className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-xs font-mono"
+                      className={`${field} font-en text-xs`}
                     />
                   </div>
                 ) : (
                   <input
+                    id="ai-model"
                     type="text"
-                    placeholder="e.g. llama-3.3-70b-versatile, deepseek-chat"
+                    dir="ltr"
+                    placeholder="llama-3.3-70b-versatile"
                     value={customModelInput}
                     onChange={e => setCustomModelInput(e.target.value)}
-                    className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-slate-100 font-mono text-xs"
+                    className={`${field} font-en text-xs`}
                   />
                 )}
               </div>
 
               {/* API Key */}
               <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                  API Key {selectedPresetId === 'ollama' ? '(Optional)' : ''}
+                <label htmlFor="ai-key" className={fieldLabel}>
+                  کلید API{selectedPresetId === 'ollama' ? ' (اختیاری)' : ''}
                 </label>
                 <input
+                  id="ai-key"
                   type="password"
+                  dir="ltr"
+                  autoComplete="off"
                   placeholder={activePreset.keyPlaceholder}
                   value={customKeyInput}
                   onChange={e => setCustomKeyInput(e.target.value)}
-                  className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-slate-100 font-mono text-xs"
+                  className={`${field} font-en text-xs`}
                 />
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                <p className="text-xs text-ink-muted dark:text-slate-400 mt-1">
                   {activePreset.keyHelp}
                 </p>
               </div>
 
               {/* Test Connection Button & Result */}
-              <div className="pt-2">
+              <div className="flex flex-col gap-2">
                 <button
                   type="button"
                   disabled={isTestingKey}
                   onClick={handleTestKey}
-                  className="px-4 py-2 rounded-lg bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-medium text-xs transition flex items-center gap-2"
+                  className={`${smallButton} self-start inline-flex items-center gap-1.5 disabled:opacity-60`}
                 >
-                  {isTestingKey ? 'Testing Connection...' : '⚡ Test Connection'}
+                  <Icon.Bolt size={14} />
+                  <span>{isTestingKey ? 'در حال آزمایش…' : 'آزمایش اتصال'}</span>
                 </button>
 
                 {testResult && (
-                  <div
-                    className={`mt-2 p-3 rounded-lg text-xs font-medium flex items-center gap-2 ${
+                  <p
+                    role="status"
+                    className={`p-3 rounded-xl text-xs font-medium flex items-start gap-2 ${
                       testResult.ok
-                        ? 'bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800'
-                        : 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800'
+                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-200'
+                        : 'bg-red-50 dark:bg-red-950/40 text-red-800 dark:text-red-200'
                     }`}
                   >
-                    <span>{testResult.ok ? '✓' : '✗'}</span>
-                    <span>{testResult.message}</span>
-                  </div>
+                    <span aria-hidden="true">{testResult.ok ? '✓' : '✗'}</span>
+                    <bdi dir="auto" className="min-w-0 break-words">{testResult.ok ? 'وصل شد و جواب داد.' : testResult.message}</bdi>
+                  </p>
                 )}
               </div>
             </div>
 
             {/* Modal Actions */}
             <div className="flex justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-700">
-              <button
-                type="button"
-                onClick={() => setIsConfigOpen(false)}
-                className="px-4 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition"
-              >
-                Cancel
+              <button type="button" onClick={() => setIsConfigOpen(false)} className={secondaryButton}>
+                لغو
               </button>
               <button
                 type="button"
                 onClick={handleSaveAiSettings}
-                className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm shadow-md transition"
+                className="min-h-[44px] px-5 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-bold text-sm transition-colors"
               >
-                Save Settings
+                ذخیره
               </button>
             </div>
           </div>
