@@ -1,9 +1,10 @@
 import fs from 'fs';
 import path from 'path';
 import { Buffer } from 'buffer';
-import { newerSettings } from '../services/settingsSync.js';
-import { studyLogKey } from '../services/syncState.js';
+import { randomUUID } from 'crypto';
 import { fetchDictionaryEntries, freeEnrich, freeTranslate, lookupFrequencies } from './freeLookup.js';
+import { applyChanges, changesSince, upgradeStore } from './syncStore.js';
+import { fetchPublicPage, PageFetchError } from './pageFetch.js';
 import {
   PUBLIC_ACTIONS, USERNAME_PATTERN, MIN_PASSWORD_LENGTH, registrationAllowed,
   hashPassword, verifyPassword, getSessionSecret, createSessionToken, sessionUser,
@@ -44,12 +45,12 @@ const kvConfig = () => {
   return url && token ? { url: url.replace(/\/+$/, ''), token } : null;
 };
 
-let fileStore: Map<string, any> | null = null;
+let fileStore: { file: string; store: Map<string, any> } | null = null;
 
 const storeFile = () => path.join(dataDir(), '.data_store.json');
 
 function loadFileStore(): Map<string, any> {
-  if (fileStore) return fileStore;
+  if (fileStore && fileStore.file === storeFile()) return fileStore.store;
   if (process.env.VERCEL) {
     throw new Error('Cloud storage is not set up. Connect Upstash Redis to this Vercel project so KV_REST_API_URL and KV_REST_API_TOKEN are set.');
   }
@@ -66,8 +67,8 @@ function loadFileStore(): Map<string, any> {
     }
     Object.entries(parsed).forEach(([k, v]) => store.set(k, v));
   }
-  fileStore = store;
-  return fileStore;
+  fileStore = { file, store };
+  return store;
 }
 
 // Written to a temporary file first and then renamed over the old one, so a
@@ -89,35 +90,40 @@ function persistStore(store: Map<string, any>) {
 }
 
 const getUserKey = (username: string) => `user:${username.toLowerCase()}`;
+const chapterKey = (username: string, chapterId: string) => `chapter:${username.toLowerCase()}:${chapterId}`;
+const CHAPTER_ID = /^[A-Za-z0-9_-]{1,100}$/;
+const MAX_CHAPTER_CHARS = 2_000_000; // under Vercel's 4.5 MB request limit
 
-// A KV error is thrown, not hidden: falling back to memory would lose data.
-async function getUser(username: string): Promise<any | null> {
-  const key = getUserKey(username);
-  const kv = kvConfig();
-  if (kv) {
-    const kvResponse = await fetch(`${kv.url}/get/${key}`, { headers: { Authorization: `Bearer ${kv.token}` } });
-    if (!kvResponse.ok) throw new Error(`Cloud storage read failed (${kvResponse.status}).`);
-    const { result } = await kvResponse.json();
-    return result ? JSON.parse(result) : null;
-  }
-  return loadFileStore().get(key) || null;
+// One Redis command through Upstash's REST API.
+async function kvCommand(kv: { url: string; token: string }, command: (string | number)[]): Promise<any> {
+  const kvResponse = await fetch(kv.url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${kv.token}` },
+    body: JSON.stringify(command),
+  });
+  if (!kvResponse.ok) throw new Error(`Cloud storage request failed (${kvResponse.status}).`);
+  return (await kvResponse.json()).result;
 }
 
-async function setUser(userData: any): Promise<void> {
-  const key = getUserKey(userData.username);
+// A KV error is thrown, not hidden: falling back to memory would lose data.
+async function getKey(key: string): Promise<any | null> {
   const kv = kvConfig();
   if (kv) {
-    const kvResponse = await fetch(`${kv.url}/set/${key}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${kv.token}` },
-      body: JSON.stringify(userData),
-    });
-    if (!kvResponse.ok) throw new Error(`Cloud storage write failed (${kvResponse.status}).`);
+    const result = await kvCommand(kv, ['GET', key]);
+    return result ? JSON.parse(result) : null;
+  }
+  return loadFileStore().get(key) ?? null;
+}
+
+async function setKey(key: string, value: unknown): Promise<void> {
+  const kv = kvConfig();
+  if (kv) {
+    await kvCommand(kv, ['SET', key, JSON.stringify(value)]);
     return;
   }
   const store = loadFileStore();
   const previous = store.get(key);
-  store.set(key, userData);
+  store.set(key, value);
   try {
     persistStore(store);
   } catch (e) {
@@ -127,13 +133,54 @@ async function setUser(userData: any): Promise<void> {
   }
 }
 
+const getUser = (username: string): Promise<any | null> => getKey(getUserKey(username));
+const setUser = (userData: any): Promise<void> => setKey(getUserKey(userData.username), userData);
+
+// Syncs of one account run one at a time: two devices merging into the same
+// record at once would each save over the other's changes. On Vercel
+// (several instances) the lock is a Redis key that expires by itself.
+const LOCK_MS = 20_000;
+const localLocks = new Map<string, Promise<unknown>>();
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+export async function withUserLock<T>(username: string, work: () => Promise<T>): Promise<T> {
+  const kv = kvConfig();
+  if (!kv) {
+    const name = username.toLowerCase();
+    const previous = localLocks.get(name) || Promise.resolve();
+    const run = previous.catch(() => undefined).then(work);
+    localLocks.set(name, run);
+    try {
+      return await run;
+    } finally {
+      if (localLocks.get(name) === run) localLocks.delete(name);
+    }
+  }
+  const key = `lock:${username.toLowerCase()}`;
+  const token = randomUUID();
+  for (let attempt = 0; ; attempt++) {
+    if ((await kvCommand(kv, ['SET', key, token, 'NX', 'PX', LOCK_MS])) === 'OK') break;
+    if (attempt >= 40) throw new BusyError();
+    await sleep(250);
+  }
+  try {
+    return await work();
+  } finally {
+    // Only our own lock is removed, never one taken after ours expired.
+    await kvCommand(kv, ['EVAL', "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end", 1, key, token])
+      .catch(e => console.error('Could not release the sync lock:', e));
+  }
+}
+
+class BusyError extends Error {
+  constructor() { super('Another device is syncing this account. Try again in a moment.'); }
+}
+
 // Whether any account exists yet; registration closes after the first one.
 async function anyAccountExists(): Promise<boolean> {
   const kv = kvConfig();
   if (kv) {
-    const kvResponse = await fetch(`${kv.url}/keys/user:*`, { headers: { Authorization: `Bearer ${kv.token}` } });
-    if (!kvResponse.ok) throw new Error(`Cloud storage read failed (${kvResponse.status}).`);
-    const { result } = await kvResponse.json();
+    const result = await kvCommand(kv, ['KEYS', 'user:*']);
     return Array.isArray(result) && result.length > 0;
   }
   return Array.from(loadFileStore().keys()).some(k => k.startsWith('user:'));
@@ -452,13 +499,7 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         const newUser = {
           username,
           password: await hashPassword(password),
-          data: {
-            decks: [],
-            cards: [],
-            studyHistory: [],
-            userProfile: null,
-            userAchievements: [],
-          },
+          data: upgradeStore(null, randomUUID).store,
         };
 
         await setUser(newUser);
@@ -503,164 +544,76 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         return res.status(200).json({ message: 'Logged out.' });
       }
 
-      case 'sync-load': {
-        const user = await getUser(signedInUser!);
-        return res.status(200).json({ data: user ? user.data : null });
+      // Versions of the app from before the library sent everything at
+      // once; they reload into the new version, which syncs with 'sync'.
+      case 'sync-load':
+      case 'sync-merge':
+        return res.status(409).json({ error: 'The app was updated. Reload the page to sync.', code: 'APP_UPDATED' });
+
+      case 'sync': {
+        const since = Number.isSafeInteger(payload.since) && payload.since > 0 ? payload.since : 0;
+        const result = await withUserLock(signedInUser!, async () => {
+          const user = await getUser(signedInUser!);
+          if (!user) return null;
+          const { store, chapterTexts } = upgradeStore(user.data, randomUUID);
+          const upgraded = store !== user.data;
+          // Texts moved out of the record are saved before the record
+          // without them, so a failure in between loses nothing.
+          for (const text of chapterTexts) {
+            if (!(await getKey(chapterKey(signedInUser!, text.id)))) await setKey(chapterKey(signedInUser!, text.id), text);
+          }
+          // A device that knows another database, or a later rev than this
+          // one has, starts over from the beginning.
+          const reset = (typeof payload.storeId === 'string' && payload.storeId !== store.storeId) || since > store.rev;
+          const revBefore = store.rev;
+          const echo = applyChanges(store, payload.changes);
+          if (upgraded || store.rev !== revBefore) {
+            user.data = store;
+            await setUser(user);
+          }
+          return { storeId: store.storeId, reset, ...changesSince(store, reset ? 0 : since, echo) };
+        });
+        if (!result) return res.status(401).json({ error: 'Please sign in again.', code: 'AUTH_REQUIRED' });
+        return res.status(200).json(result);
       }
 
-      case 'sync-merge': {
-        const { data: clientData } = payload;
-        if (!clientData || typeof clientData !== 'object') return res.status(400).json({ error: 'Data is required.' });
-
-        const user = await getUser(signedInUser!);
-        if (!user) return res.status(401).json({ error: 'Please sign in again.', code: 'AUTH_REQUIRED' });
-
-        const cloudData = user.data || { decks: [], cards: [], studyHistory: [], userProfile: null, userAchievements: [] };
-
-        // Decks: the newest rename wins (decks from before updatedAt existed
-        // count as oldest); a deck deleted anywhere stays deleted.
-        const mergeDecks = (cloudItems: any[], clientItems: any[]) => {
-          const mergedMap = new Map<string, any>();
-          (cloudItems || []).forEach(item => mergedMap.set(item.id, item));
-          (clientItems || []).forEach(clientItem => {
-            const cloudItem = mergedMap.get(clientItem.id);
-            if (cloudItem) {
-              const clientTime = new Date(clientItem.updatedAt || 0).getTime();
-              const cloudTime = new Date(cloudItem.updatedAt || 0).getTime();
-              const winner = clientTime >= cloudTime ? clientItem : cloudItem;
-              mergedMap.set(clientItem.id, { ...winner, isDeleted: !!(cloudItem.isDeleted || clientItem.isDeleted) });
-            } else {
-              mergedMap.set(clientItem.id, clientItem);
-            }
-          });
-          return Array.from(mergedMap.values());
-        };
-
-        const mergeFlashcards = (cloudItems: any[], clientItems: any[]) => {
-          const mergedMap = new Map<string, any>();
-          (cloudItems || []).forEach(item => mergedMap.set(item.id, item));
-          (clientItems || []).forEach(clientItem => {
-            const cloudItem = mergedMap.get(clientItem.id);
-            if (cloudItem) {
-              const clientTimestamp = new Date(clientItem.updatedAt || 0).getTime();
-              const cloudTimestamp = new Date(cloudItem.updatedAt || 0).getTime();
-              const winner = clientTimestamp >= cloudTimestamp ? clientItem : cloudItem;
-              winner.isDeleted = clientItem.isDeleted || cloudItem.isDeleted;
-              mergedMap.set(clientItem.id, winner);
-            } else {
-              mergedMap.set(clientItem.id, clientItem);
-            }
-          });
-          return Array.from(mergedMap.values());
-        };
-
-        const mergedDecks = mergeDecks(cloudData.decks, clientData.decks);
-        const mergedCards = mergeFlashcards(cloudData.cards, clientData.cards);
-        // Texts on the reading path merge like cards (newest updatedAt wins),
-        // but a section finished on any device stays finished.
-        const cloudTexts = new Map<string, any>((cloudData.texts || []).map((t: any) => [t.id, t]));
-        const clientTexts = new Map<string, any>((clientData.texts || []).map((t: any) => [t.id, t]));
-        const mergedTexts = mergeFlashcards(cloudData.texts || [], clientData.texts || []).map((t: any) => {
-          const done = new Set<number>([...(cloudTexts.get(t.id)?.completed || []), ...(clientTexts.get(t.id)?.completed || [])]);
-          return { ...t, completed: Array.from(done).sort((a, b) => a - b) };
-        });
-
-        // One entry per review: logs carry a uid that is the same on every
-        // device (older logs fall back to card, day and rating). Device-local
-        // ids are not kept: another device's id 1 is not this one's.
-        const studyHistoryMap = new Map<string, any>();
-        [...(cloudData.studyHistory || []), ...(clientData.studyHistory || [])].forEach((log: any) => {
-          const key = studyLogKey(log);
-          if (!studyHistoryMap.has(key)) {
-            const { id: _deviceId, ...rest } = log;
-            studyHistoryMap.set(key, rest);
-          }
-        });
-        const mergedStudyHistory = Array.from(studyHistoryMap.values());
-
-        let mergedUserProfile: any = null;
-        const cloudP = cloudData.userProfile;
-        const clientP = clientData.userProfile;
-        if (clientP && cloudP) {
-          const clientTimestamp = new Date(clientP.profileLastUpdated || 0);
-          const cloudTimestamp = new Date(cloudP.profileLastUpdated || 0);
-          const newerProfile = clientTimestamp >= cloudTimestamp ? clientP : cloudP;
-
-          let mergedDailyGoals;
-          const clientGoals = clientP.dailyGoals;
-          const cloudGoals = cloudP.dailyGoals;
-
-          if (clientGoals && cloudGoals) {
-            if (clientGoals.date > cloudGoals.date) {
-              mergedDailyGoals = clientGoals;
-            } else if (cloudGoals.date > clientGoals.date) {
-              mergedDailyGoals = cloudGoals;
-            } else {
-              const mergedGoalsMap = new Map<string, any>();
-              (cloudGoals.goals || []).forEach((g: any) => mergedGoalsMap.set(g.id, { ...g }));
-              (clientGoals.goals || []).forEach((cg: any) => {
-                const existingGoal = mergedGoalsMap.get(cg.id);
-                if (existingGoal) {
-                  if (cg.progress > existingGoal.progress) {
-                    existingGoal.progress = cg.progress;
-                    existingGoal.isComplete = cg.isComplete;
-                  }
-                } else {
-                  mergedGoalsMap.set(cg.id, { ...cg });
-                }
-              });
-              mergedDailyGoals = {
-                date: clientGoals.date,
-                goals: Array.from(mergedGoalsMap.values()),
-                allCompleteAwarded: clientGoals.allCompleteAwarded || cloudGoals.allCompleteAwarded,
-              };
-            }
-          } else {
-            mergedDailyGoals = clientGoals || cloudGoals;
-          }
-
-          mergedUserProfile = {
-            id: clientP.id,
-            xp: Math.max(clientP.xp || 0, cloudP.xp || 0),
-            level: Math.max(clientP.level || 1, cloudP.level || 1),
-            lastStreakCheck: (new Date(clientP.lastStreakCheck || 0) > new Date(cloudP.lastStreakCheck || 0)) ? clientP.lastStreakCheck : cloudP.lastStreakCheck,
-            firstName: newerProfile.firstName,
-            lastName: newerProfile.lastName,
-            bio: newerProfile.bio,
-            profileLastUpdated: newerProfile.profileLastUpdated,
-            dailyGoals: mergedDailyGoals || undefined,
-            streakFreezesEarned: Math.max(clientP.streakFreezesEarned || 0, cloudP.streakFreezesEarned || 0),
-            frozenDates: Array.from(new Set([...(clientP.frozenDates || []), ...(cloudP.frozenDates || [])])).sort(),
-          };
-        } else {
-          mergedUserProfile = clientP || cloudP;
+      // A chapter's text is saved once under its own key; it never changes.
+      case 'chapter-put': {
+        const { id, sourceId, chunks } = payload;
+        if (typeof id !== 'string' || !CHAPTER_ID.test(id) || typeof sourceId !== 'string' || !CHAPTER_ID.test(sourceId)) {
+          return res.status(400).json({ error: 'A chapter id and source id are required.' });
         }
+        if (!Array.isArray(chunks) || chunks.some((c: unknown) => typeof c !== 'string')) return res.status(400).json({ error: 'chunks must be a list of texts.' });
+        if (chunks.reduce((n: number, c: string) => n + c.length, 0) > MAX_CHAPTER_CHARS) return res.status(413).json({ error: 'This chapter is too long to save.' });
+        await setKey(chapterKey(signedInUser!, id), { id, sourceId, chunks });
+        return res.status(200).json({ ok: true });
+      }
 
-        const achievementsMap = new Map<string, any>();
-        (cloudData.userAchievements || []).forEach((ach: any) => achievementsMap.set(ach.achievementId, ach));
-        (clientData.userAchievements || []).forEach((ach: any) => achievementsMap.set(ach.achievementId, ach));
-        const mergedUserAchievements = Array.from(achievementsMap.values());
+      case 'chapter-get': {
+        const { id } = payload;
+        if (typeof id !== 'string' || !CHAPTER_ID.test(id)) return res.status(400).json({ error: 'A chapter id is required.' });
+        const text = await getKey(chapterKey(signedInUser!, id));
+        if (!text) return res.status(404).json({ error: 'This chapter is not on the server yet. Open the app on the device that added it.' });
+        return res.status(200).json(text);
+      }
 
-        const mergedData = {
-          decks: mergedDecks,
-          cards: mergedCards,
-          studyHistory: mergedStudyHistory,
-          userProfile: mergedUserProfile,
-          userAchievements: mergedUserAchievements,
-          texts: mergedTexts,
-          settings: newerSettings(clientData.settings, cloudData.settings),
-        };
-
-        user.data = mergedData;
-        await setUser(user);
-
-        return res.status(200).json({ data: mergedData });
+      // The page of an article link, read by the browser into plain text.
+      case 'fetch-page': {
+        const { url } = payload;
+        if (typeof url !== 'string' || !url) return res.status(400).json({ error: 'A link is required.' });
+        try {
+          return res.status(200).json(await fetchPublicPage(url));
+        } catch (e) {
+          if (e instanceof PageFetchError) return res.status(e.status).json({ error: e.message });
+          throw e;
+        }
       }
 
       default:
         return res.status(400).json({ message: 'Invalid or missing action.' });
     }
   } catch (error) {
+    if (error instanceof BusyError) return res.status(503).json({ error: error.message, code: 'BUSY' });
     console.error(`Error in proxy action '${action}':`, error);
     const name = (error as Error)?.name;
     if (name === 'TimeoutError' || name === 'AbortError') {

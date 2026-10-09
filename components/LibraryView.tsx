@@ -1,0 +1,330 @@
+import React, { useMemo, useState } from 'react';
+import type { Chapter, Deck, Flashcard, Occurrence, Source, SourceKind } from '../types';
+import type { View } from '../hooks/useAppLogic';
+import type { ImportedSource } from '../services/importers';
+import { chaptersOf, continuePoint, currentChunkOf, isChapterFinished, isChunkOpen, originText, sourceProgress } from '../services/library';
+import { masteryStage, STAGE_NAMES } from '../services/masteryService';
+import { convertToCSV, downloadCSV } from '../services/csvService';
+import { isChestSection } from '../services/xpRules';
+import { AddSourceForm } from './AddSourceForm';
+import { fa, Icon, StageDots } from './common/ui';
+
+const KIND_NAMES: Record<SourceKind, string> = { book: 'کتاب', article: 'مقاله', text: 'متن' };
+const KIND_STYLE: Record<SourceKind, string> = {
+  book: 'bg-brand-100 text-brand-700 dark:bg-brand-900/60 dark:text-brand-200',
+  article: 'bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-100',
+  text: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200',
+};
+const CARD_KIND: Record<string, string> = { phrase: 'عبارت', idiom: 'اصطلاح', grammar: 'دستوری' };
+
+interface LibraryViewProps {
+  sources: Source[];
+  chapters: Chapter[];
+  occurrences: Occurrence[];
+  cards: Flashcard[];
+  decks: Deck[];
+  activeSourceId: string | null;
+  activeChapterId: string | null;
+  onAddSource: (source: ImportedSource) => Promise<boolean>;
+  onOpenSource: (sourceId: string | null) => void;
+  onOpenChapter: (chapterId: string | null) => void;
+  onOpenChunk: (chapter: Chapter, index: number) => void;
+  onDeleteSource: (sourceId: string) => void;
+  onNavigate: (view: View) => void;
+}
+
+// Cards met in each source: card id -> set of source ids, without deleted rows.
+const useCardsBySource = (occurrences: Occurrence[], cards: Flashcard[]) => useMemo(() => {
+  const live = new Set(cards.filter(c => !c.isDeleted).map(c => c.id));
+  const map = new Map<string, Set<string>>();
+  for (const o of occurrences) {
+    if (o.isDeleted || !live.has(o.cardId)) continue;
+    let set = map.get(o.sourceId);
+    if (!set) map.set(o.sourceId, (set = new Set()));
+    set.add(o.cardId);
+  }
+  return map;
+}, [occurrences, cards]);
+
+const ProgressBar: React.FC<{ percent: number; done?: boolean }> = ({ percent, done }) => (
+  <span className="h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden flex" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
+    <span className={`${done ? 'bg-emerald-600' : 'bg-brand-500'} rounded-full`} style={{ width: `${percent}%` }} />
+  </span>
+);
+
+// --- A chapter as a path of 300-word sections, a chest every third ---
+
+const ChapterPath: React.FC<{ chapter: Chapter; onOpenChunk: (i: number) => void }> = ({ chapter, onOpenChunk }) => {
+  const current = currentChunkOf(chapter);
+  const finished = isChapterFinished(chapter);
+  const offsets = [0, 56, 84, 56, 0, -56, -84, -56]; // zigzag in px
+  return (
+    <div className="flex flex-col gap-5">
+      <ol className="flex flex-col items-center gap-5 py-4" aria-label="بخش‌های فصل">
+        {Array.from({ length: chapter.chunkCount }, (_, i) => {
+          const done = chapter.completed.includes(i);
+          const isCurrent = !finished && i === current;
+          const open = isChunkOpen(chapter, i);
+          return (
+            <React.Fragment key={i}>
+              <li className="flex flex-col items-center gap-1.5" style={{ transform: `translateX(${offsets[i % offsets.length]}px)` }}>
+                {isCurrent && <span className="rounded-xl bg-ink text-white dark:bg-white dark:text-ink px-3 py-1 text-xs font-bold">اینجایی</span>}
+                <button type="button" disabled={!open} onClick={() => onOpenChunk(i)}
+                  aria-label={`بخش ${fa(i + 1)}${done ? '، تمام شده' : open ? '' : '، قفل'}`}
+                  className={`rounded-full flex items-center justify-center transition-transform hover:scale-105 disabled:hover:scale-100 ${isCurrent
+                    ? 'w-20 h-20 bg-brand-500 text-white shadow-[0_6px_0_#2E2591] ring-8 ring-brand-200 dark:ring-brand-900'
+                    : done ? 'w-16 h-16 bg-emerald-600 text-white shadow-[0_5px_0_#1D6B40]'
+                    : 'w-16 h-16 bg-slate-200 text-slate-500 shadow-[0_5px_0_#CDD1DE] dark:bg-slate-700 dark:text-slate-400 dark:shadow-[0_5px_0_#334155]'}`}>
+                  {done ? <Icon.Check size={26} /> : isCurrent ? <Icon.Book size={32} /> : <Icon.Lock size={22} />}
+                </button>
+                <span className={`text-xs ${isCurrent ? 'font-bold text-ink dark:text-white' : 'text-ink-muted dark:text-slate-400'}`}>بخش {fa(i + 1)}</span>
+              </li>
+              {isChestSection(i) && i < chapter.chunkCount - 1 && (
+                <li className="flex flex-col items-center gap-1" aria-label="صندوق جایزه">
+                  <span className={`w-14 h-14 rounded-2xl flex items-center justify-center ${done ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200' : 'bg-amber-50 text-amber-700 dark:bg-slate-800 dark:text-amber-300'}`}>
+                    <Icon.Gift size={26} />
+                  </span>
+                  <span className="text-[11px] text-ink-muted dark:text-slate-400">{done ? 'محافظ زنجیره گرفتی' : 'جایزه: محافظ زنجیره'}</span>
+                </li>
+              )}
+            </React.Fragment>
+          );
+        })}
+      </ol>
+      {finished && <p className="text-center font-bold text-emerald-700 dark:text-emerald-300">همهٔ بخش‌های این فصل را تمام کردی.</p>}
+    </div>
+  );
+};
+
+// --- The words of one source, by chapter ---
+
+const SourceWords: React.FC<{ source: Source; chapters: Chapter[]; occurrences: Occurrence[]; cards: Flashcard[]; decks: Deck[] }> = ({ source, chapters, occurrences, cards, decks }) => {
+  const [query, setQuery] = useState('');
+  const byId = useMemo(() => new Map(cards.filter(c => !c.isDeleted).map(c => [c.id, c])), [cards]);
+  const groups = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const mine = occurrences.filter(o => o.sourceId === source.id && !o.isDeleted && byId.has(o.cardId));
+    return chapters.map(chapter => ({
+      chapter,
+      rows: mine
+        .filter(o => o.chapterId === chapter.id)
+        .map(o => ({ o, card: byId.get(o.cardId)! }))
+        .filter(({ card, o }) => !q || card.front.toLowerCase().includes(q) || card.back.includes(q) || (o.sentence || '').toLowerCase().includes(q))
+        .sort((a, b) => a.o.chunk - b.o.chunk || a.o.createdAt.localeCompare(b.o.createdAt)),
+    })).filter(g => g.rows.length > 0);
+  }, [occurrences, source.id, chapters, byId, query]);
+  const total = groups.reduce((n, g) => n + g.rows.length, 0);
+
+  const exportCsv = () => {
+    const rows = groups.flatMap(g => g.rows.map(({ o, card }) => ({ ...card, sourceSentence: o.sentence || card.sourceSentence })));
+    const safe = source.title.replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 40) || 'words';
+    downloadCSV(`${safe}-words.csv`, convertToCSV(rows, decks));
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <input type="search" dir="auto" value={query} onChange={e => setQuery(e.target.value)} placeholder="جست‌وجوی واژه، معنی یا جمله"
+          className="flex-1 min-w-[12rem] min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 focus:border-brand-500 focus:outline-none" />
+        <button type="button" onClick={exportCsv} disabled={total === 0}
+          className="min-h-[44px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800 disabled:opacity-40">خروجی CSV</button>
+      </div>
+      {total === 0 && (
+        <p className="text-sm text-ink-muted dark:text-slate-400 bg-white dark:bg-slate-800 rounded-3xl p-5">
+          {query ? 'چیزی پیدا نشد.' : 'هنوز از این منبع کارتی نساخته‌ای. هنگام خواندن روی واژه‌ها بزن یا «پیدا کردن واژه‌های سخت» را بزن.'}
+        </p>
+      )}
+      {groups.map(({ chapter, rows }) => (
+        <section key={chapter.id} className="bg-white dark:bg-slate-800 rounded-3xl p-4 flex flex-col gap-1">
+          {chapters.length > 1 && (
+            <h3 className="flex items-center gap-2 px-1 pb-1 text-sm">
+              <span className="font-bold text-ink dark:text-white">فصل {fa(chapter.order)}</span>
+              <span dir="auto" className="font-en text-ink-muted dark:text-slate-400 truncate">{chapter.title}</span>
+              <span className="flex-1" />
+              <span className="text-xs text-ink-muted dark:text-slate-400">{fa(rows.length)}</span>
+            </h3>
+          )}
+          <ul className="flex flex-col divide-y divide-slate-100 dark:divide-slate-700">
+            {rows.map(({ o, card }) => {
+              const origin = originText(card.origin);
+              return (
+                <li key={o.id} className="py-2.5 px-1 flex flex-col gap-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span dir="ltr" className="font-en font-bold text-ink dark:text-white">{card.front}</span>
+                    {card.kind && CARD_KIND[card.kind] && <span className="text-[11px] rounded-full bg-slate-100 dark:bg-slate-700 px-2">{CARD_KIND[card.kind]}</span>}
+                    <span className="text-sm text-ink dark:text-slate-200">{card.back}</span>
+                    <span className="flex-1" />
+                    <span className="flex items-center gap-1.5 text-[11px] text-ink-muted dark:text-slate-400" title={STAGE_NAMES[masteryStage(card)]}>
+                      <StageDots stage={masteryStage(card)} />{STAGE_NAMES[masteryStage(card)]}
+                    </span>
+                  </div>
+                  {o.sentence && <p dir="ltr" className="font-read text-[13px] italic text-ink-muted dark:text-slate-400">{o.sentence}</p>}
+                  {origin && <p className="text-[11px] text-ink-muted dark:text-slate-500">سازنده: <bdi>{origin}</bdi></p>}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+};
+
+// --- One source: chapters (or the path of a one-chapter text) and its words ---
+
+const SourcePage: React.FC<LibraryViewProps & { source: Source }> = props => {
+  const { source, chapters: allChapters, occurrences, cards, decks, activeChapterId, onOpenSource, onOpenChapter, onOpenChunk, onDeleteSource } = props;
+  const [tab, setTab] = useState<'read' | 'words'>('read');
+  const chapters = chaptersOf(source.id, allChapters);
+  const progress = sourceProgress(chapters);
+  const cardCount = useCardsBySource(occurrences, cards).get(source.id)?.size || 0;
+  const single = chapters.length === 1;
+  const activeChapter = chapters.find(c => c.id === activeChapterId) || (single ? chapters[0] : undefined);
+  const next = continuePoint(source, chapters);
+
+  const back = () => (activeChapter && !single ? onOpenChapter(null) : onOpenSource(null));
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={back} aria-label={activeChapter && !single ? 'همهٔ فصل‌ها' : 'کتابخانه'} className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-slate-100 dark:hover:bg-slate-700"><Icon.Back /></button>
+          <div className="flex-1 min-w-0">
+            <h1 dir="auto" className="font-en font-bold text-xl text-ink dark:text-white truncate text-right">{source.title}</h1>
+            {(source.author || (activeChapter && !single)) && (
+              <p dir="auto" className="font-en text-sm text-ink-muted dark:text-slate-400 truncate text-right">
+                {activeChapter && !single ? `${activeChapter.title}` : source.author}
+              </p>
+            )}
+          </div>
+          <button type="button" onClick={() => { if (confirm('این منبع از کتابخانه حذف شود؟ کارت‌هایی که از آن ساخته‌ای می‌مانند.')) onDeleteSource(source.id); }}
+            className="text-sm text-red-700 dark:text-red-300 hover:underline">حذف</button>
+        </div>
+        <div className="flex flex-wrap gap-2 text-sm">
+          <span className={`rounded-full px-3 py-1 ${KIND_STYLE[source.kind]}`}>{KIND_NAMES[source.kind]}</span>
+          <span className="rounded-full bg-slate-100 dark:bg-slate-700 px-3 py-1">{fa(progress.words)} واژه، {chapters.length > 1 ? `${fa(chapters.length)} فصل، ` : ''}{fa(progress.sections)} بخش</span>
+          <span className="rounded-full bg-emerald-100 text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100 px-3 py-1">{fa(progress.percent)}٪ خوانده شده</span>
+          <span className="rounded-full bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100 px-3 py-1">{fa(cardCount)} کارت</span>
+        </div>
+        {source.url && <a href={source.url} target="_blank" rel="noopener noreferrer" dir="ltr" className="font-en text-xs text-brand-500 dark:text-brand-300 truncate hover:underline">{source.url}</a>}
+      </div>
+
+      <div role="tablist" className="flex gap-1 p-1 rounded-2xl bg-white dark:bg-slate-800 self-start">
+        {([['read', single ? 'مسیر خواندن' : 'فصل‌ها'], ['words', `واژه‌ها (${fa(cardCount)})`]] as const).map(([id, label]) => (
+          <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
+            className={`min-h-[40px] px-4 rounded-xl text-sm ${tab === id ? 'bg-brand-100 text-brand-700 font-bold dark:bg-brand-900/60 dark:text-brand-200' : 'text-ink-muted dark:text-slate-400'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'words' ? (
+        <SourceWords source={source} chapters={chapters} occurrences={occurrences} cards={cards} decks={decks} />
+      ) : activeChapter ? (
+        <>
+          <ChapterPath chapter={activeChapter} onOpenChunk={i => onOpenChunk(activeChapter, i)} />
+          {!isChapterFinished(activeChapter) && (
+            <button type="button" onClick={() => onOpenChunk(activeChapter, currentChunkOf(activeChapter))}
+              className="sticky bottom-24 md:bottom-6 self-center min-h-[56px] px-10 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold text-lg shadow-lg">
+              {activeChapter.completed.length === 0 ? 'شروع بخش ۱' : `ادامهٔ بخش ${fa(currentChunkOf(activeChapter) + 1)}`}
+            </button>
+          )}
+        </>
+      ) : (
+        <>
+          {next && !progress.finished && (
+            <button type="button" onClick={() => onOpenChunk(next.chapter, next.chunk)}
+              className="self-start min-h-[52px] px-6 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold">
+              {progress.done === 0 ? 'شروع خواندن' : `ادامه: فصل ${fa(next.chapter.order)}، بخش ${fa(next.chunk + 1)}`}
+            </button>
+          )}
+          <ol className="bg-white dark:bg-slate-800 rounded-3xl p-2 flex flex-col">
+            {chapters.map(c => {
+              const done = isChapterFinished(c);
+              const pct = Math.round((c.completed.length / Math.max(1, c.chunkCount)) * 100);
+              return (
+                <li key={c.id}>
+                  <button type="button" onClick={() => onOpenChapter(c.id)} className="w-full flex items-center gap-3 min-h-[56px] px-3 rounded-2xl text-right hover:bg-slate-50 dark:hover:bg-slate-700/50">
+                    <span className={`w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold shrink-0 ${done ? 'bg-emerald-600 text-white' : c.completed.length ? 'bg-brand-100 text-brand-700 dark:bg-brand-900/60 dark:text-brand-200' : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'}`}>
+                      {done ? <Icon.Check size={18} /> : fa(c.order)}
+                    </span>
+                    <span className="flex-1 min-w-0 flex flex-col gap-1">
+                      <span dir="auto" className="font-en text-ink dark:text-white truncate">{c.title}</span>
+                      {c.completed.length > 0 && !done && <ProgressBar percent={pct} />}
+                    </span>
+                    <span className="text-xs text-ink-muted dark:text-slate-400 whitespace-nowrap">{fa(Math.min(c.completed.length, c.chunkCount))} از {fa(c.chunkCount)} بخش</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+        </>
+      )}
+    </div>
+  );
+};
+
+// The library: every book, article and text, and how far each one is read.
+export const LibraryView: React.FC<LibraryViewProps> = props => {
+  const { sources, chapters, occurrences, cards, activeSourceId, onAddSource, onOpenSource, onNavigate } = props;
+  const [adding, setAdding] = useState(false);
+  const cardsBySource = useCardsBySource(occurrences, cards);
+  const visible = sources.filter(s => !s.isDeleted).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const active = visible.find(s => s.id === activeSourceId);
+
+  if (active) return <div dir="rtl" className="font-fa flex flex-col gap-5 max-w-3xl mx-auto w-full"><SourcePage {...props} source={active} /></div>;
+
+  return (
+    <div dir="rtl" className="font-fa flex flex-col gap-5 max-w-3xl mx-auto w-full">
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-extrabold text-ink dark:text-white">کتابخانه</h1>
+          <p className="text-sm text-ink-muted dark:text-slate-400">کتاب، مقاله یا متن؛ هر فصل به بخش‌های ۳۰۰ واژه‌ای تقسیم می‌شود.</p>
+        </div>
+        <div className="flex gap-2">
+          {!adding && visible.length > 0 && (
+            <button type="button" onClick={() => setAdding(true)} className="min-h-[44px] px-4 rounded-xl bg-ink text-white dark:bg-white dark:text-ink font-bold inline-flex items-center gap-1.5">
+              <Icon.Plus size={18} />افزودن
+            </button>
+          )}
+          <button type="button" onClick={() => onNavigate('AI_EXTRACT')} className="min-h-[44px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800"
+            title="کل متن را یکجا تحلیل کن، با همهٔ گزینه‌های پیشرفته">
+            استخراج یکجا
+          </button>
+        </div>
+      </header>
+
+      {(adding || visible.length === 0) && (
+        <AddSourceForm onAdd={async s => { const ok = await onAddSource(s); if (ok) setAdding(false); return ok; }} onCancel={visible.length > 0 ? () => setAdding(false) : undefined} />
+      )}
+
+      {visible.length > 0 && (
+        <ul className="grid gap-3 sm:grid-cols-2">
+          {visible.map(s => {
+            const list = chaptersOf(s.id, chapters);
+            const p = sourceProgress(list);
+            const next = continuePoint(s, list);
+            return (
+              <li key={s.id}>
+                <button type="button" onClick={() => onOpenSource(s.id)} className="w-full h-full text-right bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-3 hover:ring-2 hover:ring-brand-200 dark:hover:ring-brand-800">
+                  <span className="flex items-start gap-2">
+                    <span className="flex-1 min-w-0 flex flex-col">
+                      <span dir="auto" className="font-en font-bold text-ink dark:text-white truncate">{s.title}</span>
+                      {s.author && <span dir="auto" className="font-en text-sm text-ink-muted dark:text-slate-400 truncate">{s.author}</span>}
+                    </span>
+                    <span className={`text-xs rounded-full px-2.5 py-0.5 shrink-0 ${KIND_STYLE[s.kind]}`}>{KIND_NAMES[s.kind]}</span>
+                  </span>
+                  <ProgressBar percent={p.percent} done={p.finished} />
+                  <span className="text-sm text-ink-muted dark:text-slate-400">
+                    {p.finished ? 'تمام شد' : next && list.length > 1 ? `فصل ${fa(next.chapter.order)} از ${fa(list.length)}` : next ? `بخش ${fa(next.chunk + 1)} از ${fa(next.chapter.chunkCount)}` : ''}
+                    {'، '}{fa(p.words)} واژه، {fa(cardsBySource.get(s.id)?.size || 0)} کارت
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+};

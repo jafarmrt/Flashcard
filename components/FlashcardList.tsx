@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Flashcard, Deck } from '../types';
 import { fetchAudioData } from '../services/dictionaryService';
+import { CardPlace, originText } from '../services/library';
 
 interface FlashcardListProps {
   cards: Flashcard[];
@@ -12,6 +13,7 @@ interface FlashcardListProps {
   onAutoFixAll: () => void;
   onStopAutoFix: () => void;
   autoFixProgress: { current: number, total: number } | null;
+  places?: Map<string, CardPlace[]>; // where each card was met while reading
 }
 
 const EditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>;
@@ -44,7 +46,20 @@ const MissingInfoIndicator: React.FC<{ card: Flashcard }> = ({ card }) => {
 };
 
 
-const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onDelete, onBackToDecks, onCompleteCard, onAutoFixAll, onStopAutoFix, autoFixProgress }) => {
+// "From: Book title +2 · Gemini · gemini-2.5-flash"
+const CardSource: React.FC<{ places?: CardPlace[]; origin: string | null }> = ({ places = [], origin }) => {
+    const titles = Array.from(new Set(places.map(p => p.sourceTitle)));
+    if (titles.length === 0 && !origin) return null;
+    return (
+        <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400 truncate">
+            {titles.length > 0 && <>From: <bdi className="font-medium text-slate-600 dark:text-slate-300">{titles[0]}</bdi>{titles.length > 1 && ` +${titles.length - 1}`}</>}
+            {titles.length > 0 && origin && ' · '}
+            {origin && <bdi dir="auto">{origin}</bdi>}
+        </p>
+    );
+};
+
+const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onDelete, onBackToDecks, onCompleteCard, onAutoFixAll, onStopAutoFix, autoFixProgress, places }) => {
   const [sortKey, setSortKey] = useState<string>('front-asc');
   const [selectedDeckId, setSelectedDeckId] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -209,6 +224,7 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                                 <span title={decksById.get(card.deckId) || 'Unknown'} className="bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-full truncate max-w-32">{decksById.get(card.deckId) || 'Unknown'}</span>
                                 <MissingInfoIndicator card={card} />
                             </div>
+                            <CardSource places={places?.get(card.id)} origin={originText(card.origin)} />
                         </div>
                         <div className="flex flex-shrink-0 gap-1 sm:gap-2 pl-2 items-center">
                             {card.audioSrc && (

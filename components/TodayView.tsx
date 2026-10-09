@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo } from 'react';
-import { Flashcard, StudyLog, TextDoc, UserProfile } from '../types';
+import { Chapter, Flashcard, Source, StudyLog, UserProfile } from '../types';
 import type { StudyMode, View } from '../hooks/useAppLogic';
 import { calculateLevel } from '../services/gamificationService';
 import { stageCounts, STAGE_NAMES, MasteryStage } from '../services/masteryService';
 import { availableFreezes, dayString, weekStrip, weeklyReviewCounts } from '../services/streakService';
-import { currentChunk, isTextFinished } from '../services/textLibrary';
+import { chaptersOf, continuePoint, sourceProgress } from '../services/library';
 import { DEFAULT_DAILY_REVIEW_GOAL } from '../services/xpRules';
 import { fa, GoalRing, Icon, Kbd, STAGE_COLORS, StreakChip } from './common/ui';
 
@@ -14,13 +14,14 @@ interface TodayViewProps {
   streak: number;
   cards: Flashcard[];
   studyLogs: StudyLog[];
-  texts: TextDoc[];
+  sources: Source[];
+  chapters: Chapter[];
   dueCount: number;
   newDueCount: number;
   onStartReview: (mode: StudyMode) => void;
   onOpenSetup: () => void;
   onNavigate: (view: View) => void;
-  onOpenText: (textId: string) => void;
+  onOpenChunk: (chapter: Chapter, index: number) => void;
 }
 
 const WEEKDAYS = ['ش', 'ی', 'د', 'س', 'چ', 'پ', 'ج'];
@@ -37,7 +38,7 @@ const Card: React.FC<{ children: React.ReactNode; className?: string }> = ({ chi
 );
 
 export const TodayView: React.FC<TodayViewProps> = ({
-  userProfile, username, streak, cards, studyLogs, texts, dueCount, newDueCount, onStartReview, onOpenSetup, onNavigate, onOpenText,
+  userProfile, username, streak, cards, studyLogs, sources, chapters, dueCount, newDueCount, onStartReview, onOpenSetup, onNavigate, onOpenChunk,
 }) => {
   const level = calculateLevel(userProfile?.xp || 0);
   const goal = userProfile?.dailyGoals?.goals.find(g => g.type === 'STUDY');
@@ -54,9 +55,18 @@ export const TodayView: React.FC<TodayViewProps> = ({
   const stages = stageCounts(cards);
   const totalWords = cards.length;
 
-  const readingText = useMemo(() => texts
-    .filter(t => !t.isDeleted && !isTextFinished(t))
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0], [texts]);
+  // The book or article read most recently and not finished yet.
+  const reading = useMemo(() => {
+    const open = sources
+      .filter(s => !s.isDeleted)
+      .map(source => {
+        const list = chaptersOf(source.id, chapters);
+        return { source, list, progress: sourceProgress(list), next: continuePoint(source, list) };
+      })
+      .filter(r => r.next && !r.progress.finished)
+      .sort((a, b) => b.source.updatedAt.localeCompare(a.source.updatedAt));
+    return open[0];
+  }, [sources, chapters]);
 
   // Space starts the review from anywhere on this screen (not while typing).
   useEffect(() => {
@@ -175,25 +185,26 @@ export const TodayView: React.FC<TodayViewProps> = ({
 
         <Card className="md:col-span-2">
           <div className="flex justify-between items-center">
-            <h2 className="font-bold text-ink dark:text-white">{readingText ? 'ادامهٔ خواندن' : 'خواندن متن'}</h2>
-            <button type="button" onClick={() => onNavigate('TEXTS')} className="text-sm text-brand-500 dark:text-brand-300 hover:underline">همهٔ متن‌ها</button>
+            <h2 className="font-bold text-ink dark:text-white">{reading ? 'ادامهٔ خواندن' : 'خواندن کتاب و مقاله'}</h2>
+            <button type="button" onClick={() => onNavigate('TEXTS')} className="text-sm text-brand-500 dark:text-brand-300 hover:underline">کتابخانه</button>
           </div>
-          {readingText ? (
-            <button type="button" onClick={() => onOpenText(readingText.id)} className="flex items-center gap-4 text-right rounded-2xl p-1 -m-1 hover:bg-slate-50 dark:hover:bg-slate-700/50">
+          {reading && reading.next ? (
+            <button type="button" onClick={() => onOpenChunk(reading.next!.chapter, reading.next!.chunk)} className="flex items-center gap-4 text-right rounded-2xl p-1 -m-1 hover:bg-slate-50 dark:hover:bg-slate-700/50">
               <span className="w-12 h-12 rounded-2xl bg-brand-100 text-brand-500 dark:bg-brand-900/60 dark:text-brand-200 flex items-center justify-center shrink-0"><Icon.Book /></span>
               <span className="flex-1 min-w-0 flex flex-col gap-2">
-                <span dir="auto" className="font-en font-bold text-ink dark:text-white truncate">{readingText.title}</span>
-                <span className="grid gap-1" style={{ gridTemplateColumns: `repeat(${Math.min(readingText.chunks.length, 24)}, minmax(0, 1fr))` }}>
-                  {readingText.chunks.slice(0, 24).map((_, i) => (
-                    <span key={i} className={`h-2 rounded-full ${readingText.completed.includes(i) ? 'bg-emerald-600' : i === currentChunk(readingText) ? 'bg-brand-500' : 'bg-slate-200 dark:bg-slate-700'}`} />
-                  ))}
+                <span dir="auto" className="font-en font-bold text-ink dark:text-white truncate">{reading.source.title}</span>
+                <span className="h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden" role="progressbar" aria-valuenow={reading.progress.percent} aria-valuemin={0} aria-valuemax={100}>
+                  <span className="block h-full rounded-full bg-emerald-600" style={{ width: `${reading.progress.percent}%` }} />
                 </span>
+                {reading.list.length > 1 && <span dir="auto" className="text-xs text-ink-muted dark:text-slate-400 truncate">{reading.next.chapter.title}</span>}
               </span>
-              <span className="text-sm text-ink-muted dark:text-slate-400 whitespace-nowrap">بخش {fa(currentChunk(readingText) + 1)} از {fa(readingText.chunks.length)}</span>
+              <span className="text-sm text-ink-muted dark:text-slate-400 whitespace-nowrap">
+                {reading.list.length > 1 ? `${fa(reading.progress.percent)}٪ خوانده شده` : `بخش ${fa(reading.next.chunk + 1)} از ${fa(reading.next.chapter.chunkCount)}`}
+              </span>
             </button>
           ) : (
             <p className="text-sm text-ink-muted dark:text-slate-400">
-              یک متن انگلیسی اضافه کن تا به بخش‌های ۳۰۰ واژه‌ای تقسیم شود و واژه‌های سختش کارت شوند.
+              یک کتاب (EPUB)، مقاله یا متن انگلیسی به کتابخانه اضافه کن تا به بخش‌های ۳۰۰ واژه‌ای تقسیم شود و واژه‌های سختش کارت شوند.
             </p>
           )}
         </Card>

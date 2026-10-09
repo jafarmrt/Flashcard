@@ -1,21 +1,26 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ExtractedWordCard, Settings, TextDoc } from '../types';
+import { Chapter, ChapterText, ExtractedWordCard, Settings, Source } from '../types';
+import { ProxyError } from '../services/apiService';
 import { aiRequestOptions } from '../services/aiSettings';
 import { extractFromLongText, ExtractionSource } from '../services/extractionPipeline';
 import { lemmaCandidates } from '../services/lemma';
 import { enrichmentToCard, freeEnrich } from '../services/freeExtractionService';
 import { findSentence } from '../services/textChunker';
+import { cardsInText, isChunkOpen } from '../services/library';
 import { normalizeTerm } from '../services/vocabMerge';
 import { isSpeechSupported, speakText, stopSpeech } from '../services/ttsService';
 import { CHUNK_COMPLETE_XP, isChestSection } from '../services/xpRules';
 import { fa, Icon } from './common/ui';
 
 interface ChunkReaderViewProps {
-  doc: TextDoc;
+  source: Source;
+  chapter: Chapter;
+  chunks: string[];
   index: number;
+  chapterCount: number;
   settings: Settings;
   existingFronts: string[];
-  onSaveCards: (cards: ExtractedWordCard[], deckName: string) => Promise<void>;
+  onSaveCards: (cards: ExtractedWordCard[]) => Promise<void>;
   onComplete: () => void;
   onBack: () => void;
   onOpenChunk: (index: number) => void;
@@ -34,12 +39,15 @@ const WORD_SPLIT = /(\p{Script=Latin}+(?:['’-]\p{Script=Latin}+)*)/u;
 
 const toItem = (card: ExtractedWordCard, forms: string[] = []): Item => ({ ...card, key: normalizeTerm(card.front), forms });
 
-// One section of a text: read it, pick its hard words (AI, free dictionaries,
+// Sections of a chapter in the header; a long chapter gets a list instead.
+const MAX_SECTION_BUTTONS = 12;
+
+// One section of a chapter: read it, pick its hard words (AI, free dictionaries,
 // or by tapping a word), turn them into cards, then finish the section.
 export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
-  doc, index, settings, existingFronts, onSaveCards, onComplete, onBack, onOpenChunk, showToast,
+  source: book, chapter, chunks, index, chapterCount, settings, existingFronts, onSaveCards, onComplete, onBack, onOpenChunk, showToast,
 }) => {
-  const chunk = doc.chunks[index] || '';
+  const chunk = chunks[index] || '';
   const [items, setItems] = useState<Item[]>([]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [source, setSource] = useState<ExtractionSource>(settings.extractionSource || 'ai');
@@ -49,12 +57,18 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   const [reading, setReading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const lookups = useRef(new Set<string>());
-  const done = doc.completed.includes(index);
+  const done = chapter.completed.includes(index);
 
   // Leaving the section stops a running search and reading aloud.
   useEffect(() => () => { abortRef.current?.abort(); stopSpeech(); }, []);
 
   const known = useMemo(() => new Set(existingFronts.map(normalizeTerm)), [existingFronts]);
+  // Words of this section that already have a card; finishing the section
+  // adds this place to them.
+  const metAgain = useMemo(() => {
+    const listed = new Set(items.map(it => it.key));
+    return cardsInText(chunk, existingFronts.filter(front => !listed.has(normalizeTerm(front))).map(front => ({ front }))).length;
+  }, [chunk, existingFronts, items]);
   // Any base form with a card counts: "decided" is known when "decide" has a card.
   const isKnown = (word: string) => lemmaCandidates(word).some(form => known.has(normalizeTerm(form)));
 
@@ -167,7 +181,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     setSaving(true);
     const keys = new Set(toSave.map(it => it.key));
     try {
-      await onSaveCards(toSave.map(({ key, forms, loading: _loading, ...card }) => card), doc.deckName);
+      await onSaveCards(toSave.map(({ key, forms, loading: _loading, ...card }) => card));
       setItems(prev => prev.map(p => (keys.has(p.key) ? { ...p, alreadyInDeck: true, selected: false } : p)));
       setSaved(true);
     } catch (error) {
@@ -217,21 +231,39 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
       <header className="flex flex-wrap items-center gap-3">
         <button type="button" onClick={onBack} aria-label="برگشت به مسیر" className="w-11 h-11 rounded-xl flex items-center justify-center hover:bg-white dark:hover:bg-slate-800"><Icon.Back /></button>
         <div className="flex-1 min-w-0">
-          <p className="text-xs text-ink-muted dark:text-slate-400">بخش {fa(index + 1)} از {fa(doc.chunks.length)}</p>
-          <h1 dir="auto" className="font-en font-bold text-lg text-ink dark:text-white truncate">{doc.title}</h1>
+          <p className="text-xs text-ink-muted dark:text-slate-400 truncate">
+            {chapterCount > 1 && <><bdi dir="auto">{chapter.title}</bdi> · </>}بخش {fa(index + 1)} از {fa(chunks.length)}
+          </p>
+          <h1 dir="auto" className="font-en font-bold text-lg text-ink dark:text-white truncate text-right">{book.title}</h1>
         </div>
-        <nav aria-label="بخش‌ها" className="flex flex-wrap gap-1.5">
-          {doc.chunks.map((_, i) => {
-            const isDone = doc.completed.includes(i);
-            const open = isDone || i <= Math.max(index, ...doc.completed.map(c => c + 1));
-            return (
-              <button key={i} type="button" disabled={!open} onClick={() => onOpenChunk(i)} aria-current={i === index ? 'page' : undefined}
-                className={`w-9 h-9 rounded-[10px] text-sm font-bold ${i === index ? 'bg-brand-500 text-white ring-4 ring-brand-200 dark:ring-brand-900' : isDone ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400'} disabled:opacity-50`}>
-                {fa(i + 1)}
-              </button>
-            );
-          })}
-        </nav>
+        {chunks.length <= MAX_SECTION_BUTTONS ? (
+          <nav aria-label="بخش‌ها" className="flex flex-wrap gap-1.5">
+            {chunks.map((_, i) => {
+              const isDone = chapter.completed.includes(i);
+              return (
+                <button key={i} type="button" disabled={!isChunkOpen(chapter, i) && i !== index} onClick={() => onOpenChunk(i)} aria-current={i === index ? 'page' : undefined}
+                  className={`w-9 h-9 rounded-[10px] text-sm font-bold ${i === index ? 'bg-brand-500 text-white ring-4 ring-brand-200 dark:ring-brand-900' : isDone ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400'} disabled:opacity-50`}>
+                  {fa(i + 1)}
+                </button>
+              );
+            })}
+          </nav>
+        ) : (
+          <nav aria-label="بخش‌ها" className="flex items-center gap-1.5">
+            <button type="button" disabled={index === 0} onClick={() => onOpenChunk(index - 1)} aria-label="بخش قبلی"
+              className="w-9 h-9 rounded-[10px] flex items-center justify-center bg-white dark:bg-slate-800 disabled:opacity-40"><Icon.Back size={18} /></button>
+            <select value={index} onChange={e => onOpenChunk(Number(e.target.value))} aria-label="رفتن به بخش"
+              className="h-9 rounded-[10px] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 px-2 text-sm">
+              {chunks.map((_, i) => (
+                <option key={i} value={i} disabled={!isChunkOpen(chapter, i) && i !== index}>
+                  {chapter.completed.includes(i) ? '✓ ' : ''}بخش {fa(i + 1)}
+                </option>
+              ))}
+            </select>
+            <button type="button" disabled={!isChunkOpen(chapter, index + 1) || index + 1 >= chunks.length} onClick={() => onOpenChunk(index + 1)} aria-label="بخش بعدی"
+              className="w-9 h-9 rounded-[10px] flex items-center justify-center bg-white dark:bg-slate-800 disabled:opacity-40"><Icon.Back size={18} className="rotate-180" /></button>
+          </nav>
+        )}
       </header>
 
       <div className="flex flex-wrap gap-5 items-start">
@@ -344,9 +376,12 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
             )}
             <button type="button" onClick={finish}
               className={`min-h-[52px] rounded-2xl font-extrabold ${toSave.length === 0 ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'border-2 border-emerald-600 text-emerald-800 dark:text-emerald-200'}`}>
-              {done ? 'برگشت به مسیر' : `پایان این بخش · +${fa(CHUNK_COMPLETE_XP)} امتیاز${isChestSection(index) ? ' و صندوق جایزه' : ''}`}
+              {done ? 'برگشت به مسیر' : `پایان این بخش (+${fa(CHUNK_COMPLETE_XP)} امتیاز${isChestSection(index) ? ' و صندوق جایزه' : ''})`}
             </button>
             {saved && <p className="text-center text-sm text-emerald-700 dark:text-emerald-300">کارت‌ها ساخته شد و در مرور بعدی می‌آیند.</p>}
+            {!done && metAgain > 0 && (
+              <p className="text-center text-xs text-ink-muted dark:text-slate-400">{fa(metAgain)} واژهٔ این بخش از قبل کارت دارد (زیرخط سبز)؛ با پایان بخش، دیده‌شدنشان در این کتاب ثبت می‌شود.</p>
+            )}
           </div>
           {/* Room to scroll the buttons above the word sheet on small screens. */}
           {detail && !detail.loading && <div aria-hidden className="h-[46vh] xl:hidden" />}
@@ -354,4 +389,52 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
       </div>
     </div>
   );
+};
+
+type ReaderScreenProps = Omit<ChunkReaderViewProps, 'chunks'> & {
+  loadText: (chapterId: string) => Promise<ChapterText>;
+};
+
+// The reader, once the chapter's text is here: it is kept in this browser,
+// and fetched from the server the first time the chapter is opened on a new
+// device.
+export const ReaderScreen: React.FC<ReaderScreenProps> = ({ loadText, ...props }) => {
+  const chapterId = props.chapter.id;
+  const [text, setText] = useState<{ id: string; chunks?: string[]; error?: string } | null>(null);
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let live = true;
+    loadText(chapterId)
+      .then(t => { if (live) setText({ id: chapterId, chunks: t.chunks }); })
+      .catch(error => {
+        console.error('Loading the chapter failed:', error);
+        if (!live) return;
+        const missing = error instanceof ProxyError && error.status === 404;
+        setText({
+          id: chapterId,
+          error: missing
+            ? 'متن این فصل هنوز روی سرور نیست. برنامه را روی دستگاهی که کتاب را افزوده باز کن تا همگام شود.'
+            : 'متن این فصل نیامد. اتصال را بررسی کن و دوباره امتحان کن.',
+        });
+      });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chapterId, attempt]);
+
+  if (!text || text.id !== chapterId) {
+    return <div dir="rtl" className="font-fa py-24 text-center text-ink-muted dark:text-slate-400" role="status">در حال آوردن متن…</div>;
+  }
+  if (text.error || !text.chunks) {
+    return (
+      <div dir="rtl" className="font-fa max-w-md mx-auto py-16 flex flex-col items-center gap-4 text-center">
+        <p className="text-ink dark:text-white">{text.error}</p>
+        <div className="flex gap-2">
+          <button type="button" onClick={() => { setText(null); setAttempt(a => a + 1); }} className="min-h-[44px] px-5 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-bold">دوباره</button>
+          <button type="button" onClick={props.onBack} className="min-h-[44px] px-5 rounded-xl bg-slate-100 dark:bg-slate-700 font-bold">برگشت</button>
+        </div>
+      </div>
+    );
+  }
+  return <ChunkReaderView key={`${chapterId}-${props.index}`} {...props} chunks={text.chunks} />;
 };

@@ -57,7 +57,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ view, dueCount, userProfile, u
       <NavLink active={view === 'TODAY'} onClick={() => onNavigate('TODAY')} icon={<Icon.Home size={20} />} label="امروز" />
       <NavLink active={view === 'STUDY'} onClick={onStartReview} icon={<Icon.Cards size={20} />} label="مرور" badge={dueCount} disabled={!hasCards} />
       <NavLink active={view === 'PRACTICE'} onClick={() => onNavigate('PRACTICE')} icon={<Icon.Chat size={20} />} label="تمرین مکالمه و آزمون" disabled={!hasCards} />
-      <NavLink active={TEXT_VIEWS.includes(view)} onClick={() => onNavigate('TEXTS')} icon={<Icon.Book size={20} />} label="متن‌ها و خواندن" />
+      <NavLink active={TEXT_VIEWS.includes(view)} onClick={() => onNavigate('TEXTS')} icon={<Icon.Book size={20} />} label="کتابخانه" />
       <NavLink active={DECK_VIEWS.includes(view)} onClick={() => onNavigate('DECKS')} icon={<Icon.Layers size={20} />} label="واژه‌ها و دسته‌ها" />
       <NavLink active={view === 'STATS' || view === 'ACHIEVEMENTS'} onClick={() => onNavigate('STATS')} icon={<Icon.Chart size={20} />} label="آمار و نشان‌ها" />
       <NavLink active={['SETTINGS', 'CHANGELOG', 'PROFILE'].includes(view)} onClick={() => onNavigate('SETTINGS')} icon={<Icon.Gear size={20} />} label="تنظیمات" />
@@ -102,7 +102,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ view, dueCount, userProfile, u
 export const BottomTabs: React.FC<{ view: View; onNavigate: (view: View) => void }> = ({ view, onNavigate }) => {
   const tabs: { view: View; label: string; icon: React.ReactNode; active: boolean }[] = [
     { view: 'TODAY', label: 'امروز', icon: <Icon.Home />, active: view === 'TODAY' },
-    { view: 'TEXTS', label: 'متن‌ها', icon: <Icon.Book />, active: TEXT_VIEWS.includes(view) },
+    { view: 'TEXTS', label: 'کتابخانه', icon: <Icon.Book />, active: TEXT_VIEWS.includes(view) },
     { view: 'DECKS', label: 'واژه‌ها', icon: <Icon.Layers />, active: DECK_VIEWS.includes(view) },
     { view: 'ME', label: 'من', icon: <Icon.User />, active: ME_VIEWS.includes(view) },
   ];

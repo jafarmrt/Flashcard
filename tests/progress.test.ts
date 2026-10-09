@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { masteryStage, stageCounts, stageChanges } from '../services/masteryService';
 import { computeStreak, daysToFreeze, weekStrip, weeklyReviewCounts, availableFreezes, addDays } from '../services/streakService';
 import { reviewXp, nextCombo, comboBonus, isChestSection } from '../services/xpRules';
-import { createTextDoc, currentChunk, completeChunk, isChunkUnlocked, isTextFinished } from '../services/textLibrary';
 import type { Flashcard } from '../types';
 
 const card = (over: Partial<Flashcard> = {}): Flashcard => ({
@@ -72,22 +71,4 @@ test('review XP rewards correct answers and grows with a combo', () => {
   assert.equal(nextCombo('AGAIN', 7), 0);
   assert.equal(nextCombo('HARD', 7), 8);
   assert.deepEqual([0, 1, 2, 5].map(isChestSection), [false, false, true, true]);
-});
-
-test('a text is read section by section and later sections stay locked', () => {
-  const words = Array.from({ length: 700 }, (_, i) => `word${i}${i % 20 === 19 ? '.' : ''}`).join(' ');
-  let doc = createTextDoc('', words);
-  assert.ok(doc.chunks.length >= 3);
-  assert.equal(doc.title, 'word0 word1 word2 word3 word4 word5');
-  assert.equal(currentChunk(doc), 0);
-  assert.equal(isChunkUnlocked(doc, 1), false);
-  let r = completeChunk(doc, 0);
-  assert.equal(r.firstTime, true);
-  doc = r.doc;
-  assert.equal(currentChunk(doc), 1);
-  assert.equal(isChunkUnlocked(doc, 1), true);
-  r = completeChunk(doc, 0);
-  assert.equal(r.firstTime, false);
-  for (let i = 1; i < doc.chunks.length; i++) doc = completeChunk(doc, i).doc;
-  assert.equal(isTextFinished(doc), true);
 });

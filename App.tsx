@@ -1,33 +1,67 @@
-import React from 'react';
-import ReactDOM from 'react-dom/client';
+import React, { lazy, Suspense, useEffect, useMemo } from 'react';
 import { useAppLogic, View, HealthStatus } from './hooks/useAppLogic';
 
 import { Flashcard, Deck } from './types';
 import FlashcardList from './components/FlashcardList';
 import FlashcardForm from './components/FlashcardForm';
 import { StudyView } from './components/StudyView';
-import { StatsView } from './components/StatsView';
-import { PracticeView } from './components/ConversationView';
 import { aiRequestOptions, geminiAudioOptions } from './services/aiSettings';
 import Toast from './components/Toast';
 import DeckList from './components/DeckList';
-import { ChangelogView } from './components/ChangelogView';
 import SettingsView from './components/SettingsView';
-import { BulkAddView } from './components/BulkAddView';
 import { StudySetupModal } from './components/StudySetupModal';
-import { AchievementsView } from './components/AchievementsView';
-import { ProfileView } from './components/ProfileView';
 import { AuthView } from './components/AuthView';
 import { Sidebar, BottomTabs, AddFab } from './components/layout/Navigation';
 import { TodayView } from './components/TodayView';
 import { MeView } from './components/MeView';
-import { TextsView } from './components/TextsView';
-import { ChunkReaderView } from './components/ChunkReaderView';
+import { LibraryView } from './components/LibraryView';
+import { ReaderScreen } from './components/ChunkReaderView';
+import { chaptersOf, placesByCard } from './services/library';
 import { isDue, isNewCard } from './services/srsService';
 import { dayString } from './services/streakService';
 import { DEFAULT_DAILY_REVIEW_GOAL } from './services/xpRules';
 import { AutoFixReportModal } from './components/AutoFixReportModal';
-import { AiTextExtractorView } from './components/AiTextExtractorView';
+
+// Screens opened now and then load on first use, so the app starts faster.
+// They are fetched in the background soon after, so they open offline too.
+const SCREENS = {
+    stats: () => import('./components/StatsView'),
+    practice: () => import('./components/ConversationView'),
+    changelog: () => import('./components/ChangelogView'),
+    bulkAdd: () => import('./components/BulkAddView'),
+    achievements: () => import('./components/AchievementsView'),
+    profile: () => import('./components/ProfileView'),
+    aiExtract: () => import('./components/AiTextExtractorView'),
+};
+const StatsView = lazy(() => SCREENS.stats().then(m => ({ default: m.StatsView })));
+const PracticeView = lazy(() => SCREENS.practice().then(m => ({ default: m.PracticeView })));
+const ChangelogView = lazy(() => SCREENS.changelog().then(m => ({ default: m.ChangelogView })));
+const BulkAddView = lazy(() => SCREENS.bulkAdd().then(m => ({ default: m.BulkAddView })));
+const AchievementsView = lazy(() => SCREENS.achievements().then(m => ({ default: m.AchievementsView })));
+const ProfileView = lazy(() => SCREENS.profile().then(m => ({ default: m.ProfileView })));
+const AiTextExtractorView = lazy(() => SCREENS.aiExtract().then(m => ({ default: m.AiTextExtractorView })));
+
+// A screen that fails to load (offline before it was ever opened) or to
+// draw shows a message instead of taking the whole app down.
+type BoundaryProps = { view: string; children: React.ReactNode };
+class ScreenBoundary extends React.Component<BoundaryProps, { failed: boolean }> {
+    // The project has no React type package, so the inherited members are named here.
+    declare props: BoundaryProps;
+    declare setState: (state: { failed: boolean }) => void;
+    state = { failed: false };
+    static getDerivedStateFromError() { return { failed: true }; }
+    componentDidCatch(error: unknown) { console.error('A screen failed:', error); }
+    componentDidUpdate(prev: { view: string }) { if (prev.view !== this.props.view && this.state.failed) this.setState({ failed: false }); }
+    render() {
+        if (!this.state.failed) return this.props.children;
+        return (
+            <div dir="rtl" className="font-fa py-20 flex flex-col items-center gap-4 text-center text-ink dark:text-white">
+                <p>این صفحه باز نشد. اگر اینترنت قطع است، وصل که شد دوباره امتحان کن.</p>
+                <button type="button" onClick={() => window.location.reload()} className="min-h-[44px] px-5 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-bold">دوباره</button>
+            </div>
+        );
+    }
+}
 
 const App: React.FC = () => {
     const {
@@ -43,9 +77,10 @@ const App: React.FC = () => {
         updateSettings, handleCheckAchievements, handleGoalUpdate, studyCards,
         handleCompleteCardDetails, handleAutoFixCards, handleStopAutoFix, autoFixProgress,
         handleCloseAutoFixReport, handleSaveExtractedCards, previousViewRef,
-        syncStatus, studyMode, studyLogs, studySessionId, texts, activeTextId, activeChunk,
-        startQuickReview, openStudySetup, handleCreateText, handleOpenText, handleOpenChunk,
-        handleDeleteText, handleCompleteChunk
+        syncStatus, studyMode, studyLogs, studySessionId, sources, chapters, occurrences,
+        activeSourceId, activeChapterId, activeChunk, startQuickReview, openStudySetup,
+        handleAddSource, handleOpenSource, handleOpenChapter, handleOpenChunk, handleDeleteSource,
+        handleCompleteChunk, loadChapterText, handleSaveReaderCards
     } = useAppLogic();
 
     const visibleFlashcards = flashcards.filter(c => !c.isDeleted);
@@ -59,7 +94,16 @@ const App: React.FC = () => {
     ];
     const todayUtc = dayString(new Date());
     const studyGoal = userProfile?.dailyGoals?.goals.find(g => g.type === 'STUDY');
-    const activeText = texts.find(t => t.id === activeTextId && !t.isDeleted);
+    const activeSource = sources.find(s => s.id === activeSourceId && !s.isDeleted);
+    const activeChapter = chapters.find(c => c.id === activeChapterId && !c.isDeleted);
+    const existingFronts = useMemo(() => visibleFlashcards.map(c => c.front), [flashcards]);
+    // Where each card was met while reading, shown on the card.
+    const places = useMemo(() => placesByCard(occurrences, sources, chapters), [occurrences, sources, chapters]);
+
+    useEffect(() => {
+        const timer = setTimeout(() => Object.values(SCREENS).forEach(load => load().catch(() => {})), 5000);
+        return () => clearTimeout(timer);
+    }, []);
 
     const cardsForSetupModal = studyDeckId
         ? visibleFlashcards.filter(c => c.deckId === studyDeckId)
@@ -74,13 +118,14 @@ const App: React.FC = () => {
                     streak={streak}
                     cards={visibleFlashcards}
                     studyLogs={studyLogs}
-                    texts={texts}
+                    sources={sources}
+                    chapters={chapters}
                     dueCount={dueCards.length}
                     newDueCount={dueCards.filter(isNewCard).length}
                     onStartReview={mode => startQuickReview(mode)}
                     onOpenSetup={() => openStudySetup()}
                     onNavigate={handleNavigate}
-                    onOpenText={handleOpenText}
+                    onOpenChunk={handleOpenChunk}
                 />;
             case 'ME':
                 return <MeView
@@ -94,27 +139,35 @@ const App: React.FC = () => {
                     onNavigate={handleNavigate}
                 />;
             case 'TEXTS':
-                return <TextsView
-                    texts={texts}
-                    activeTextId={activeTextId}
-                    onCreateText={handleCreateText}
-                    onOpenText={handleOpenText}
+                return <LibraryView
+                    sources={sources}
+                    chapters={chapters}
+                    occurrences={occurrences}
+                    cards={visibleFlashcards}
+                    decks={visibleDecks}
+                    activeSourceId={activeSourceId}
+                    activeChapterId={activeChapterId}
+                    onAddSource={handleAddSource}
+                    onOpenSource={handleOpenSource}
+                    onOpenChapter={handleOpenChapter}
                     onOpenChunk={handleOpenChunk}
-                    onDeleteText={handleDeleteText}
+                    onDeleteSource={handleDeleteSource}
                     onNavigate={handleNavigate}
                 />;
             case 'READER':
-                if (!activeText) return null;
-                return <ChunkReaderView
-                    key={`${activeText.id}-${activeChunk}`}
-                    doc={activeText}
+                if (!activeSource || !activeChapter) return null;
+                return <ReaderScreen
+                    source={activeSource}
+                    chapter={activeChapter}
+                    chapterCount={chaptersOf(activeSource.id, chapters).length}
                     index={activeChunk}
+                    loadText={loadChapterText}
                     settings={settings}
-                    existingFronts={visibleFlashcards.map(c => c.front)}
-                    onSaveCards={(cards, deckName) => handleSaveExtractedCards(cards, deckName, { stay: true })}
-                    onComplete={() => handleCompleteChunk(activeText.id, activeChunk)}
-                    onBack={() => handleOpenText(activeText.id)}
-                    onOpenChunk={i => handleOpenChunk(activeText.id, i)}
+                    existingFronts={existingFronts}
+                    onSaveCards={cards => handleSaveReaderCards(cards, activeChapter.id, activeChunk)}
+                    onComplete={() => handleCompleteChunk(activeChapter.id, activeChunk)}
+                    onBack={() => handleOpenChapter(activeChapter.id)}
+                    onOpenChunk={i => handleOpenChunk(activeChapter, i)}
                     showToast={showToast}
                 />;
             case 'STUDY':
@@ -126,6 +179,7 @@ const App: React.FC = () => {
                     studiedToday={studyLogs.some(l => l.date === todayUtc)}
                     goal={{ progress: studyGoal?.progress || 0, target: studyGoal?.target || DEFAULT_DAILY_REVIEW_GOAL }}
                     onExit={handleSessionEnd}
+                    places={places}
                 />;
             case 'PRACTICE':
                 return <PracticeView cards={visibleFlashcards} aiOptions={aiRequestOptions(settings)} audioOptions={geminiAudioOptions(settings)} awardXP={userProfile ? (points) => handleGoalUpdate('QUIZ', points, true) : () => {}} onQuizComplete={(score) => {
@@ -138,7 +192,7 @@ const App: React.FC = () => {
                     settings={settings}
                     onUpdateSettings={updateSettings}
                     onSaveExtractedCards={handleSaveExtractedCards}
-                    existingFronts={visibleFlashcards.map(c => c.front)}
+                    existingFronts={existingFronts}
                     onCancel={() => setView('TEXTS')}
                     showToast={showToast}
                 />;
@@ -219,6 +273,7 @@ const App: React.FC = () => {
                     onAutoFixAll={handleAutoFixCards}
                     onStopAutoFix={handleStopAutoFix}
                     autoFixProgress={autoFixProgress}
+                    places={places}
                 />;
         }
     };
@@ -257,9 +312,13 @@ const App: React.FC = () => {
                 />
             )}
             <main className={`flex-1 min-w-0 w-full ${isStudy ? 'px-3 md:px-0' : 'px-4 md:px-8 py-6 md:py-8 pb-28 md:pb-10'}`}>
-                {PERSIAN_VIEWS.includes(view)
-                    ? renderContent()
-                    : <div dir="ltr" className="font-sans max-w-6xl mx-auto">{renderContent()}</div>}
+                <ScreenBoundary view={view}>
+                    <Suspense fallback={<div className="py-24 text-center text-ink-muted dark:text-slate-400" role="status">…</div>}>
+                        {PERSIAN_VIEWS.includes(view)
+                            ? renderContent()
+                            : <div dir="ltr" className="font-sans max-w-6xl mx-auto">{renderContent()}</div>}
+                    </Suspense>
+                </ScreenBoundary>
             </main>
 
             <div dir="ltr">

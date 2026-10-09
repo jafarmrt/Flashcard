@@ -2,7 +2,7 @@
 // One place that turns the saved settings into the options every AI call
 // sends, so a Groq model name never reaches Gemini and the other way round.
 
-import type { Settings } from '../types';
+import type { CardOrigin, Settings } from '../types';
 import type { AiRequestOptions } from './geminiService';
 
 export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
@@ -39,3 +39,29 @@ export const geminiAudioOptions = (settings: Settings): AiRequestOptions => ({
   customApiKey: (settings.aiProvider || 'gemini') === 'gemini' ? settings.customApiKey || undefined : undefined,
   model: (settings.aiProvider || 'gemini') === 'gemini' ? usableModel(settings) : DEFAULT_GEMINI_MODEL,
 });
+
+// The provider's name as shown on a card ("Gemini", "Groq"…), from the
+// options the request used.
+export const providerName = (options?: AiRequestOptions): string => {
+  if (!options || options.aiProvider !== 'openai-compatible') return 'Gemini';
+  const url = (options.aiBaseUrl || 'https://api.groq.com/openai/v1').toLowerCase();
+  if (url.includes('groq.com')) return 'Groq';
+  if (url.includes('openrouter.ai')) return 'OpenRouter';
+  if (url.includes('deepseek.com')) return 'DeepSeek';
+  if (url.includes('googleapis.com')) return 'Gemini';
+  if (url.includes('localhost') || url.includes('127.0.0.1') || url.includes(':11434')) return 'Ollama';
+  try {
+    return new URL(url).hostname.replace(/^api\./, '');
+  } catch {
+    return 'AI';
+  }
+};
+
+export const aiOrigin = (options?: AiRequestOptions, now: Date = new Date()): CardOrigin => ({
+  by: 'ai',
+  provider: providerName(options),
+  ...(options?.model ? { model: options.model } : {}),
+  at: now.toISOString(),
+});
+
+export const dictionaryOrigin = (now: Date = new Date()): CardOrigin => ({ by: 'dictionary', at: now.toISOString() });
