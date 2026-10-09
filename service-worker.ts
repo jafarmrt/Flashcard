@@ -4,11 +4,10 @@
 // Fix: Converted this file into a module to scope its constants locally.
 // This resolves the "Cannot redeclare block-scoped variable" error, which was
 // caused by a duplicate service-worker.js file also being processed by the compiler.
-const CACHE_NAME = 'lingua-cards-cache-v1';
+const CACHE_NAME = 'lingua-cards-cache-v2';
 const APP_SHELL_URLS = [
   '/',
   '/index.html',
-  '/CHANGELOG.md',
 ];
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
