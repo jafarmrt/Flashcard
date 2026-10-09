@@ -130,7 +130,7 @@ export const CardCheckPanel: React.FC<CardCheckPanelProps> = ({ cards, aiOptions
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={askAi} disabled={busy || waiting.length === 0}
             className="min-h-[44px] px-5 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-bold disabled:opacity-40">
-            {busy ? 'در حال چک…' : `چک ${fa(Math.min(MEANING_CHECK_BATCH, waiting.length))} کارت`}
+            {busy ? 'در حال چک…' : waiting.length === 0 ? 'چک معنی' : `چک ${fa(Math.min(MEANING_CHECK_BATCH, waiting.length))} کارت`}
           </button>
           {answered.length > 0 && (
             <button type="button" onClick={acceptAll} className="min-h-[44px] px-4 rounded-xl border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 text-sm font-bold">
