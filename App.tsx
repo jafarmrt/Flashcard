@@ -33,6 +33,7 @@ const SCREENS = {
     profile: () => import('./components/ProfileView'),
     aiExtract: () => import('./components/AiTextExtractorView'),
     reader: () => import('./components/ChunkReaderView'),
+    usage: () => import('./components/UsageView'),
 };
 const StatsView = lazy(() => SCREENS.stats().then(m => ({ default: m.StatsView })));
 const PracticeView = lazy(() => SCREENS.practice().then(m => ({ default: m.PracticeView })));
@@ -41,6 +42,7 @@ const BulkAddView = lazy(() => SCREENS.bulkAdd().then(m => ({ default: m.BulkAdd
 const AchievementsView = lazy(() => SCREENS.achievements().then(m => ({ default: m.AchievementsView })));
 const ProfileView = lazy(() => SCREENS.profile().then(m => ({ default: m.ProfileView })));
 const AiTextExtractorView = lazy(() => SCREENS.aiExtract().then(m => ({ default: m.AiTextExtractorView })));
+const UsageView = lazy(() => SCREENS.usage().then(m => ({ default: m.UsageView })));
 const ReaderScreen = lazy(() => SCREENS.reader().then(m => ({ default: m.ReaderScreen })));
 
 // A screen that fails to load (offline before it was ever opened) or to
@@ -83,7 +85,7 @@ const App: React.FC = () => {
         activeSourceId, activeChapterId, activeChunk, startQuickReview, openStudySetup,
         handleAddSource, handleOpenSource, handleOpenChapter, handleOpenChunk, handleDeleteSource,
         handleCompleteChunk, loadChapterText, handleSaveReaderCards,
-        knownWords, sectionReview, handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview,
+        knownWords, sectionReview, handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview, handleCheckCards,
     } = useAppLogic();
 
     const visibleFlashcards = useMemo(() => flashcards.filter(c => !c.isDeleted), [flashcards]);
@@ -165,6 +167,8 @@ const App: React.FC = () => {
                     sectionReview={sectionReview}
                     onStartSectionReview={handleStartSectionReview}
                     onDismissSectionReview={dismissSectionReview}
+                    aiOptions={aiRequestOptions(settings)}
+                    onCheckCards={handleCheckCards}
                 />;
             case 'READER':
                 if (!activeSource || !activeChapter) return null;
@@ -196,6 +200,7 @@ const App: React.FC = () => {
                     goal={{ progress: studyGoal?.progress || 0, target: studyGoal?.target || DEFAULT_DAILY_REVIEW_GOAL }}
                     onExit={handleSessionEnd}
                     places={places}
+                    aiOptions={aiRequestOptions(settings)}
                 />;
             case 'PRACTICE':
                 return <PracticeView cards={visibleFlashcards} aiOptions={aiRequestOptions(settings)} audioOptions={geminiAudioOptions(settings)} awardXP={userProfile ? (points) => handleGoalUpdate('QUIZ', points, true) : () => {}} onQuizComplete={(score) => {
@@ -223,6 +228,7 @@ const App: React.FC = () => {
                     onNavigateToChangelog={() => setView('CHANGELOG')}
                     onNavigateToAchievements={() => setView('ACHIEVEMENTS')}
                     onNavigateToProfile={() => setView('PROFILE')}
+                    onNavigateToUsage={() => setView('USAGE')}
                     currentUser={currentUser}
                     onLogout={handleLogout}
                 />
@@ -254,6 +260,8 @@ const App: React.FC = () => {
                 />;
             case 'STATS':
                 return <StatsView onBack={() => setView('DECKS')} />;
+            case 'USAGE':
+                return <UsageView cards={visibleFlashcards} onBack={() => setView('SETTINGS')} />;
             case 'CHANGELOG':
                 return <ChangelogView onBack={() => setView('SETTINGS')} />;
             case 'ACHIEVEMENTS':
@@ -309,7 +317,7 @@ const App: React.FC = () => {
 
     // New screens are Persian (right to left); the older screens keep their
     // English, left-to-right layout inside the same shell.
-    const PERSIAN_VIEWS = ['TODAY', 'ME', 'TEXTS', 'READER', 'STUDY'];
+    const PERSIAN_VIEWS = ['TODAY', 'ME', 'TEXTS', 'READER', 'STUDY', 'SETTINGS', 'USAGE'];
     const isStudy = view === 'STUDY';
 
     return (

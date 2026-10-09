@@ -21,7 +21,7 @@ import { applyIncomingSettings, toSyncedSettings } from '../services/settingsSyn
 import { convertToCSV, downloadCSV, parseCollocations, parseCSV, parseKind, splitList } from '../services/csvService';
 import { freeEnrich, FreeEnrichment } from '../services/freeExtractionService';
 import { 
-  generatePersianDetails,
+  generatePersianDetails, parseLevel,
 } from '../services/geminiService';
 import {
   fetchFromFreeDictionary,
@@ -33,7 +33,7 @@ import { AutoFixStats } from '../components/AutoFixReportModal';
 import { fa } from '../components/common/ui';
 
 // Types used within the hook and exported for the App component
-export type View = 'TODAY' | 'ME' | 'TEXTS' | 'READER' | 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS' | 'PROFILE' | 'AI_EXTRACT';
+export type View = 'TODAY' | 'ME' | 'TEXTS' | 'READER' | 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS' | 'PROFILE' | 'AI_EXTRACT' | 'USAGE';
 export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'offline' | 'error';
 
 // A fetch that never reached the server (no connection, filtered network).
@@ -96,6 +96,9 @@ const cardFromExtracted = (cardData: ExtractedWordCard, deckId: string, now: Dat
     grammarPattern: cardData.grammarPattern,
     practicePrompt: cardData.practicePrompt,
     audioSrc: cardData.audioSrc,
+    ...(cardData.grammarId ? { grammarId: cardData.grammarId } : {}),
+    ...(cardData.level ? { level: cardData.level } : {}),
+    ...(cardData.notInDictionary ? { notInDictionary: true } : {}),
     ...(cardData.origin ? { origin: cardData.origin } : {}),
     repetition: 0,
     easinessFactor: 2.5,
@@ -693,11 +696,14 @@ export const useAppLogic = () => {
     }
     
     if (editingCard) {
-      const updatedCard: Flashcard = { 
-        ...editingCard, 
-        ...cardData, 
-        deckId: deck!.id, 
-        updatedAt: new Date().toISOString() 
+      const now = new Date().toISOString();
+      const updatedCard: Flashcard = {
+        ...editingCard,
+        ...cardData,
+        deckId: deck!.id,
+        // A card the user corrected by hand is no longer flagged for review.
+        ...((cardData.back || '').trim() ? { checkedAt: now } : {}),
+        updatedAt: now,
       };
       await db.flashcards.put(updatedCard);
       showToast('Card updated successfully!');
@@ -898,6 +904,8 @@ export const useAppLogic = () => {
                 collocations: parseCollocations(row.collocations),
                 grammarPattern: row.grammarPattern || undefined,
                 practicePrompt: row.practicePrompt || undefined,
+                ...(parseLevel(row.level) ? { level: parseLevel(row.level) } : {}),
+                ...(row.grammarId?.trim() ? { grammarId: row.grammarId.trim() } : {}),
                 origin: { by: 'import', at: now },
                 repetition: 0,
                 easinessFactor: 2.5,
@@ -1191,6 +1199,24 @@ export const useAppLogic = () => {
     setKnownWords(prev => prev.map(r => byId.get(r.id) || r));
   };
 
+  // Cards the user looked at: confirmed as they are, or with a corrected
+  // Persian meaning. Each is stamped checked, so it is not flagged again.
+  const handleCheckCards = async (changes: { id: string; back?: string }[]) => {
+    if (changes.length === 0) return;
+    const now = new Date().toISOString();
+    const found = await db.flashcards.bulkGet(changes.map(c => c.id));
+    const updated: Flashcard[] = [];
+    found.forEach((card, i) => {
+      if (!card || card.isDeleted) return;
+      const back = changes[i].back?.trim();
+      updated.push({ ...card, ...(back ? { back } : {}), checkedAt: now, updatedAt: now });
+    });
+    if (updated.length === 0) return;
+    await db.flashcards.bulkPut(updated);
+    const byId = new Map(updated.map(c => [c.id, c]));
+    setFlashcards(prev => prev.map(c => byId.get(c.id) || c));
+  };
+
   // A short review of the cards of the section just finished, then back to
   // the book.
   const handleStartSectionReview = () => {
@@ -1456,5 +1482,6 @@ export const useAppLogic = () => {
       startQuickReview, openStudySetup, setStudyMode, handleAddSource, handleOpenSource, handleOpenChapter, handleOpenChunk,
       handleDeleteSource, handleCompleteChunk, loadChapterText, handleSaveReaderCards,
       handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview: () => setSectionReview(null),
+      handleCheckCards,
   };
 };

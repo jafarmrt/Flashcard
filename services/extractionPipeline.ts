@@ -4,13 +4,18 @@
 // with terms that already have a card flagged.
 
 import { ExtractedWordCard } from '../types';
-import { ProxyError } from './apiService';
 import { AiRequestOptions, extractVocabularyFromText } from './geminiService';
+import { isPermanentAiError } from './aiClient';
 import { aiOrigin, dictionaryOrigin } from './aiSettings';
 import { extractWithFreeDictionaries } from './freeExtractionService';
 import { DEFAULT_CHUNK_WORDS, findSentence, splitIntoChunks } from './textChunker';
 import { existingTermsInText, markExisting, mergeExtracted, normalizeTerm } from './vocabMerge';
 import { isKnownTerm, knownFormsInText } from './knownWords';
+import { ruleCardsInText } from './grammarCards';
+import { ruleForName } from './grammarPatterns';
+
+// Without AI, the app's grammar rules add a few structures per section.
+export const RULE_GRAMMAR_PER_SECTION = 2;
 
 export type ExtractionSource = 'ai' | 'free';
 
@@ -47,11 +52,10 @@ export interface LongTextExtractionResult {
   aiError?: string; // why the AI failed, when it did
 }
 
-// A wrong key, a missing key or an unknown model fails the same way for every
-// section: after the first one, go straight to the free dictionaries.
-const PERMANENT_AI_STATUS = new Set([400, 401, 403, 404]);
-export const isPermanentAiError = (error: unknown) =>
-  error instanceof ProxyError && PERMANENT_AI_STATUS.has(error.status);
+// A wrong key, a missing key or an unknown model (on every service set up)
+// fails the same way for every section: after the first one, go straight to
+// the free dictionaries.
+export { isPermanentAiError };
 
 export const extractFromLongText = async (params: LongTextExtractionParams): Promise<LongTextExtractionResult> => {
   const {
@@ -72,6 +76,8 @@ export const extractFromLongText = async (params: LongTextExtractionParams): Pro
   // Terms found in earlier sections are excluded from later ones too.
   const known = new Set(existingFronts.map(normalizeTerm));
   const userKnows = new Set(knownTerms.map(normalizeTerm));
+  // Structures that already have a card (an AI may have named one its own way).
+  const knownRules = new Set(existingFronts.map(front => ruleForName(front)?.id).filter((id): id is string => !!id));
 
   for (const section of sections) {
     if (signal?.aborted) break;
@@ -101,6 +107,12 @@ export const extractFromLongText = async (params: LongTextExtractionParams): Pro
     } catch (error) {
       console.error('Extraction failed for a section:', error);
       failedSections++;
+    }
+
+    if (includeGrammar && !byAi) {
+      const rules = ruleCardsInText(section, RULE_GRAMMAR_PER_SECTION, knownRules);
+      rules.forEach(card => card.grammarId && knownRules.add(card.grammarId));
+      found = [...found, ...rules.filter(card => !known.has(normalizeTerm(card.front)))];
     }
 
     const origin = byAi ? aiOrigin(aiOptions) : dictionaryOrigin();

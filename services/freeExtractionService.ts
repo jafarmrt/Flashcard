@@ -8,6 +8,8 @@ import { callProxy } from './apiService';
 import { dictionaryOrigin } from './aiSettings';
 import { candidatePhrasalVerbs, candidateWords, pickHardWords } from './freeCandidates';
 import { cachedLookup } from './lookupCache';
+import { DICTIONARY_SERVICE, logUsage, TRANSLATION_SERVICE } from './usageLog';
+import { levelOfFrequency } from './wordLevel';
 
 export interface FreeEnrichment {
   found: boolean;
@@ -19,15 +21,33 @@ export interface FreeEnrichment {
   audioUrl?: string;
   translation: string;
   collocations: { phrase: string }[];
+  frequency?: number | null; // per million words
 }
 
-// Looked up once per word on this device (services/lookupCache).
+// Looked up once per word on this device (services/lookupCache). Each
+// lookup that reaches the server is noted for the usage page; the server
+// translates the headword, which counts towards the free translation quota.
 export const freeEnrich = (term: string, onlyIfFound = false): Promise<FreeEnrichment> =>
-  cachedLookup(term, () => callProxy('free-enrich', { term, onlyIfFound }));
+  cachedLookup(term, async () => {
+    try {
+      const value: FreeEnrichment = await callProxy('free-enrich', { term, onlyIfFound });
+      logUsage({ service: DICTIONARY_SERVICE, task: 'lookup', ok: true, chars: value?.translation ? (value.headword || term).length : 0 });
+      return value;
+    } catch (error) {
+      logUsage({ service: DICTIONARY_SERVICE, task: 'lookup', ok: false, error: (error as Error)?.message });
+      throw error;
+    }
+  });
 
 export const freeTranslate = async (text: string): Promise<string> => {
-  const res = await callProxy('free-translate', { text });
-  return res?.translation || '';
+  try {
+    const res = await callProxy('free-translate', { text });
+    logUsage({ service: TRANSLATION_SERVICE, task: 'translate', ok: !!res?.translation, chars: text.length, ...(res?.translation ? {} : { error: 'no translation came back (the daily quota may be used up)' }) });
+    return res?.translation || '';
+  } catch (error) {
+    logUsage({ service: TRANSLATION_SERVICE, task: 'translate', ok: false, error: (error as Error)?.message });
+    throw error;
+  }
 };
 
 const runLimited = async <T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>, signal?: AbortSignal): Promise<R[]> => {
@@ -55,6 +75,8 @@ export const enrichmentToCard = (term: string, sentence: string | undefined, e: 
   sourceSentence: sentence,
   collocations: e.collocations,
   audioSrc: e.audioUrl,
+  ...(kind !== 'grammar' && levelOfFrequency(e.frequency) ? { level: levelOfFrequency(e.frequency) } : {}),
+  ...(e.found ? {} : { notInDictionary: true }),
   selected: true,
   origin: dictionaryOrigin(),
 });
@@ -90,11 +112,18 @@ export const extractWithFreeDictionaries = async ({ text, level, count, exclude 
     try {
       const e = await freeEnrich(term.word, term.kind === 'phrase');
       if (term.kind === 'phrase' && !e.found) return null;
-      return enrichmentToCard(term.word, term.sentence, e, term.kind);
+      // The frequency that picked the word gives its level when the lookup has none.
+      const frequency = e.frequency ?? (frequencies || {})[term.word];
+      return enrichmentToCard(term.word, term.sentence, { ...e, frequency }, term.kind);
     } catch {
-      return term.kind === 'word' ? enrichmentToCard(term.word, term.sentence, {
+      // The lookup failed (no connection): a bare card, not one the
+      // dictionary did not know.
+      if (term.kind !== 'word') return null;
+      const { notInDictionary: _unknown, ...bare } = enrichmentToCard(term.word, term.sentence, {
         found: false, headword: term.word, pronunciation: '', partOfSpeech: '', definitions: [], examples: [], translation: '', collocations: [],
-      }, 'word') : null;
+        frequency: (frequencies || {})[term.word],
+      }, 'word');
+      return bare;
     }
   }, signal);
 

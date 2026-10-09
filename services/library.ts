@@ -242,6 +242,7 @@ export const originText = (origin?: CardOrigin): string | null => {
     case 'dictionary': return 'دیکشنری رایگان';
     case 'manual': return 'دستی';
     case 'import': return 'فایل CSV';
+    case 'rules': return 'قاعده‌های برنامه';
     default: return null;
   }
 };

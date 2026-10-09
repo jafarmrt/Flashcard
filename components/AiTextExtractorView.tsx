@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Deck, Settings, ExtractedWordCard } from '../types';
+import { AiProviderId, Deck, Settings, ExtractedWordCard } from '../types';
 import { testAiConnection } from '../services/geminiService';
-import { aiRequestOptions, usableModel } from '../services/aiSettings';
+import { aiRequestOptions, providerKey, providerList, providerProblem, withPrimaryProvider } from '../services/aiSettings';
 import { extractFromLongText, ExtractionProgress, ExtractionSource } from '../services/extractionPipeline';
 import { DEFAULT_CHUNK_WORDS, splitIntoChunks, wordCount as countWords } from '../services/textChunker';
 import { speakText, stopSpeech, pauseSpeech, resumeSpeech, isSpeechSupported, getAvailableVoices } from '../services/ttsService';
@@ -150,22 +150,16 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
   // AI Config Drawer/Modal
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   
-  // Find current preset
-  const initialPreset = AI_PRESETS.find(p => {
-    if (settings.aiProvider === 'openai-compatible') {
-      if (settings.aiBaseUrl?.includes('groq')) return p.id === 'groq';
-      if (settings.aiBaseUrl?.includes('openrouter')) return p.id === 'openrouter';
-      if (settings.aiBaseUrl?.includes('deepseek')) return p.id === 'deepseek';
-      if (settings.aiBaseUrl?.includes('localhost') || settings.aiBaseUrl?.includes('11434')) return p.id === 'ollama';
-      return p.id === 'custom';
-    }
-    return p.id === 'gemini';
-  }) || AI_PRESETS[0];
+  // The service tried first, with its own key, model and address.
+  const savedProviders = providerList(settings);
+  const savedEntry = (id: string) => savedProviders.find(p => p.id === id);
+  const firstUsable = savedProviders.find(p => p.enabled && !providerProblem(settings, p));
+  const initialPreset = AI_PRESETS.find(p => p.id === (firstUsable?.id || 'gemini')) || AI_PRESETS[0];
 
   const [selectedPresetId, setSelectedPresetId] = useState(initialPreset.id);
-  const [customKeyInput, setCustomKeyInput] = useState(settings.customApiKey || '');
-  const [customModelInput, setCustomModelInput] = useState(settings.aiModel || initialPreset.defaultModel);
-  const [customBaseUrl, setCustomBaseUrl] = useState(settings.aiBaseUrl || initialPreset.baseUrl);
+  const [customKeyInput, setCustomKeyInput] = useState(providerKey(settings, initialPreset.id as AiProviderId) || '');
+  const [customModelInput, setCustomModelInput] = useState(savedEntry(initialPreset.id)?.model || initialPreset.defaultModel);
+  const [customBaseUrl, setCustomBaseUrl] = useState(savedEntry(initialPreset.id)?.baseUrl || initialPreset.baseUrl);
   const [isTestingKey, setIsTestingKey] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
@@ -245,10 +239,10 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
     setSelectedPresetId(presetId);
     const preset = AI_PRESETS.find(p => p.id === presetId);
     if (preset) {
-      setCustomBaseUrl(preset.baseUrl);
-      setCustomModelInput(preset.defaultModel);
-      // A key belongs to one provider: never send it to another.
-      setCustomKeyInput(presetId === initialPreset.id ? settings.customApiKey || '' : '');
+      setCustomBaseUrl(savedEntry(presetId)?.baseUrl || preset.baseUrl);
+      setCustomModelInput(savedEntry(presetId)?.model || preset.defaultModel);
+      // Each service has its own key: never send one to another.
+      setCustomKeyInput(providerKey(settings, presetId as AiProviderId) || '');
       setTestResult(null);
     }
   };
@@ -272,13 +266,18 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
     }
   };
 
+  // The chosen service moves to the front of the list in Settings; the
+  // others stay behind it as fallbacks.
   const handleSaveAiSettings = () => {
-    const isCustomOpenAi = activePreset.provider === 'openai-compatible';
+    const model = customModelInput.trim();
+    const baseUrl = customBaseUrl.trim();
     onUpdateSettings({
-      aiProvider: activePreset.provider,
-      aiBaseUrl: isCustomOpenAi ? (customBaseUrl.trim() || undefined) : undefined,
-      customApiKey: customKeyInput.trim() || undefined,
-      aiModel: customModelInput.trim() || activePreset.defaultModel,
+      ...withPrimaryProvider(settings, {
+        id: activePreset.id as AiProviderId,
+        enabled: true,
+        ...(model && model !== activePreset.defaultModel ? { model } : {}),
+        ...(activePreset.provider === 'openai-compatible' && baseUrl && baseUrl !== activePreset.baseUrl ? { baseUrl } : {}),
+      }, customKeyInput),
       userLevel: targetLevel as any,
     });
     showToast(`AI Provider updated to ${activePreset.name}!`);
@@ -396,8 +395,8 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
           <div className="flex items-center gap-2 text-xs text-indigo-200 mb-1">
             <span>AI Linguistic Engine</span>
             <span aria-hidden="true">·</span>
-            <span className="font-mono text-white font-semibold">{usableModel(settings)}</span>
-            {settings.aiProvider === 'openai-compatible' && (
+            <span className="font-mono text-white font-semibold">{aiRequestOptions(settings).model}</span>
+            {aiRequestOptions(settings).aiProvider === 'openai-compatible' && (
               <>
                 <span aria-hidden="true">·</span>
                 <span className="text-emerald-300 font-medium">Open-Source</span>

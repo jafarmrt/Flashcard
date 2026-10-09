@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [7.0.0] - Library, Reading Mode and Checks
+- **Library:** Books (EPUB), articles (a link) and texts in one library, read section by section, with the place every card came from and which service made it.
+- **Reading:** A tap gives the meaning in the sentence; drag over words for a phrase or a sentence (meaning, grammar, translation); «بلدم» takes a word off the suggestions for good; words are underlined by how well you know them; a section's hard words can be shown before reading it.
+- **AI services:** Several services in the order you choose, each with its own key; when one fails the next is asked, then the free dictionaries. A usage page shows requests, failures, cards per service, the free translation quota and data size.
+- **Checks:** Word levels (A1 to C2); a «بررسی» tab per book for cards the dictionary did not know, without a Persian meaning, or not in their sentence; an AI meaning check of 20 cards at a time whose suggestions you accept or keep.
+- **Grammar:** About 20 structures found by the app's own rules and underlined while reading, each with a built-in Persian explanation and exercise; reviewing a grammar card asks for your own sentence, checked by the rules and, with AI, explained, with a suggested rating.
+- **Settings:** Now in Persian.
+
 ## [6.0.0] - New Look: Today Screen, Reading Path & Fairer Rewards
 - **Design:** A Persian, right-to-left interface with the Vazirmatn font; English words and texts stay left-to-right. Older screens (decks, card list, settings, stats, practice) keep their English layout inside the new frame.
 - **Design:** On a computer a side menu lists every section (Today, Review, Practice, Texts, Words, Stats, Settings) with quick-add buttons and the sync status. On a phone there are four tabs (Today, Texts, Words, Me) and an add button.

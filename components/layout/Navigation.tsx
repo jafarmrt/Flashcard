@@ -5,7 +5,7 @@ import { UserProfile } from '../../types';
 import { Icon, fa } from '../common/ui';
 
 const DECK_VIEWS: View[] = ['DECKS', 'LIST', 'FORM', 'BULK_ADD'];
-const ME_VIEWS: View[] = ['ME', 'SETTINGS', 'CHANGELOG', 'ACHIEVEMENTS', 'PROFILE', 'STATS', 'PRACTICE'];
+const ME_VIEWS: View[] = ['ME', 'SETTINGS', 'USAGE', 'CHANGELOG', 'ACHIEVEMENTS', 'PROFILE', 'STATS', 'PRACTICE'];
 const TEXT_VIEWS: View[] = ['TEXTS', 'READER', 'AI_EXTRACT'];
 
 export const SYNC_LABEL: Record<SyncStatus, string> = {
@@ -60,7 +60,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ view, dueCount, userProfile, u
       <NavLink active={TEXT_VIEWS.includes(view)} onClick={() => onNavigate('TEXTS')} icon={<Icon.Book size={20} />} label="کتابخانه" />
       <NavLink active={DECK_VIEWS.includes(view)} onClick={() => onNavigate('DECKS')} icon={<Icon.Layers size={20} />} label="واژه‌ها و دسته‌ها" />
       <NavLink active={view === 'STATS' || view === 'ACHIEVEMENTS'} onClick={() => onNavigate('STATS')} icon={<Icon.Chart size={20} />} label="آمار و نشان‌ها" />
-      <NavLink active={['SETTINGS', 'CHANGELOG', 'PROFILE'].includes(view)} onClick={() => onNavigate('SETTINGS')} icon={<Icon.Gear size={20} />} label="تنظیمات" />
+      <NavLink active={['SETTINGS', 'USAGE', 'CHANGELOG', 'PROFILE'].includes(view)} onClick={() => onNavigate('SETTINGS')} icon={<Icon.Gear size={20} />} label="تنظیمات" />
 
       <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-2">
         <span className="px-3 text-xs text-ink-muted dark:text-slate-400">افزودن</span>

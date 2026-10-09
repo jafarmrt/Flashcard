@@ -15,6 +15,20 @@ export interface LookupRow {
   until: number; // ms; asked again after this
 }
 
+// One request to an outside service, for the usage page (services/usageLog).
+// Kept on this device for 30 days, never synced.
+export interface UsageRow {
+  id?: number;
+  day: string; // YYYY-MM-DD on this device's calendar
+  at: string; // ISO
+  service: string; // "Gemini", "Groq", "dictionary", "translation"
+  task: string; // what it was for: "extract", "sense", "grammar"…
+  ok: boolean;
+  status?: number;
+  error?: string;
+  chars?: number; // characters sent for translation (the free daily quota counts them)
+}
+
 export class LinguaCardsDB extends Dexie {
   flashcards!: Table<Flashcard>; 
   decks!: Table<Deck>;
@@ -29,6 +43,7 @@ export class LinguaCardsDB extends Dexie {
   meta!: Table<MetaRow>;
   knownWords!: Table<KnownWord>;
   lookups!: Table<LookupRow>;
+  usage!: Table<UsageRow>;
 
   constructor() {
     super('LinguaCardsDB');
@@ -208,6 +223,24 @@ export class LinguaCardsDB extends Dexie {
         meta: 'key',
         knownWords: 'id, term, updatedAt',
         lookups: 'term'
+    });
+
+    // Version 14: requests to the AI services and dictionaries, for the usage page.
+    (this as any).version(14).stores({
+        flashcards: 'id, deckId, front, back, dueDate, isDeleted, createdAt, updatedAt',
+        decks: 'id, name, isDeleted',
+        studyHistory: '++id, cardId, date',
+        userProfile: 'id, firstName, lastName, bio',
+        userAchievements: '&achievementId',
+        texts: 'id, updatedAt, isDeleted',
+        sources: 'id, updatedAt',
+        chapters: 'id, sourceId, updatedAt',
+        chapterTexts: 'id, sourceId',
+        occurrences: 'id, cardId, sourceId, chapterId',
+        meta: 'key',
+        knownWords: 'id, term, updatedAt',
+        lookups: 'term',
+        usage: '++id, day'
     });
   }
 }

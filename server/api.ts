@@ -152,6 +152,34 @@ function lookupStore(): LookupStore | null {
   return fileLookups.store;
 }
 
+// The bytes one key takes: Redis is asked for the length, the file store
+// measures the value as it would be written.
+async function keyBytes(key: string): Promise<number> {
+  const kv = kvConfig();
+  if (kv) return Number(await kvCommand(kv, ['STRLEN', key])) || 0;
+  const value = loadFileStore().get(key);
+  return value === undefined ? 0 : Buffer.byteLength(JSON.stringify(value), 'utf-8');
+}
+
+export async function storageUsage(username: string): Promise<{ backend: 'redis' | 'file'; recordBytes: number; chapters: number; chapterBytes: number; translationEmail: boolean }> {
+  const user = await getUser(username);
+  const ids: string[] = (user?.data?.chapters || [])
+    .filter((c: any) => c && !c.isDeleted && typeof c.id === 'string' && CHAPTER_ID.test(c.id))
+    .map((c: any) => c.id);
+  let chapterBytes = 0;
+  for (let i = 0; i < ids.length; i += 10) {
+    const sizes = await Promise.all(ids.slice(i, i + 10).map(id => keyBytes(chapterKey(username, id))));
+    chapterBytes += sizes.reduce((a, b) => a + b, 0);
+  }
+  return {
+    backend: kvConfig() ? 'redis' : 'file',
+    recordBytes: await keyBytes(getUserKey(username)),
+    chapters: ids.length,
+    chapterBytes,
+    translationEmail: !!process.env.MYMEMORY_EMAIL, // a larger free translation quota
+  };
+}
+
 const getUser = (username: string): Promise<any | null> => getKey(getUserKey(username));
 const setUser = (userData: any): Promise<void> => setKey(getUserKey(userData.username), userData);
 
@@ -617,6 +645,10 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         if (!text) return res.status(404).json({ error: 'This chapter is not on the server yet. Open the app on the device that added it.' });
         return res.status(200).json(unpackChapter(text));
       }
+
+      // How much this account keeps on the server, for the usage page.
+      case 'storage-usage':
+        return res.status(200).json(await storageUsage(signedInUser!));
 
       // The page of an article link, read by the browser into plain text.
       case 'fetch-page': {

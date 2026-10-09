@@ -10,7 +10,10 @@ import { isKnownTerm, knownMatch } from '../services/knownWords';
 import { masteryStage } from '../services/masteryService';
 import { phraseRanges, rangeText, readerSection, sentenceOf } from '../services/readerText';
 import { analyzeSentence, grammarCards, Sense, SenseBatcher, sensesInContext } from '../services/senseService';
+import { detectGrammar, ruleById } from '../services/grammarPatterns';
+import { explainInSentence, ruleCard, ruleIdsWithCards } from '../services/grammarCards';
 import { normalizeTerm } from '../services/vocabMerge';
+import { isAboveLevel } from '../services/wordLevel';
 import { isSpeechSupported, speakText, stopSpeech } from '../services/ttsService';
 import { CHUNK_COMPLETE_XP, isChestSection } from '../services/xpRules';
 import { fa, Icon } from './common/ui';
@@ -81,6 +84,17 @@ const MAX_SECTION_BUTTONS = 12;
 const PRE_READ_WORDS = 8;
 // The longest pick that gets a meaning; a longer one is a sentence.
 const MAX_PHRASE_WORDS = 8;
+
+// A tap on one of these words inside a grammar structure opens the
+// structure; a tap on any other word of it looks the word up.
+const FUNCTION_WORDS = new Set(('am is are was were be been being have has had having will would shall should can could may might must '
+  + 'do does did if unless who whom whose which where when wish wishes wished used to than the so such that too enough not only but '
+  + 'also as though better rather it never rarely seldom hardly scarcely barely little nowhere no sooner more less get got getting').split(' '));
+const isFunctionWord = (word: string) => {
+  const w = word.toLowerCase().replace(/’/g, "'");
+  return w.includes("'") || FUNCTION_WORDS.has(w);
+};
+const GRAMMAR_MARK = 'border-b-2 border-dotted border-rose-400 dark:border-rose-500';
 
 // One section of a chapter: read it, pick its hard words (AI, free
 // dictionaries, a tap on a word, or a drag over a phrase), turn them into
@@ -161,6 +175,26 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   }, [chunk, cards, section, knownSet]);
   const masteryShown = useMemo(() => new Set(masteryAt.filter(Boolean)) as Set<Mastery>, [masteryAt]);
 
+  // The structures the app's grammar rules find: per word, the rules it is
+  // part of; per sentence, the rules found in it.
+  const grammarFound = useMemo(() => {
+    const at: string[][] = section.words.map(() => []);
+    const bySentence: string[][] = section.sentences.map(() => []);
+    section.sentences.forEach((s, n) => {
+      const words = section.words.slice(s.first, s.last + 1);
+      for (const match of detectGrammar(section.text, words)) {
+        if (!bySentence[n].includes(match.id)) bySentence[n].push(match.id);
+        for (const k of match.marks) {
+          const w = words[k];
+          if (w && !at[w.i].includes(match.id)) at[w.i].push(match.id);
+        }
+      }
+    });
+    return { at, bySentence };
+  }, [section]);
+  const showGrammar = !settings.hideGrammar;
+  const rulesInDeck = useMemo(() => ruleIdsWithCards(cards), [cards]);
+
   // Each word's item in the list, if any: a phrase where it occurs, a single
   // word in any of its forms.
   const itemAt = useMemo(() => {
@@ -216,7 +250,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     if (isPermanentAiError(error)) aiOff.current = true;
     if (aiWarned.current || !alive.current) return;
     aiWarned.current = true;
-    showToast(`هوش مصنوعی جواب نداد؛ ${what === 'sense' ? 'معنی دیکشنری ماند' : 'دوباره امتحان کن'}.${error instanceof Error && error.message ? ` ${ltr(error.message)}` : ''}`);
+    showToast(`هوش مصنوعی جواب نداد؛ ${what === 'sense' ? 'معنی دیکشنری ماند' : what === 'explain' ? 'توضیح عمومی برنامه ماند' : 'دوباره امتحان کن'}.${error instanceof Error && error.message ? ` ${ltr(error.message)}` : ''}`);
   };
 
   // The AI's meaning in this sentence over the dictionary's. When the AI
@@ -239,7 +273,9 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
       collocations: changed ? [] : it.collocations,
       exampleSentenceTarget: changed ? [] : it.exampleSentenceTarget,
       audioSrc: changed ? undefined : it.audioSrc,
-      origin: aiOrigin(aiOptions),
+      level: s.level || (changed ? undefined : it.level),
+      notInDictionary: changed ? undefined : it.notInDictionary,
+      origin: s.origin || aiOrigin(aiOptions),
       inContext: true,
       loading: false,
       senseLoading: false,
@@ -308,9 +344,39 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     }
   };
 
+  // A structure the rules found: its card from the app's own explanation;
+  // with AI, an explanation about this very sentence follows.
+  const openRule = (id: string, wordIndex?: number) => {
+    const rule = ruleById(id);
+    if (!rule) return;
+    setSentenceResult(null);
+    setSelection(null);
+    const twin = items.find(it => it.kind === 'grammar' && (it.grammarId === id || it.key === normalizeTerm(rule.name)));
+    if (twin) { setSelectedUid(twin.uid); return; }
+    const sentence = wordIndex !== undefined ? sentenceOf(section, wordIndex)?.text : undefined;
+    const deck = rulesInDeck.has(id) || hasCard(rule.name);
+    const wantAi = useAi && !aiOff.current && !deck && !!sentence;
+    const item = toItem({ ...ruleCard(rule, sentence), selected: !deck, alreadyInDeck: deck }, { senseLoading: wantAi });
+    setItems(prev => [...prev, item]);
+    setSelectedUid(item.uid);
+    if (!deck) setSaved(false);
+    if (!wantAi) return;
+    explainInSentence(rule, sentence!, aiOptions)
+      .then(r => { if (alive.current) settle(item.uid, it => ({ ...it, back: r.explanation, notes: rule.explanation, origin: r.origin, inContext: true, senseLoading: false })); })
+      .catch(error => {
+        aiFailed(error, 'explain');
+        if (alive.current) settle(item.uid, it => ({ ...it, senseLoading: false }));
+      });
+  };
+
   const tapWord = (i: number) => {
     setSentenceResult(null);
     setSelection(null);
+    const rules = showGrammar ? grammarFound.at[i] : [];
+    if (rules.length > 0 && isFunctionWord(section.words[i].text)) {
+      openRule(rules[0], i);
+      return;
+    }
     const existing = itemAt[i];
     if (existing) {
       setSelectedUid(existing);
@@ -371,7 +437,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
       const analysis = await analyzeSentence(sentence, level, aiOptions);
       const found = grammarCards(analysis, sentence).map(card => {
         const deck = hasCard(card.front);
-        return toItem({ ...card, origin: aiOrigin(aiOptions), alreadyInDeck: deck, selected: !deck });
+        return toItem({ ...card, origin: card.origin || aiOrigin(aiOptions), alreadyInDeck: deck, selected: !deck });
       });
       const have = new Map<string, Item>(items.map(it => [it.key, it]));
       const fresh = found.filter(it => !have.has(it.key));
@@ -402,7 +468,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
         source,
         existingFronts: [...existingFronts, ...listed],
         knownTerms,
-        includeGrammar: includeGrammar && source === 'ai',
+        includeGrammar,
         aiOptions,
         signal: controller.signal,
       });
@@ -410,7 +476,8 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
       const listedKeys = new Set(listed.map(normalizeTerm));
       const fresh = result.cards
         .filter(c => !listedKeys.has(normalizeTerm(c.front)))
-        .map(c => toItem({ ...c, selected: !c.alreadyInDeck }));
+        // A word the AI rates at or below the learner's level is listed but not picked.
+        .map(c => toItem({ ...c, selected: !c.alreadyInDeck && !(c.kind === 'word' && c.level && !isAboveLevel(c.level, level)) }));
       if (result.fallbackSections > 0) {
         showToast(`هوش مصنوعی جواب نداد؛ از دیکشنری رایگان استفاده شد.${result.aiError ? ` ${ltr(result.aiError)}` : ''}`);
       } else if (fresh.length === 0) {
@@ -489,11 +556,12 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   // become cards, then show their card's colour like any word with a card.
   const pendingUids = useMemo(() => new Set(items.filter(it => !it.alreadyInDeck).map(it => it.uid)), [items]);
   const classFor = (i: number) => {
+    const grammar = showGrammar && grammarFound.at[i].length > 0 ? ` ${GRAMMAR_MARK}` : '';
     const uid = itemAt[i];
-    if (uid !== undefined && uid === detail?.uid) return 'bg-brand-200 ring-2 ring-brand-500 dark:bg-brand-800';
-    if (uid !== undefined && pendingUids.has(uid)) return 'bg-amber-100 dark:bg-amber-900/50';
+    if (uid !== undefined && uid === detail?.uid) return `bg-brand-200 ring-2 ring-brand-500 dark:bg-brand-800${grammar}`;
+    if (uid !== undefined && pendingUids.has(uid)) return `bg-amber-100 dark:bg-amber-900/50${grammar}`;
     const m = masteryAt[i];
-    return m ? MASTERY[m].underline : '';
+    return `${m ? MASTERY[m].underline : ''}${grammar}`;
   };
 
   // Where an item is in the text, to widen it into a phrase or a sentence.
@@ -521,6 +589,24 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   // A translation or grammar found for another pick is not shown under this one.
   const result = sentenceResult && selection && sentenceResult.range.from === selection.from && sentenceResult.range.to === selection.to ? sentenceResult : null;
   const sheetOpen = !!selection || (!!detail && !detail.loading);
+  // Structures of the picked sentences, from the rules (no AI needed).
+  const selectionRules = useMemo(() => {
+    if (!selection) return [];
+    const out: { id: string; name: string; at: number }[] = [];
+    const a = section.words[selection.from].sentence;
+    const b = section.words[selection.to].sentence;
+    for (let n = a; n <= b; n++) {
+      for (const id of grammarFound.bySentence[n] || []) {
+        const rule = ruleById(id);
+        if (rule && !out.some(r => r.id === id)) out.push({ id, name: rule.name, at: section.sentences[n].first });
+      }
+    }
+    return out;
+  }, [selection, section, grammarFound]);
+  // The structures a looked-up word is part of.
+  const detailRules = detail && detail.kind !== 'grammar' && detailPlace && detailPlace.from === detailPlace.to
+    ? grammarFound.at[detailPlace.from].map(id => ruleById(id)).filter(Boolean) as { id: string; name: string }[]
+    : [];
 
   return (
     <div dir="rtl" className="font-fa flex flex-col gap-5 w-full">
@@ -614,12 +700,18 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
               </button>
             )}
           </div>
-          {masteryShown.size > 0 && (
+          {(masteryShown.size > 0 || grammarFound.bySentence.some(ids => ids.length > 0)) && (
             <p aria-label="راهنمای رنگ‌ها" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted dark:text-slate-400 -mt-2">
-              <span>واژه‌های کارت‌دار:</span>
+              {masteryShown.size > 0 && <span>واژه‌های کارت‌دار:</span>}
               {(['new', 'learning', 'learned'] as Mastery[]).filter(m => masteryShown.has(m)).map(m => (
                 <span key={m} className="inline-flex items-center gap-1"><span className={`w-2.5 h-2.5 rounded-full ${MASTERY[m].dot}`} />{MASTERY[m].label}</span>
               ))}
+              {grammarFound.bySentence.some(ids => ids.length > 0) && (
+                <label className="inline-flex items-center gap-1.5 cursor-pointer" title="واژه‌های کمکی یک ساختار را بزن تا توضیحش بیاید">
+                  <input type="checkbox" checked={showGrammar} onChange={e => onUpdateSettings({ hideGrammar: !e.target.checked })} className="w-4 h-4 accent-rose-500" />
+                  <span className={`px-0.5 ${GRAMMAR_MARK}`}>ساختار دستوری</span>
+                </label>
+              )}
             </p>
           )}
           <ReaderText section={section} selection={selection} classFor={classFor} onTap={tapWord} onSelect={pick} />
@@ -654,6 +746,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
                       <button type="button" onClick={() => { setSelection(null); setSelectedUid(it.uid); }} className="flex-1 min-w-0 flex items-center gap-2 text-right">
                         <span dir="ltr" className="font-en font-medium text-ink dark:text-white truncate">{it.front}</span>
                         {it.kind && it.kind !== 'word' && <span className="shrink-0 text-[11px] rounded-full bg-slate-100 dark:bg-slate-700 px-2">{KIND_LABEL[it.kind]}</span>}
+                        {it.level && <span className="shrink-0 font-en text-[11px] rounded-full bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-100 px-1.5" title="سطح واژه">{it.level}</span>}
                         <span className="flex-1" />
                         <span className="text-xs text-ink-muted dark:text-slate-400 truncate max-w-[45%]">
                           {it.loading ? 'در حال جست‌وجو…' : it.alreadyInDeck ? 'کارت دارد' : it.senseLoading ? 'معنی در همین جمله…' : it.back}
@@ -682,6 +775,8 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
               busy={busy}
               translation={result?.translation}
               structures={result?.structures}
+              rules={selectionRules}
+              onOpenRule={(id: string) => { const r = selectionRules.find(x => x.id === id); openRule(id, r?.at); }}
               onGrow={grow}
               onWholeSentence={() => wholeSentence(selection)}
               onMeaning={() => { const r = selection; lookUp(r.from, r.to); }}
@@ -698,6 +793,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
               <div dir="ltr" className="flex items-baseline gap-2.5 flex-wrap">
                 <span className="font-en font-bold text-2xl text-ink dark:text-white">{detail.front}</span>
                 {detail.pronunciation && <span className="text-ink-muted dark:text-slate-400">{detail.pronunciation}</span>}
+                {detail.level && <span className="font-en text-xs rounded-full bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-100 px-2 py-0.5" title="سطح واژه">{detail.level}</span>}
                 {isSpeechSupported() && detail.kind !== 'grammar' && (
                   <button type="button" onClick={() => speakText(detail.front, { rate: 0.9 })} aria-label="پخش تلفظ" className="text-brand-500 dark:text-brand-300"><Icon.Speaker size={18} /></button>
                 )}
@@ -707,8 +803,19 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
               <p className="text-ink dark:text-white">{detail.back}</p>
               {(detail.inContext || detail.senseLoading) && (
                 <p className={`self-start text-xs rounded-full px-2.5 py-0.5 ${detail.inContext ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200' : 'bg-slate-100 text-ink-muted dark:bg-slate-700 dark:text-slate-300'}`}>
-                  {detail.inContext ? 'معنی در همین جمله' : 'در حال پیدا کردن معنی در همین جمله…'}
+                  {detail.kind === 'grammar'
+                    ? (detail.inContext ? 'توضیح برای همین جمله' : 'در حال نوشتن توضیح برای همین جمله…')
+                    : (detail.inContext ? 'معنی در همین جمله' : 'در حال پیدا کردن معنی در همین جمله…')}
                 </p>
+              )}
+              {detailRules.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 text-sm">
+                  <span className="text-ink-muted dark:text-slate-400">بخشی از ساختار:</span>
+                  {detailRules.map(r => (
+                    <button key={r.id} type="button" dir="ltr" onClick={() => openRule(r.id, detailPlace!.from)}
+                      className="min-h-[32px] px-2.5 rounded-full border border-rose-300 dark:border-rose-700 text-rose-800 dark:text-rose-200 font-en text-[13px]">{r.name}</button>
+                  ))}
+                </div>
               )}
               {detail.grammarPattern && <p dir="ltr" className="font-mono text-sm text-rose-700 dark:text-rose-300">{detail.grammarPattern}</p>}
               {detail.definition && detail.definition[0] && <p dir="ltr" className="text-sm text-ink-muted dark:text-slate-400">{detail.definition[0]}</p>}

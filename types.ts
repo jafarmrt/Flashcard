@@ -73,7 +73,7 @@ export interface Collocation {
 // dictionaries, the user by hand, or a CSV import. Cards made before this was
 // recorded have no origin.
 export interface CardOrigin {
-  by: 'ai' | 'dictionary' | 'manual' | 'import';
+  by: 'ai' | 'dictionary' | 'manual' | 'import' | 'rules'; // rules: the app's own grammar rules
   provider?: string; // "Gemini", "Groq", "OpenRouter"…
   model?: string;
   at?: string; // ISO
@@ -94,7 +94,11 @@ export interface Flashcard {
   collocations?: Collocation[];
   grammarPattern?: string; // Grammar cards: the structure, e.g. "had + past participle"
   practicePrompt?: string; // Grammar cards: a sentence-building exercise
+  grammarId?: string; // Grammar cards: the app's rule for the structure (services/grammarPatterns), when known
+  level?: CefrLevel; // how advanced the term is, from its frequency or the AI
   origin?: CardOrigin;
+  notInDictionary?: boolean; // the free dictionaries did not know the term when the card was made
+  checkedAt?: string; // ISO: the user (or an AI check they accepted) confirmed the card is right
   isDeleted?: boolean;
   createdAt: string; // ISO string
   updatedAt?: string; // ISO string for timestamp-based sync
@@ -115,6 +119,19 @@ export interface Flashcard {
   lapses?: number; // times forgotten after being learned
 }
 
+export type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
+
+// The AI services the app can use. They are tried in the order of
+// Settings.aiProviders: when one fails (no quota left, a wrong key), the next.
+export type AiProviderId = 'gemini' | 'groq' | 'openrouter' | 'deepseek' | 'ollama' | 'custom';
+
+export interface AiProviderSetting {
+  id: AiProviderId;
+  enabled: boolean;
+  model?: string;
+  baseUrl?: string; // 'custom' (and a non-default Ollama address)
+}
+
 export interface Settings {
     theme: 'light' | 'dark' | 'system';
     defaultApiSource: 'free' | 'mw';
@@ -125,10 +142,13 @@ export interface Settings {
     aiBaseUrl?: string;
     customApiKey?: string;
     aiModel?: string;
+    aiProviders?: AiProviderSetting[]; // the order they are tried in; replaces aiProvider/aiBaseUrl/aiModel
+    aiKeys?: Partial<Record<AiProviderId, string>>; // never leaves this device; replaces customApiKey
     userLevel?: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2' | 'IELTS' | 'TOEFL';
     extractionSource?: 'ai' | 'free';
     dailyReviewGoal?: number; // reviews per day for the daily goal
     preReadAuto?: boolean; // the reader shows a section's hard words before it
+    hideGrammar?: boolean; // the reader does not underline grammar structures
     updatedAt?: string; // when settings last changed; the newest wins across devices
 }
 
@@ -221,8 +241,11 @@ export interface ExtractedWordCard {
   collocations?: Collocation[];
   grammarPattern?: string;
   practicePrompt?: string;
+  grammarId?: string;
+  level?: CefrLevel;
   audioSrc?: string;
   origin?: CardOrigin;
+  notInDictionary?: boolean;
   selected?: boolean;
   alreadyInDeck?: boolean; // A card with the same term already exists
 }

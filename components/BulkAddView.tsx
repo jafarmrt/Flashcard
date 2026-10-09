@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, memo, useEffect } from 'react';
 import { Flashcard } from '../types';
 import { AiRequestOptions, generatePersianDetails } from '../services/geminiService';
 import { fetchFromFreeDictionary, fetchFromMerriamWebster, fetchAudioData, DictionaryResult } from '../services/dictionaryService';
-import { aiOrigin } from '../services/aiSettings';
+import { aiOrigin, dictionaryOrigin } from '../services/aiSettings';
 
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted'>;
 
@@ -228,8 +228,8 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                     const finalBack = (currentBack && currentBack.trim() !== '') ? currentBack : details.back;
                     const finalNotes = (currentNotes && currentNotes.trim() !== '') ? currentNotes : details.notes;
 
-                    draft.card = { ...draft.card, back: finalBack, notes: finalNotes };
-                    draft.details.ai = { status: 'done', source: aiOptions?.aiProvider === 'openai-compatible' ? (aiOptions.model || 'AI') : 'Gemini' };
+                    draft.card = { ...draft.card, back: finalBack, notes: finalNotes, ...(details.origin ? { origin: details.origin } : {}) };
+                    draft.details.ai = { status: 'done', source: details.origin?.provider || 'AI' };
                 });
             } else if (part === 'audio') {
                 const wordState = processedWordsRef.current.find(p => p.word === word);
@@ -378,7 +378,8 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
         setIsSaving(true);
         const cardsToSave = processedWords.filter(pw => pw.status === 'done' && pw.card).map(pw => ({
             ...(pw.card as FlashcardFormData),
-            origin: aiOrigin(aiOptions),
+            // The service that answered; a card the AI never filled came from the dictionary.
+            origin: pw.card?.origin || (pw.details.ai.status === 'done' ? aiOrigin(aiOptions) : dictionaryOrigin()),
         }));
         if (cardsToSave.length > 0) {
             await onSave(cardsToSave, deckName);

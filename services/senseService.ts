@@ -6,9 +6,11 @@
 //   - the grammar of a sentence: its structures, explained in Persian, each
 //     with a sentence-building exercise.
 
-import type { ExtractedWordCard } from '../types';
-import { callProxy } from './apiService';
-import { AiRequestOptions, parseJsonFromAiResponse, providerFields } from './geminiService';
+import type { CardOrigin, CefrLevel, ExtractedWordCard } from '../types';
+import { aiGenerate } from './aiClient';
+import { aiOrigin } from './aiSettings';
+import { AiRequestOptions, parseJsonFromAiResponse, parseLevel } from './geminiService';
+import { ruleForName } from './grammarPatterns';
 
 export interface SenseRequest {
   term: string; // as picked in the text ("took it into account")
@@ -23,6 +25,8 @@ export interface Sense {
   pronunciation?: string;
   kind?: 'word' | 'phrase' | 'idiom';
   notes?: string;
+  level?: CefrLevel;
+  origin?: CardOrigin; // the AI service that answered
 }
 
 const SENSE_KINDS = ['word', 'phrase', 'idiom'];
@@ -41,6 +45,7 @@ For each item return an object with:
 - "partOfSpeech": as used here ("n.", "v.", "adj.", "adv.", "phrasal verb", "idiom").
 - "pronunciation": IPA of the dictionary form.
 - "notes": one short Persian note when this sense differs from the usual meaning of the term, otherwise "".
+- "level": the CEFR level of the term in this sense: "A1", "A2", "B1", "B2", "C1" or "C2".
 
 Return a JSON object {"senses": [...]}.`;
 
@@ -60,6 +65,7 @@ const SENSE_SCHEMA = {
           partOfSpeech: { type: 'STRING' },
           pronunciation: { type: 'STRING' },
           notes: { type: 'STRING' },
+          level: { type: 'STRING', enum: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] },
         },
         required: ['index', 'front', 'back'],
       },
@@ -97,18 +103,19 @@ export const parseSenses = (parsed: any, count: number): (Sense | null)[] => {
       pronunciation: text(raw.pronunciation) || undefined,
       kind: SENSE_KINDS.includes(kind) ? (kind as Sense['kind']) : undefined,
       notes: text(raw.notes) || undefined,
+      level: parseLevel(raw.level),
     };
   });
   return out;
 };
 
 export const sensesInContext = async (items: SenseRequest[], level: string, options?: AiRequestOptions): Promise<(Sense | null)[]> => {
-  const response = await callProxy('gemini-generate', {
-    ...providerFields(options),
+  const response = await aiGenerate(options, {
     contents: buildSensePrompt(items, level),
     config: { responseMimeType: 'application/json', responseSchema: SENSE_SCHEMA },
-  });
-  return parseSenses(parseJsonFromAiResponse(response.text), items.length);
+  }, 'sense');
+  const origin = aiOrigin(response.used);
+  return parseSenses(parseJsonFromAiResponse(response.text), items.length).map(s => (s ? { ...s, origin } : s));
 };
 
 // Gathers requests made close together and sends them as one: a reader
@@ -163,6 +170,7 @@ export interface GrammarPoint {
 export interface SentenceAnalysis {
   translation: string; // Persian
   structures: GrammarPoint[];
+  origin?: CardOrigin; // the AI service that answered
 }
 
 export const buildSentencePrompt = (sentence: string, level: string): string => `You are an English grammar tutor for a Persian-speaking student at level "${level}".
@@ -218,18 +226,20 @@ export const parseSentenceAnalysis = (parsed: any): SentenceAnalysis => {
 };
 
 export const analyzeSentence = async (sentence: string, level: string, options?: AiRequestOptions): Promise<SentenceAnalysis> => {
-  const response = await callProxy('gemini-generate', {
-    ...providerFields(options),
+  const response = await aiGenerate(options, {
     contents: buildSentencePrompt(sentence, level),
     config: { responseMimeType: 'application/json', responseSchema: SENTENCE_SCHEMA },
-  });
-  return parseSentenceAnalysis(parseJsonFromAiResponse(response.text));
+  }, 'grammar');
+  return { ...parseSentenceAnalysis(parseJsonFromAiResponse(response.text)), origin: aiOrigin(response.used) };
 };
 
 // Grammar cards from an analysis: the explanation on the back, the form and
 // the exercise on the card, the sentence as where it was met.
 export const grammarCards = (analysis: SentenceAnalysis, sentence: string): ExtractedWordCard[] =>
   analysis.structures.map(g => ({
+    // The app's own rule for the structure, when it has one, so practice
+    // in review can check a sentence without AI.
+    ...(ruleForName(g.name, g.pattern) ? { grammarId: ruleForName(g.name, g.pattern)!.id } : {}),
     front: g.name,
     back: g.explanation,
     kind: 'grammar',
@@ -241,5 +251,6 @@ export const grammarCards = (analysis: SentenceAnalysis, sentence: string): Extr
     definition: [],
     collocations: [],
     notes: '',
+    ...(analysis.origin ? { origin: analysis.origin } : {}),
     selected: true,
   }));

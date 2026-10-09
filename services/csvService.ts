@@ -6,6 +6,7 @@ const HEADERS = [
   'front', 'back', 'deckName', 'pronunciation', 'partOfSpeech',
   'definition', 'exampleSentenceTarget', 'notes',
   'kind', 'sourceSentence', 'collocations', 'grammarPattern', 'practicePrompt',
+  'level', 'grammarId',
 ] as const;
 
 const escapeCSV = (value: string | string[] | undefined): string => {
@@ -31,6 +32,8 @@ export const convertToCSV = (cards: Flashcard[], decks: Deck[]): string => {
       collocations: (card.collocations || []).map(c => (c.meaning ? `${c.phrase} = ${c.meaning}` : c.phrase)),
       grammarPattern: card.grammarPattern,
       practicePrompt: card.practicePrompt,
+      level: card.level,
+      grammarId: card.grammarId,
     };
     return HEADERS.map(header => escapeCSV(rowData[header])).join(',');
   });
