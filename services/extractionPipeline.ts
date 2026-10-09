@@ -4,6 +4,7 @@
 // with terms that already have a card flagged.
 
 import { ExtractedWordCard } from '../types';
+import { ProxyError } from './apiService';
 import { AiRequestOptions, extractVocabularyFromText } from './geminiService';
 import { extractWithFreeDictionaries } from './freeExtractionService';
 import { DEFAULT_CHUNK_WORDS, findSentence, splitIntoChunks } from './textChunker';
@@ -40,7 +41,14 @@ export interface LongTextExtractionResult {
   fallbackSections: number;
   failedSections: number;
   stopped: boolean;
+  aiError?: string; // why the AI failed, when it did
 }
+
+// A wrong key, a missing key or an unknown model fails the same way for every
+// section: after the first one, go straight to the free dictionaries.
+const PERMANENT_AI_STATUS = new Set([400, 401, 403, 404]);
+export const isPermanentAiError = (error: unknown) =>
+  error instanceof ProxyError && PERMANENT_AI_STATUS.has(error.status);
 
 export const extractFromLongText = async (params: LongTextExtractionParams): Promise<LongTextExtractionResult> => {
   const {
@@ -55,6 +63,8 @@ export const extractFromLongText = async (params: LongTextExtractionParams): Pro
   let fallbackSections = 0;
   let failedSections = 0;
   let done = 0;
+  let aiError: string | undefined;
+  let aiDisabled = false;
 
   // Terms found in earlier sections are excluded from later ones too.
   const known = new Set(existingFronts.map(normalizeTerm));
@@ -65,15 +75,20 @@ export const extractFromLongText = async (params: LongTextExtractionParams): Pro
     let found: ExtractedWordCard[] = [];
 
     try {
-      if (source === 'ai') {
+      if (source === 'ai' && !aiDisabled) {
         try {
           found = await extractAi({ text: section, level, count: perSection, exclude, includeGrammar, options: aiOptions });
-        } catch (aiError) {
+        } catch (error) {
           if (signal?.aborted) break;
-          console.warn('AI extraction failed for a section, using free dictionaries:', aiError);
+          console.warn('AI extraction failed for a section, using free dictionaries:', error);
+          aiError = aiError || (error as Error)?.message || 'AI request failed';
+          if (isPermanentAiError(error)) aiDisabled = true;
           fallbackSections++;
           found = await extractFree({ text: section, level, count: perSection, exclude, signal });
         }
+      } else if (source === 'ai') {
+        fallbackSections++;
+        found = await extractFree({ text: section, level, count: perSection, exclude, signal });
       } else {
         found = await extractFree({ text: section, level, count: perSection, exclude, signal });
       }
@@ -96,5 +111,6 @@ export const extractFromLongText = async (params: LongTextExtractionParams): Pro
     fallbackSections,
     failedSections,
     stopped: !!signal?.aborted,
+    aiError,
   };
 };

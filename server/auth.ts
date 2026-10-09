@@ -42,8 +42,15 @@ export async function verifyPassword(password: string, stored: string | undefine
 export const USERNAME_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 export const MIN_PASSWORD_LENGTH = 8;
 
-// Registration is open unless ALLOW_REGISTRATION=false (set it once your account exists).
-export const registrationAllowed = () => (process.env.ALLOW_REGISTRATION || 'true').toLowerCase() !== 'false';
+// This is a one-person app: the first account can always be created, and
+// after that registration is closed unless ALLOW_REGISTRATION=true. With
+// ALLOW_REGISTRATION=false nobody can register, not even the first account.
+export const registrationAllowed = (accountExists: boolean) => {
+  const setting = (process.env.ALLOW_REGISTRATION || '').trim().toLowerCase();
+  if (setting === 'false') return false;
+  if (setting === 'true') return true;
+  return !accountExists;
+};
 
 // --- Session cookie ---------------------------------------------------------
 

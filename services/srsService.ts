@@ -53,6 +53,17 @@ export function intervalForStability(stability: number, retention = DESIRED_RETE
 
 export const isNewCard = (card: Flashcard) => card.stability === undefined && card.repetition === 0 && card.interval === 0;
 
+// Due today: everything scheduled up to the end of the local day. Every screen
+// uses this, so the number on the Today screen is the number the review shows
+// (a card added this afternoon is due today, not tomorrow).
+export const endOfLocalDay = (now: Date = new Date()): Date => {
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+  return end;
+};
+export const isDue = (card: Flashcard, now: Date = new Date()): boolean =>
+  new Date(card.dueDate).getTime() <= endOfLocalDay(now).getTime();
+
 // FSRS state for a card; cards scheduled by the old SM-2 code are converted
 // from their interval and easiness factor.
 export function memoryState(card: Flashcard): { stability: number; difficulty: number; lastReviewed: number } | null {

@@ -74,3 +74,29 @@ test('freeEnrich reports a phrase no dictionary knows as not found', async () =>
   assert.equal(e.found, false);
   assert.equal(e.partOfSpeech, 'phrase');
 });
+
+test('lemmaCandidates tries the "e" form before the bare stem', () => {
+  assert.deepEqual(lemmaCandidates('noted').slice(1, 3), ['note', 'not']);
+  assert.deepEqual(lemmaCandidates('hopes').slice(1, 3), ['hope', 'hop']);
+  assert.deepEqual(lemmaCandidates('coding').slice(1, 3), ['code', 'cod']);
+});
+
+test('an inflected word is looked up under its base form before Datamuse is asked', async () => {
+  const calls: string[] = [];
+  const routes = fakeFetch({
+    'sp=hoped&md=dp': [{ word: 'hoped', defs: ['v\tto want'], defHeadword: 'hope' }],
+    'entries/en/hope': [{ word: 'hope', meanings: [{ partOfSpeech: 'verb', definitions: [{ definition: 'To want something to happen.' }] }] }],
+  }, calls);
+  // The dictionary does not know "hoped" itself.
+  const f = async (url: string) => (url.endsWith('entries/en/hoped') ? { ok: false, status: 404, json: async () => ({}) } : routes(url));
+  const e = await freeEnrich('hoped', f);
+  assert.equal(e.headword, 'hope');
+  assert.deepEqual(e.definitions, ['To want something to happen.']);
+  assert.ok(!calls.some(u => u.includes('sp=hoped&md=dp')), 'Datamuse is only the last resort');
+});
+
+test('Datamuse definitions carry the dictionary form of an inflected word', async () => {
+  const f = fakeFetch({ 'sp=carried&md=dp': [{ word: 'carried', defs: ['v\tto move while holding'], defHeadword: 'carry' }] });
+  const e = await freeEnrich('carried', f);
+  assert.equal(e.headword, 'carry');
+});

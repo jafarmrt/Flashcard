@@ -8,6 +8,7 @@ import FlashcardForm from './components/FlashcardForm';
 import { StudyView } from './components/StudyView';
 import { StatsView } from './components/StatsView';
 import { PracticeView } from './components/ConversationView';
+import { aiRequestOptions, geminiAudioOptions } from './services/aiSettings';
 import Toast from './components/Toast';
 import DeckList from './components/DeckList';
 import { ChangelogView } from './components/ChangelogView';
@@ -22,7 +23,7 @@ import { TodayView } from './components/TodayView';
 import { MeView } from './components/MeView';
 import { TextsView } from './components/TextsView';
 import { ChunkReaderView } from './components/ChunkReaderView';
-import { isNewCard } from './services/srsService';
+import { isDue, isNewCard } from './services/srsService';
 import { dayString } from './services/streakService';
 import { DEFAULT_DAILY_REVIEW_GOAL } from './services/xpRules';
 import { AutoFixReportModal } from './components/AutoFixReportModal';
@@ -42,16 +43,14 @@ const App: React.FC = () => {
         updateSettings, handleCheckAchievements, handleGoalUpdate, studyCards,
         handleCompleteCardDetails, handleAutoFixCards, handleStopAutoFix, autoFixProgress,
         handleCloseAutoFixReport, handleSaveExtractedCards, previousViewRef,
-        syncStatus, studyMode, studyLogs, texts, activeTextId, activeChunk,
+        syncStatus, studyMode, studyLogs, studySessionId, texts, activeTextId, activeChunk,
         startQuickReview, openStudySetup, handleCreateText, handleOpenText, handleOpenChunk,
         handleDeleteText, handleCompleteChunk
     } = useAppLogic();
 
     const visibleFlashcards = flashcards.filter(c => !c.isDeleted);
     const visibleDecks = decks.filter(d => !d.isDeleted);
-    const endOfToday = new Date();
-    endOfToday.setHours(23, 59, 59, 999);
-    const dueCards = visibleFlashcards.filter(c => new Date(c.dueDate) <= endOfToday);
+    const dueCards = visibleFlashcards.filter(c => isDue(c));
     const health = [
         { label: 'DB', status: dbStatus },
         { label: 'AI', status: apiStatus },
@@ -120,6 +119,7 @@ const App: React.FC = () => {
                 />;
             case 'STUDY':
                 return <StudyView
+                    key={studySessionId}
                     cards={studyCards}
                     initialMode={studyMode}
                     streak={streak}
@@ -128,7 +128,7 @@ const App: React.FC = () => {
                     onExit={handleSessionEnd}
                 />;
             case 'PRACTICE':
-                return <PracticeView cards={visibleFlashcards} awardXP={userProfile ? (points) => handleGoalUpdate('QUIZ', points, true) : () => {}} onQuizComplete={(score) => {
+                return <PracticeView cards={visibleFlashcards} aiOptions={aiRequestOptions(settings)} audioOptions={geminiAudioOptions(settings)} awardXP={userProfile ? (points) => handleGoalUpdate('QUIZ', points, true) : () => {}} onQuizComplete={(score) => {
                     handleCheckAchievements(score);
                     handleGoalUpdate('QUIZ', 1);
                 }} />;
@@ -178,6 +178,8 @@ const App: React.FC = () => {
                     initialDeckName={editingCardDeckName}
                     showToast={showToast}
                     defaultApiSource={settings.defaultApiSource}
+                    aiOptions={aiRequestOptions(settings)}
+                    audioOptions={geminiAudioOptions(settings)}
                 />;
             case 'STATS':
                 return <StatsView onBack={() => setView('DECKS')} />;
@@ -203,6 +205,7 @@ const App: React.FC = () => {
                     concurrency={settings.bulkAddConcurrency || 3}
                     aiTimeout={settings.bulkAddAiTimeout || 15}
                     dictTimeout={settings.bulkAddDictTimeout || 2.5}
+                    aiOptions={aiRequestOptions(settings)}
                 />;
             case 'LIST':
             default:

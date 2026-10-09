@@ -12,10 +12,11 @@ export const SYNC_LABEL: Record<SyncStatus, string> = {
   idle: 'همگام‌سازی آماده',
   syncing: 'در حال همگام‌سازی…',
   synced: 'همگام با سرور',
+  offline: 'آفلاین، ذخیره روی همین دستگاه',
   error: 'همگام‌سازی ناموفق',
 };
 const SYNC_DOT: Record<SyncStatus, string> = {
-  idle: 'bg-slate-400', syncing: 'bg-amber-500 animate-pulse', synced: 'bg-emerald-600', error: 'bg-red-500',
+  idle: 'bg-slate-400', syncing: 'bg-amber-500 animate-pulse', synced: 'bg-emerald-600', offline: 'bg-slate-400', error: 'bg-red-500',
 };
 
 interface SidebarProps {

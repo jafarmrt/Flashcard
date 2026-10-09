@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Flashcard, StudySessionOptions } from '../types';
+import { isDue, isNewCard } from '../services/srsService';
 
 interface StudySetupModalProps {
   isOpen: boolean;
@@ -13,23 +14,16 @@ export const StudySetupModal: React.FC<StudySetupModalProps> = ({ isOpen, onClos
   const [limit, setLimit] = useState(20);
 
   const filteredCards = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayISOString = today.toISOString();
-
     switch (filter) {
       case 'new':
-        // Fix: Only show truly new cards (never studied).
-        // Cards rated 'Again' have repetition 0 but interval 1. We exclude those.
-        return cards.filter(c => c.repetition === 0 && c.interval === 0);
+        return cards.filter(isNewCard);
       case 'review':
-        // Show cards that are due AND have been studied before (interval > 0 or repetition > 0)
-        return cards.filter(c => (c.repetition > 0 || c.interval > 0) && c.dueDate <= todayISOString);
+        return cards.filter(c => !isNewCard(c) && isDue(c));
       case 'all-cards':
         return cards; // No filter, return all cards
       case 'all-due':
       default:
-        return cards.filter(c => c.dueDate <= todayISOString);
+        return cards.filter(c => isDue(c));
     }
   }, [cards, filter]);
 

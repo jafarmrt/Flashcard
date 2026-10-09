@@ -1,11 +1,13 @@
 import React, { useState, useRef } from 'react';
 import { Flashcard } from '../types';
-import { generateInstructionalQuiz, InstructionalQuizQuestion, blobToBase64, evaluatePronunciation, PronunciationResult } from '../services/geminiService';
+import { AiRequestOptions, generateInstructionalQuiz, InstructionalQuizQuestion, blobToBase64, evaluatePronunciation, PronunciationResult } from '../services/geminiService';
 
 interface PracticeViewProps {
   cards: Flashcard[];
   awardXP: (points: number, message?: string) => void;
   onQuizComplete: (score: { score: number, total: number }) => void;
+  aiOptions?: AiRequestOptions;
+  audioOptions?: AiRequestOptions;
 }
 
 // Fix: Make the shuffle function specific to Flashcard[] to avoid generic type inference issues.
@@ -21,7 +23,7 @@ const MicIcon = ({ recording }: { recording: boolean }) => (
     </svg>
 );
 
-const SpeakingMode: React.FC<{ cards: Flashcard[]; onFinish: (avgScore: number) => void }> = ({ cards, onFinish }) => {
+const SpeakingMode: React.FC<{ cards: Flashcard[]; onFinish: (avgScore: number) => void; audioOptions?: AiRequestOptions }> = ({ cards, onFinish, audioOptions }) => {
     const [currentIndex, setCurrentIndex] = useState(0);
     const [scores, setScores] = useState<number[]>([]);
     const [isRecording, setIsRecording] = useState(false);
@@ -53,7 +55,7 @@ const SpeakingMode: React.FC<{ cards: Flashcard[]; onFinish: (avgScore: number) 
                     setIsAnalyzing(true);
                     try {
                         const base64Audio = await blobToBase64(audioBlob);
-                        const result = await evaluatePronunciation(currentCard.front, base64Audio, audioBlob.type);
+                        const result = await evaluatePronunciation(currentCard.front, base64Audio, audioBlob.type, audioOptions);
                         setFeedback(result);
                         setScores(prev => [...prev, result.score]);
                     } catch (err) {
@@ -128,7 +130,7 @@ const SpeakingMode: React.FC<{ cards: Flashcard[]; onFinish: (avgScore: number) 
 };
 
 
-export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQuizComplete }) => {
+export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQuizComplete, aiOptions, audioOptions }) => {
   type PracticeState = 'idle' | 'generating' | 'active' | 'finished';
   type Mode = 'quiz' | 'speaking';
 
@@ -174,7 +176,7 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
     // Quiz Mode Logic
     setPracticeState('generating');
     const practiceCards = shuffleArray(validPracticePool).slice(0, 5);
-    const generatedQuestions = await generateInstructionalQuiz(practiceCards);
+    const generatedQuestions = await generateInstructionalQuiz(practiceCards, aiOptions);
 
     if (generatedQuestions && generatedQuestions.length > 0) {
         setQuestions(generatedQuestions);
@@ -300,7 +302,7 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
 
   // Render Speaking Mode
   if (mode === 'speaking' && practiceState === 'active') {
-      return <SpeakingMode cards={cards} onFinish={handleSpeakingFinish} />;
+      return <SpeakingMode cards={cards} onFinish={handleSpeakingFinish} audioOptions={audioOptions} />;
   }
 
   // Render Quiz Mode

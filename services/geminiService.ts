@@ -22,34 +22,42 @@ export interface AiRequestOptions {
   model?: string;
 }
 
-const parseJsonFromAiResponse = (text: string) => {
-  let cleanText = text.trim();
-  // Fix: Strip markdown wrapper if present
-  if (cleanText.startsWith('```json')) {
-    cleanText = cleanText.substring(7);
-    if (cleanText.endsWith('```')) {
-      cleanText = cleanText.slice(0, -3);
+// The provider fields every proxy call sends.
+const providerFields = (options?: AiRequestOptions) => {
+  const openAi = options?.aiProvider === 'openai-compatible';
+  return {
+    aiProvider: openAi ? 'openai-compatible' : 'gemini',
+    aiBaseUrl: openAi ? options?.aiBaseUrl || undefined : undefined,
+    model: options?.model || (openAi ? 'llama-3.3-70b-versatile' : 'gemini-2.5-flash'),
+    customApiKey: options?.customApiKey || undefined,
+  };
+};
+
+// Models wrap JSON in code fences, add a sentence before it, or stop early.
+// Take the first JSON object or array found in the reply.
+export const parseJsonFromAiResponse = (text: string) => {
+  const clean = String(text || '').replace(/```(?:json)?/gi, '').trim();
+  if (!clean) throw new Error('The AI sent an empty reply.');
+  try {
+    return JSON.parse(clean);
+  } catch {
+    const start = clean.search(/[[{]/);
+    const end = Math.max(clean.lastIndexOf('}'), clean.lastIndexOf(']'));
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(clean.slice(start, end + 1));
+      } catch {
+        // fall through
+      }
     }
-  } else if (cleanText.startsWith('```')) {
-    cleanText = cleanText.substring(3);
-    if (cleanText.endsWith('```')) {
-      cleanText = cleanText.slice(0, -3);
-    }
+    throw new Error('The AI reply was not valid JSON.');
   }
-  cleanText = cleanText.trim();
-  if (!cleanText) {
-    throw new Error("Received empty response from AI proxy.");
-  }
-  return JSON.parse(cleanText);
 };
 
 export const testAiConnection = async (options?: AiRequestOptions): Promise<{ ok: boolean; message: string }> => {
   try {
     const res = await callProxy('test-ai-key', {
-      aiProvider: options?.aiProvider || 'gemini',
-      aiBaseUrl: options?.aiBaseUrl || undefined,
-      customApiKey: options?.customApiKey || undefined,
-      model: options?.model || (options?.aiProvider === 'openai-compatible' ? 'llama-3.3-70b-versatile' : 'gemini-2.5-flash'),
+      ...providerFields(options),
     });
     if (res && res.text) {
       return { ok: true, message: `Connected successfully (${options?.model || 'default'})` };
@@ -73,10 +81,7 @@ Please provide the following:
 2. "notes": A brief note or mnemonic in Persian to help remember the word. For example, mention a root word, a similar sounding Persian word, or a cultural context.`;
 
     const response = await callProxy('gemini-generate', {
-      aiProvider: options?.aiProvider || 'gemini',
-      aiBaseUrl: options?.aiBaseUrl || undefined,
-      model: options?.model || (options?.aiProvider === 'openai-compatible' ? 'llama-3.3-70b-versatile' : "gemini-2.5-flash"),
-      customApiKey: options?.customApiKey || undefined,
+      ...providerFields(options),
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -151,8 +156,7 @@ export const evaluatePronunciation = async (
       3. "correction": Optional IPA correction if needed.`
     };
     const response = await callProxy('gemini-generate', {
-      model: options?.model || 'gemini-2.5-pro',
-      customApiKey: options?.customApiKey || undefined,
+      ...providerFields({ ...options, aiProvider: 'gemini' }),
       contents: { parts: [textPart, audioPart] },
       config: {
         responseMimeType: "application/json",
@@ -198,8 +202,7 @@ Return the output as a single JSON object with a key "questions", which is an ar
 `;
 
     const response = await callProxy('gemini-generate', {
-      model: options?.model || "gemini-2.5-flash",
-      customApiKey: options?.customApiKey || undefined,
+      ...providerFields(options),
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -276,26 +279,44 @@ Return a JSON object containing a "words" array.`;
 const toStringArray = (v: unknown): string[] =>
   Array.isArray(v) ? v.map(String).filter(Boolean) : (v ? [String(v)] : []);
 
-export const parseExtractedItems = (parsed: any): ExtractedWordCard[] =>
-  (Array.isArray(parsed?.words) ? parsed.words : [])
+// The list of items in a parsed reply: {"words": [...]}, a bare array, or an
+// object whose only array uses another key ("items", "vocabulary", ...).
+const itemList = (parsed: any): any[] | null => {
+  if (Array.isArray(parsed)) return parsed;
+  if (!parsed || typeof parsed !== 'object') return null;
+  if (Array.isArray(parsed.words)) return parsed.words;
+  const arrays = Object.values(parsed).filter(Array.isArray) as any[][];
+  return arrays.length > 0 ? arrays[0] : null;
+};
+
+// Throws when the reply holds no list at all, so the caller can fall back
+// to the free dictionaries instead of silently finding nothing.
+export const parseExtractedItems = (parsed: any): ExtractedWordCard[] => {
+  const list = itemList(parsed);
+  if (!list) throw new Error('The AI reply had no list of words.');
+  return list
     .filter((w: any) => w && typeof w.front === 'string' && w.front.trim())
-    .map((w: any): ExtractedWordCard => ({
-      front: w.front.trim(),
-      back: w.back || '',
-      pronunciation: w.pronunciation || '',
-      partOfSpeech: w.partOfSpeech || '',
-      definition: toStringArray(w.definition),
-      exampleSentenceTarget: toStringArray(w.exampleSentenceTarget),
-      notes: w.notes || '',
-      kind: KINDS.includes(w.kind) ? w.kind : (String(w.front).trim().includes(' ') ? 'phrase' : 'word'),
-      sourceSentence: typeof w.sourceSentence === 'string' && w.sourceSentence.trim() ? w.sourceSentence.trim() : undefined,
-      collocations: (Array.isArray(w.collocations) ? w.collocations : [])
-        .map((c: any) => (typeof c === 'string' ? { phrase: c } : { phrase: String(c?.phrase || ''), meaning: c?.meaning ? String(c.meaning) : undefined }))
-        .filter((c: { phrase: string }) => c.phrase.trim()),
-      grammarPattern: w.grammarPattern || undefined,
-      practicePrompt: w.practicePrompt || undefined,
-      selected: true,
-    }));
+    .map((w: any): ExtractedWordCard => {
+      const kind = String(w.kind || '').trim().toLowerCase();
+      return {
+        front: w.front.trim(),
+        back: typeof w.back === 'string' ? w.back.trim() : '',
+        pronunciation: w.pronunciation || '',
+        partOfSpeech: w.partOfSpeech || '',
+        definition: toStringArray(w.definition),
+        exampleSentenceTarget: toStringArray(w.exampleSentenceTarget),
+        notes: w.notes || '',
+        kind: (KINDS as readonly string[]).includes(kind) ? (kind as ExtractedWordCard['kind']) : (String(w.front).trim().includes(' ') ? 'phrase' : 'word'),
+        sourceSentence: typeof w.sourceSentence === 'string' && w.sourceSentence.trim() ? w.sourceSentence.trim() : undefined,
+        collocations: (Array.isArray(w.collocations) ? w.collocations : [])
+          .map((c: any) => (typeof c === 'string' ? { phrase: c } : { phrase: String(c?.phrase || ''), meaning: c?.meaning ? String(c.meaning) : undefined }))
+          .filter((c: { phrase: string }) => c.phrase.trim()),
+        grammarPattern: w.grammarPattern || undefined,
+        practicePrompt: w.practicePrompt || undefined,
+        selected: true,
+      };
+    });
+};
 
 export const extractVocabularyFromText = async (
   params: ExtractVocabularyParams
@@ -305,10 +326,7 @@ export const extractVocabularyFromText = async (
 
   try {
     const response = await callProxy('gemini-generate', {
-      aiProvider: options?.aiProvider || 'gemini',
-      aiBaseUrl: options?.aiBaseUrl || undefined,
-      model: options?.model || (options?.aiProvider === 'openai-compatible' ? 'llama-3.3-70b-versatile' : 'gemini-2.5-flash'),
-      customApiKey: options?.customApiKey || undefined,
+      ...providerFields(options),
       contents: prompt,
       config: {
         responseMimeType: 'application/json',

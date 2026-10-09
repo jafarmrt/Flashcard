@@ -2,14 +2,16 @@ export interface Deck {
   id: string;
   name: string;
   isDeleted?: boolean;
+  updatedAt?: string; // ISO; the newest rename or delete wins across devices
 }
 
 export type PerformanceRating = 'AGAIN' | 'HARD' | 'GOOD' | 'EASY';
 
 export interface StudyLog {
-  id?: number; // auto-incremented primary key
+  id?: number; // auto-incremented primary key, local to one device
+  uid?: string; // the same on every device; older logs have none
   cardId: string;
-  date: string; // ISO string for the date of review
+  date: string; // YYYY-MM-DD of the review, on the device's calendar
   rating: PerformanceRating;
 }
 

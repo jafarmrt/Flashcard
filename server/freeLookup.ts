@@ -6,6 +6,9 @@
 // `fetchImpl` is injectable so the parsing can be tested without the network.
 
 import { STOPWORDS } from '../services/freeCandidates.js';
+import { lemmaCandidates } from '../services/lemma.js';
+
+export { lemmaCandidates };
 
 type FetchLike = (url: string, init?: { signal?: AbortSignal; headers?: Record<string, string> }) => Promise<{
   ok: boolean;
@@ -34,28 +37,38 @@ export interface FreeEnrichment extends DictionaryEntry {
 
 // --- Dictionary -------------------------------------------------------------
 
-// Raw dictionaryapi.dev-shaped entries: dictionaryapi.dev first, Datamuse definitions as fallback.
-export async function fetchDictionaryEntries(word: string, fetchImpl: FetchLike = defaultFetch): Promise<any[] | null> {
+async function fetchFreeDictionary(word: string, fetchImpl: FetchLike): Promise<any[] | null> {
   const cleanWord = encodeURIComponent(word.trim().toLowerCase());
   try {
     const res = await fetchImpl(`https://api.dictionaryapi.dev/api/v2/entries/en/${cleanWord}`, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) LinguaCards/1.0', Accept: 'application/json' },
-      signal: timeout(2500),
+      signal: timeout(3000),
     });
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) return data;
     }
   } catch {
-    // fall through to Datamuse
+    // unreachable or unknown
   }
+  return null;
+}
 
+// Raw dictionaryapi.dev-shaped entries: dictionaryapi.dev first, Datamuse definitions as fallback.
+export async function fetchDictionaryEntries(word: string, fetchImpl: FetchLike = defaultFetch): Promise<any[] | null> {
+  return (await fetchFreeDictionary(word, fetchImpl)) || fetchDatamuseDefinitions(word, fetchImpl);
+}
+
+async function fetchDatamuseDefinitions(word: string, fetchImpl: FetchLike): Promise<any[] | null> {
+  const cleanWord = encodeURIComponent(word.trim().toLowerCase());
   try {
     const res = await fetchImpl(`https://api.datamuse.com/words?sp=${cleanWord}&md=dp&max=1`, { signal: timeout(3000) });
     if (!res.ok) return null;
     const dmData = await res.json();
     const item = Array.isArray(dmData) ? dmData[0] : null;
     if (!item?.defs || item.word?.toLowerCase() !== word.trim().toLowerCase()) return null;
+    // Datamuse defines inflected forms under their dictionary form ("carried" -> "carry").
+    const headword = typeof item.defHeadword === 'string' && item.defHeadword ? item.defHeadword : item.word;
     const defMap: Record<string, string[]> = {};
     for (const d of item.defs as string[]) {
       const [tag, text] = d.split('\t');
@@ -63,7 +76,7 @@ export async function fetchDictionaryEntries(word: string, fetchImpl: FetchLike 
       (defMap[pos] ||= []).push(text || d);
     }
     return [{
-      word: item.word,
+      word: headword,
       phonetic: item.tags?.find((t: string) => t.startsWith('ipa:'))?.replace('ipa:', '') || '',
       phonetics: [],
       meanings: Object.entries(defMap).map(([partOfSpeech, list]) => ({
@@ -99,34 +112,20 @@ export function parseDictionaryEntries(data: any[]): DictionaryEntry {
   };
 }
 
-// Dictionary forms to try for an inflected word: "studies" -> "study", "running" -> "run".
-export function lemmaCandidates(word: string): string[] {
-  const w = word.toLowerCase().trim();
-  const out = [w];
-  const add = (s: string) => { if (s.length >= 3 && !out.includes(s)) out.push(s); };
-  if (w.includes(' ')) {
-    // Phrases: inflect only the first word ("carried out" -> "carry out").
-    const [head, ...rest] = w.split(/\s+/);
-    for (const form of lemmaCandidates(head).slice(1)) add(`${form} ${rest.join(' ')}`);
-    return out;
-  }
-  if (w.endsWith('ies')) add(w.slice(0, -3) + 'y');
-  if (w.endsWith('es')) add(w.slice(0, -2));
-  if (w.endsWith('s') && !w.endsWith('ss')) add(w.slice(0, -1));
-  if (w.endsWith('ied')) add(w.slice(0, -3) + 'y');
-  if (w.endsWith('ed')) { add(w.slice(0, -2)); add(w.slice(0, -1)); }
-  if (w.endsWith('ing')) { add(w.slice(0, -3)); add(w.slice(0, -3) + 'e'); }
-  if (/(ed|ing)$/.test(w)) {
-    const stem = w.replace(/(ed|ing)$/, '');
-    if (/([b-df-hj-np-tv-z])\1$/.test(stem)) add(stem.slice(0, -1)); // stopped -> stop
-  }
-  if (w.endsWith('ly')) add(w.slice(0, -2));
-  return out;
-}
-
+// The word as written, then its base forms. The full dictionary is asked for
+// every form before the thinner Datamuse definitions are used, which define
+// "carried" without ever trying "carry".
 export async function lookupDictionary(word: string, fetchImpl: FetchLike = defaultFetch): Promise<DictionaryEntry | null> {
-  for (const form of lemmaCandidates(word)) {
-    const data = await fetchDictionaryEntries(form, fetchImpl);
+  const forms = lemmaCandidates(word);
+  for (const form of forms) {
+    const data = await fetchFreeDictionary(form, fetchImpl);
+    if (data) {
+      const parsed = parseDictionaryEntries(data);
+      return { ...parsed, headword: parsed.headword || form };
+    }
+  }
+  for (const form of forms) {
+    const data = await fetchDatamuseDefinitions(form, fetchImpl);
     if (data) {
       const parsed = parseDictionaryEntries(data);
       return { ...parsed, headword: parsed.headword || form };
@@ -219,9 +218,14 @@ export async function freeTranslate(text: string, fetchImpl: FetchLike = default
 
 // --- Everything for one term ------------------------------------------------
 
-export async function freeEnrich(term: string, fetchImpl: FetchLike = defaultFetch): Promise<FreeEnrichment> {
+// `onlyIfFound`: stop after the dictionary when it does not know the term,
+// so checking a possible phrasal verb spends no translation quota.
+export async function freeEnrich(term: string, fetchImpl: FetchLike = defaultFetch, onlyIfFound = false): Promise<FreeEnrichment> {
   const dictionary = await lookupDictionary(term, fetchImpl);
   const headword = dictionary?.headword || term.trim().toLowerCase();
+  if (!dictionary && onlyIfFound) {
+    return { found: false, headword, pronunciation: '', partOfSpeech: '', definitions: [], examples: [], translation: '', collocations: [] };
+  }
   const [translation, collocations] = await Promise.all([
     freeTranslate(headword, fetchImpl),
     lookupCollocations(headword, fetchImpl),

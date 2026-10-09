@@ -107,8 +107,9 @@ export const checkAndAwardAchievements = async (context: AchievementContext): Pr
   }
 
   // --- Save newly earned achievements to DB ---
+  // bulkPut: two checks running at once may award the same achievement.
   if (newlyEarned.length > 0) {
-    await db.userAchievements.bulkAdd(newlyEarned);
+    await db.userAchievements.bulkPut(newlyEarned);
   }
 
   return newlyEarned;

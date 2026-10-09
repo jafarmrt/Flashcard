@@ -15,6 +15,18 @@ interface SettingsViewProps {
     onLogout: () => void;
 }
 
+// Defined outside SettingsView: a component created inside it would be a new
+// type on every render, so its inputs would lose focus after each key press.
+const SettingRow: React.FC<{ title: string; description: string; children: React.ReactNode }> = ({ title, description, children }) => (
+    <div className="flex flex-col sm:flex-row justify-between sm:items-center p-4 border-b border-slate-200 dark:border-slate-700 last:border-b-0">
+        <div>
+            <h4 className="font-semibold text-slate-800 dark:text-slate-100">{title}</h4>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{description}</p>
+        </div>
+        <div className="mt-4 sm:mt-0 flex-shrink-0">{children}</div>
+    </div>
+);
+
 const SettingsView: React.FC<SettingsViewProps> = ({
     settings,
     onUpdateSettings,
@@ -47,15 +59,6 @@ const SettingsView: React.FC<SettingsViewProps> = ({
         event.target.value = ''; // Reset file input
     };
     
-    const SettingRow: React.FC<{ title: string; description: string; children: React.ReactNode }> = ({ title, description, children }) => (
-        <div className="flex flex-col sm:flex-row justify-between sm:items-center p-4 border-b border-slate-200 dark:border-slate-700 last:border-b-0">
-            <div>
-                <h4 className="font-semibold text-slate-800 dark:text-slate-100">{title}</h4>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{description}</p>
-            </div>
-            <div className="mt-4 sm:mt-0 flex-shrink-0">{children}</div>
-        </div>
-    );
 
     return (
         <div className="max-w-3xl mx-auto space-y-8">
@@ -138,29 +141,29 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                     <span className="text-indigo-500">✨</span>
                     <span>AI Provider & Model Settings</span>
                 </h3>
-                <SettingRow title="AI Provider / Ecosystem" description="Choose Google Gemini or open-source / OpenAI-compatible services (Groq, OpenRouter, Ollama, DeepSeek).">
+                <SettingRow title="AI Provider / Ecosystem" description="Choose Google Gemini or open-source / OpenAI-compatible services (Groq, OpenRouter, Ollama, DeepSeek). Switching clears the API key, since each provider needs its own.">
                     <select
                         value={settings.aiProvider === 'openai-compatible' ? (settings.aiBaseUrl?.includes('groq') ? 'groq' : settings.aiBaseUrl?.includes('openrouter') ? 'openrouter' : settings.aiBaseUrl?.includes('deepseek') ? 'deepseek' : settings.aiBaseUrl?.includes('localhost') ? 'ollama' : 'custom') : 'gemini'}
                         onChange={e => {
                             const val = e.target.value;
                             if (val === 'gemini') {
-                                onUpdateSettings({ aiProvider: 'gemini', aiBaseUrl: undefined, aiModel: 'gemini-2.5-flash' });
+                                onUpdateSettings({ aiProvider: 'gemini', aiBaseUrl: undefined, aiModel: 'gemini-2.5-flash', customApiKey: undefined });
                             } else if (val === 'groq') {
-                                onUpdateSettings({ aiProvider: 'openai-compatible', aiBaseUrl: 'https://api.groq.com/openai/v1', aiModel: 'llama-3.3-70b-versatile' });
+                                onUpdateSettings({ aiProvider: 'openai-compatible', aiBaseUrl: 'https://api.groq.com/openai/v1', aiModel: 'llama-3.3-70b-versatile', customApiKey: undefined });
                             } else if (val === 'openrouter') {
-                                onUpdateSettings({ aiProvider: 'openai-compatible', aiBaseUrl: 'https://openrouter.ai/api/v1', aiModel: 'deepseek/deepseek-chat' });
+                                onUpdateSettings({ aiProvider: 'openai-compatible', aiBaseUrl: 'https://openrouter.ai/api/v1', aiModel: 'deepseek/deepseek-chat', customApiKey: undefined });
                             } else if (val === 'deepseek') {
-                                onUpdateSettings({ aiProvider: 'openai-compatible', aiBaseUrl: 'https://api.deepseek.com/v1', aiModel: 'deepseek-chat' });
+                                onUpdateSettings({ aiProvider: 'openai-compatible', aiBaseUrl: 'https://api.deepseek.com/v1', aiModel: 'deepseek-chat', customApiKey: undefined });
                             } else if (val === 'ollama') {
-                                onUpdateSettings({ aiProvider: 'openai-compatible', aiBaseUrl: 'http://localhost:11434/v1', aiModel: 'llama3.3' });
+                                onUpdateSettings({ aiProvider: 'openai-compatible', aiBaseUrl: 'http://localhost:11434/v1', aiModel: 'llama3.3', customApiKey: undefined });
                             } else {
-                                onUpdateSettings({ aiProvider: 'openai-compatible' });
+                                onUpdateSettings({ aiProvider: 'openai-compatible', customApiKey: undefined });
                             }
                         }}
                         className="px-3 py-1.5 text-sm rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 font-medium"
                     >
                         <option value="gemini">Google Gemini (Built-in / Official)</option>
-                        <option value="groq">Groq (Ultra-Fast Open Source - Llama 3 / Mixtral)</option>
+                        <option value="groq">Groq (fast, free tier - Llama 3.3)</option>
                         <option value="openrouter">OpenRouter (All Open-Source Models)</option>
                         <option value="deepseek">DeepSeek API</option>
                         <option value="ollama">Ollama / Local Server (localhost:11434)</option>

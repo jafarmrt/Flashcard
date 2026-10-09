@@ -4,7 +4,8 @@ import { findSentence, splitIntoChunks, wordCount } from '../services/textChunke
 import { existingTermsInText, markExisting, mergeExtracted, normalizeTerm } from '../services/vocabMerge';
 import { candidatePhrasalVerbs, candidateWords, pickHardWords } from '../services/freeCandidates';
 import { extractFromLongText } from '../services/extractionPipeline';
-import { parseExtractedItems } from '../services/geminiService';
+import { parseExtractedItems, parseJsonFromAiResponse } from '../services/geminiService';
+import { ProxyError } from '../services/apiService';
 import { ExtractedWordCard } from '../types';
 
 const sentence = (n: number, i: number) => `Sentence ${i} ` + Array.from({ length: n - 3 }, () => 'word').join(' ') + ' ends.';
@@ -36,7 +37,7 @@ test('splitIntoChunks cuts a sentence longer than the limit and keeps paragraph 
 test('findSentence finds inflected words and separated phrasal verbs', () => {
   const text = 'He was tired. She reluctantly agreed to the plan.\n\nThey gave it up after a week.';
   assert.equal(findSentence(text, 'reluctant'), 'She reluctantly agreed to the plan.');
-  assert.equal(findSentence(text, 'give up'), undefined); // "gave" is irregular
+  assert.equal(findSentence(text, 'give up'), 'They gave it up after a week.'); // irregular past
   assert.equal(findSentence(text, 'agree'), 'She reluctantly agreed to the plan.');
   assert.equal(findSentence('We had to carry it out quickly.', 'carry out'), 'We had to carry it out quickly.');
 });
@@ -80,8 +81,36 @@ test('candidatePhrasalVerbs finds verb + particle pairs', () => {
   const phrases = candidatePhrasalVerbs('They had to carry out the test and then give up. The cat sat on the mat.').map(c => c.word);
   assert.ok(phrases.includes('carry out'));
   assert.ok(phrases.includes('give up'));
-  assert.ok(phrases.includes('sat on'));
+  assert.ok(phrases.includes('sit on'), 'irregular past forms become the base verb');
   assert.ok(!phrases.includes('the mat'));
+});
+
+test('candidatePhrasalVerbs lists common phrasal-verb heads first', () => {
+  const phrases = candidatePhrasalVerbs('The villagers lived in fear until the soldiers took off and the rain set in.').map(c => c.word);
+  assert.deepEqual(phrases.slice(0, 2), ['take off', 'set in']);
+  assert.ok(phrases.includes('live in') || phrases.includes('lived in'));
+});
+
+test('candidateWords drops names even at the start of a sentence, keeps accented words', () => {
+  const words = candidateWords('Darcy smiled. Later, Darcy left the naïve café--quietly. NASA watched.').map(c => c.word);
+  assert.ok(!words.includes('darcy'));
+  assert.ok(!words.includes('nasa'));
+  assert.ok(words.includes('naïve'));
+  assert.ok(words.includes('café'));
+  assert.ok(words.includes('quietly'));
+});
+
+test('findSentence matches inflections only, not longer words', () => {
+  const text = 'The article was long. Modern art is strange.';
+  assert.equal(findSentence(text, 'art'), 'Modern art is strange.');
+  assert.equal(findSentence('She decided quickly.', 'decide'), 'She decided quickly.');
+  assert.equal(findSentence('He is decisive.', 'decide'), undefined);
+});
+
+test('splitIntoChunks joins lines broken inside a paragraph', () => {
+  const chunks = splitIntoChunks('The committee finally\nreached a decision after\nmonths of debate.\n\nNext paragraph.', 300);
+  assert.equal(chunks[0], 'The committee finally reached a decision after months of debate.\n\nNext paragraph.');
+  assert.equal(findSentence(chunks[0], 'reach'), 'The committee finally reached a decision after months of debate.');
 });
 
 test('pickHardWords keeps words below the level threshold, most frequent first', () => {
@@ -107,6 +136,19 @@ test('parseExtractedItems normalises AI output', () => {
   assert.deepEqual(items[0].collocations, [{ phrase: 'take sth into account' }, { phrase: 'fully take into account', meaning: 'کاملاً' }]);
   assert.equal(items[1].kind, 'phrase');
   assert.equal(items[2].grammarPattern, 'had + past participle');
+});
+
+test('parseExtractedItems accepts other list keys and odd kinds, and rejects a reply with no list', () => {
+  const items = parseExtractedItems({ vocabulary: [{ kind: 'Idiom', front: 'spill the beans', back: 'لو دادن' }] });
+  assert.equal(items[0].kind, 'idiom');
+  assert.equal(parseExtractedItems([{ front: 'cope', back: 'کنار آمدن' }]).length, 1);
+  assert.throws(() => parseExtractedItems({ message: 'sorry' }));
+});
+
+test('parseJsonFromAiResponse finds the JSON inside fences or prose', () => {
+  assert.deepEqual(parseJsonFromAiResponse('```json\n{"words": []}\n```'), { words: [] });
+  assert.deepEqual(parseJsonFromAiResponse('Here you go:\n{"words": [{"front": "x"}]}\nHope it helps!'), { words: [{ front: 'x' }] });
+  assert.throws(() => parseJsonFromAiResponse('no json here'));
 });
 
 const longText = Array.from({ length: 3 }, (_, s) =>
@@ -154,6 +196,22 @@ test('extractFromLongText falls back to free dictionaries when AI fails', async 
   assert.equal(result.fallbackSections, result.sections);
   assert.equal(freeCalls, result.sections);
   assert.equal(result.cards.length, result.sections);
+});
+
+test('extractFromLongText stops asking the AI after a key error and reports why', async () => {
+  let aiCalls = 0;
+  const result = await extractFromLongText({
+    text: longText,
+    level: 'B2',
+    perSection: 3,
+    source: 'ai',
+    existingFronts: [],
+    extractAi: async () => { aiCalls++; throw new ProxyError('Gemini (401): the API key is wrong', 401); },
+    extractFree: async () => [card(`free${Math.random()}`)],
+  });
+  assert.equal(aiCalls, 1);
+  assert.equal(result.fallbackSections, result.sections);
+  assert.match(result.aiError!, /401/);
 });
 
 test('extractFromLongText stops when aborted', async () => {

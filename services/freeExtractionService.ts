@@ -19,7 +19,8 @@ export interface FreeEnrichment {
   collocations: { phrase: string }[];
 }
 
-export const freeEnrich = (term: string): Promise<FreeEnrichment> => callProxy('free-enrich', { term });
+export const freeEnrich = (term: string, onlyIfFound = false): Promise<FreeEnrichment> =>
+  callProxy('free-enrich', { term, onlyIfFound });
 
 export const freeTranslate = async (text: string): Promise<string> => {
   const res = await callProxy('free-translate', { text });
@@ -54,6 +55,9 @@ export const enrichmentToCard = (term: string, sentence: string | undefined, e: 
   selected: true,
 });
 
+const MAX_PHRASAL_CHECKED = 10;
+const MAX_PHRASAL_KEPT = 4;
+
 export interface FreeExtractParams {
   text: string;
   level: string;
@@ -67,9 +71,11 @@ export const extractWithFreeDictionaries = async ({ text, level, count, exclude 
   const { frequencies } = await callProxy('word-frequencies', { words: words.map(w => w.word) });
   const hardWords = pickHardWords(words, frequencies || {}, level, count, exclude);
 
-  // At most a few phrasal verbs per section; each is kept only if a dictionary knows it.
+  // At most a few phrasal verbs per section, each kept only if a dictionary
+  // knows it. More are checked than kept, since many "verb + particle" pairs
+  // are not phrasal verbs ("lived in", "sat on").
   const skip = new Set(exclude.map(e => e.toLowerCase()));
-  const phrasal = candidatePhrasalVerbs(text).filter(p => !skip.has(p.word)).slice(0, 4);
+  const phrasal = candidatePhrasalVerbs(text).filter(p => !skip.has(p.word)).slice(0, MAX_PHRASAL_CHECKED);
 
   const terms = [
     ...phrasal.map(p => ({ ...p, kind: 'phrase' as const })),
@@ -78,7 +84,7 @@ export const extractWithFreeDictionaries = async ({ text, level, count, exclude 
 
   const cards = await runLimited(terms, 4, async term => {
     try {
-      const e = await freeEnrich(term.word);
+      const e = await freeEnrich(term.word, term.kind === 'phrase');
       if (term.kind === 'phrase' && !e.found) return null;
       return enrichmentToCard(term.word, term.sentence, e, term.kind);
     } catch {
@@ -88,5 +94,8 @@ export const extractWithFreeDictionaries = async ({ text, level, count, exclude 
     }
   }, signal);
 
-  return cards.filter((c): c is ExtractedWordCard => !!c).slice(0, count + phrasal.length);
+  const found = cards.filter((c): c is ExtractedWordCard => !!c);
+  const phrases = found.filter(c => c.kind === 'phrase').slice(0, MAX_PHRASAL_KEPT);
+  const singles = found.filter(c => c.kind !== 'phrase').slice(0, count);
+  return [...phrases, ...singles];
 };
