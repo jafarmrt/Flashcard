@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [7.1.0] - Books: Reviews, Difficulty and Progress
+- **Review by book:** Each book and chapter reviews its own cards (due ones first, else the weakest); a chapter's hard words can be pre-studied before reading it.
+- **Gap in the sentence:** A new review mode («جای خالی») leaves the word out of the book's sentence; a typo or another form counts as close.
+- **Difficulty:** A book's page shows how many of its words you know, new words per section and the text's level, measured once with a 400-word sample.
+- **Bookshelf and rewards:** The library is a shelf (reading, not started, finished); finishing a chapter or book gives extra XP and badges; reading counts toward the daily goal.
+- **Stats:** Rewritten in Persian, with each book's words over time and the hardest words to review.
+- **Persian everywhere:** Decks, the word list, the card form, bulk add, review setup, badges, profile and all messages.
+
 ## [7.0.0] - Library, Reading Mode and Checks
 - **Library:** Books (EPUB), articles (a link) and texts in one library, read section by section, with the place every card came from and which service made it.
 - **Reading:** A tap gives the meaning in the sentence; drag over words for a phrase or a sentence (meaning, grammar, translation); «بلدم» takes a word off the suggestions for good; words are underlined by how well you know them; a section's hard words can be shown before reading it.

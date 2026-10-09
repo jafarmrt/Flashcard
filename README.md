@@ -110,3 +110,28 @@ translation quota about tenfold.
   rules say at once whether the structure is there; with AI you also get the
   mistakes with a short Persian explanation and a corrected sentence, and a
   suggested rating.
+
+## Books, reviews and progress
+
+- **How hard is a book?** A book's page measures, once per device, how many of
+  its running words you already know: by your level, your grown cards and the
+  «بلدم» list. A sample of 400 of its words is looked up in one request. It
+  shows the share known, about how many new words each 300-word section has,
+  and the text's level (the lowest level that knows 95% of it). The shelf
+  shows the share known on each book.
+- **Pre-study:** before a chapter, its first three sections' hard words can be
+  listed, ticked, saved as cards at their section and reviewed at once.
+- **Review by book or chapter:** a book or chapter page reviews its own cards,
+  the due ones first, else the weakest 20.
+- **Gap in the book's sentence («جای خالی»):** a review mode that shows the
+  sentence the word was met in with the word left out and its Persian meaning
+  as the hint; you write the word as the sentence needs it. A typo or another
+  form of the word is "close" and suggests Hard. Cards without a sentence
+  are asked for their meaning instead.
+- **Rewards:** finishing a chapter adds 50 XP and finishing a book 200 XP on
+  top of the section's 25. Each finished section counts as 5 reviews toward
+  the daily goal. Reading badges: first chapter, 10 chapters, first book,
+  three books, 100 words carded from texts.
+- **Stats:** reviews per day, each book's cards week by week and how many are
+  learned (stage «درخت» or above), the hardest words (most «دوباره») with a
+  button to review them, and words by growth stage.
