@@ -22,3 +22,7 @@ export const learnerStep = (userLevel?: string): CefrLevel =>
 // A word above the learner's level is a word worth a card.
 export const isAboveLevel = (level: CefrLevel | undefined, userLevel?: string): boolean =>
   !!level && CEFR.indexOf(level) > CEFR.indexOf(learnerStep(userLevel));
+
+// A word below the learner's level is one they very likely know already.
+export const isBelowLevel = (level: CefrLevel | undefined, userLevel?: string): boolean =>
+  !!level && CEFR.indexOf(level) < CEFR.indexOf(learnerStep(userLevel));

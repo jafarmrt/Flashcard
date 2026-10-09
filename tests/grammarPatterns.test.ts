@@ -104,7 +104,8 @@ test('inversion after a negative adverbial, and inverted conditionals', () => {
     ['Not until I saw it did I believe it.', ['inversion']],
     ['Were I rich, I would travel.', ['inversion', 'second-conditional']],
     ['Should you need help, call me.', ['inversion']],
-    ['Had you seen it?', []],
+    // A question, not an inversion: its tense is still found.
+    ['Had you seen it?', ['past-perfect']],
     ['Little is known about him.', ['passive']],
     ['Never do that again.', []],
     ['Hardly anyone came.', []],
@@ -213,6 +214,29 @@ test('plain sentences have no structure', () => {
   assert.deepEqual(detectGrammar('', []), []);
 });
 
+test('common look-alikes in real books are not reported', () => {
+  expectIds([
+    // A dialogue tag between "has" and the participle.
+    ['"He has," she said, "gone home."', []],
+    // "has" as a main verb before an object.
+    ["She's everything I wanted.", []],
+    ['There is limited time.', []],
+    ['It was unexpected.', []],
+    ['The used car was cheap.', []],
+    ['We went where to eat was cheap.', []],
+    ['The teacher was kind.', []],
+    ['Bored, the children left.', []],
+    ['Morning, I thought.', []],
+  ]);
+  expectIds([
+    ["She's gone home.", ['present-perfect']],
+    ['Have you ever been to Paris?', ['present-perfect']],
+    ['It was unexplained by the police.', ['passive']],
+    ['Did you use to play?', ['used-to']],
+    ['Tired, I went to bed.', ['participle-clause']],
+  ]);
+});
+
 test('marks point at the words of one sentence inside a longer text', () => {
   const text = 'The cat sat on the mat. The letter was written by my aunt, who lives in Paris.';
   const second = wordSpans(text).slice(6);
@@ -226,7 +250,8 @@ test('marks point at the words of one sentence inside a longer text', () => {
 
 test('grammarIdsIn finds the structures of every sentence, in rule order', () => {
   assert.deepEqual(grammarIdsIn('If it rains, we will stay home. The letter was written by my aunt!'), ['passive', 'first-conditional']);
-  assert.deepEqual(grammarIdsIn('I like tea. Had you seen it?'), []);
+  assert.deepEqual(grammarIdsIn('I like tea. Had you seen it?'), ['past-perfect']);
+  assert.deepEqual(grammarIdsIn('I like tea. It was cold.'), []);
   assert.deepEqual(grammarIdsIn(''), []);
 });
 

@@ -108,6 +108,7 @@ const AiProviders: React.FC<{ settings: Settings; onUpdateSettings: (s: Partial<
         setTests(t => ({ ...t, [entry.id]: { ok: result.ok, message: result.ok ? 'وصل شد و جواب داد.' : result.message } }));
     };
 
+    const usable = list.filter(e => e.enabled && !providerProblem(settings, e)).length;
     let order = 0;
     return (
         <div className="px-5 pb-5 flex flex-col gap-3">
@@ -172,6 +173,11 @@ const AiProviders: React.FC<{ settings: Settings; onUpdateSettings: (s: Partial<
                     );
                 })}
             </ol>
+            {usable === 0 && (
+                <p role="note" className="text-sm rounded-xl bg-amber-50 text-amber-900 dark:bg-amber-900/30 dark:text-amber-100 px-3 py-2">
+                    هیچ سرویس روشنی آماده نیست؛ Gemini با کلید سرور به کار می‌رود.
+                </p>
+            )}
         </div>
     );
 };

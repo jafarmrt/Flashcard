@@ -5,7 +5,7 @@
 
 import type { CardOrigin, Chapter, ChapterText, Deck, Flashcard, Occurrence, Source, SourceKind, TextDoc } from '../types';
 import { findSentence, splitIntoChunks, wordCount } from './textChunker.js';
-import { lemmaCandidates, tokensOf } from './lemma.js';
+import { lemmaCandidates, termWords, tokensOf } from './lemma.js';
 import { normalizeTerm } from './vocabMerge.js';
 
 export interface ChapterInput {
@@ -177,7 +177,7 @@ export const cardsInText = <T extends Pick<Flashcard, 'front' | 'kind' | 'isDele
   for (const card of cards) {
     if (card.isDeleted || card.kind === 'grammar') continue;
     const key = normalizeTerm(card.front);
-    const first = tokensOf(key)[0];
+    const first = termWords(key)[0];
     if (!first || seen.has(key) || !forms.has(first.toLowerCase())) continue;
     const sentence = findSentence(text, key);
     if (!sentence) continue;

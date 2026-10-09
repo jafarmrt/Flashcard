@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - **Checks:** Word levels (A1 to C2); a «بررسی» tab per book for cards the dictionary did not know, without a Persian meaning, or not in their sentence; an AI meaning check of 20 cards at a time whose suggestions you accept or keep.
 - **Grammar:** About 20 structures found by the app's own rules and underlined while reading, each with a built-in Persian explanation and exercise; reviewing a grammar card asks for your own sentence, checked by the rules and, with AI, explained, with a suggested rating.
 - **Settings:** Now in Persian.
+- **Matching:** A card's term is found in a text without its placeholders («take something into account» finds «took the cost into account») and in irregular plurals («children» for «child»).
 
 ## [6.0.0] - New Look: Today Screen, Reading Path & Fairer Rewards
 - **Design:** A Persian, right-to-left interface with the Vazirmatn font; English words and texts stay left-to-right. Older screens (decks, card list, settings, stats, practice) keep their English layout inside the new frame.

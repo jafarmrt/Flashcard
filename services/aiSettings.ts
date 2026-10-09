@@ -59,7 +59,9 @@ const legacyId = (settings: Partial<Settings>): AiProviderId => {
 };
 
 // Every service, in the order they are tried. Settings from before the list
-// become: the service chosen then, first; Gemini (the server's key) after it.
+// become: the service chosen then, first; Gemini (the server's key) after it,
+// switched off after a local or self-hosted service, whose texts never went
+// to Google before.
 export const providerList = (settings: Partial<Settings>): AiProviderSetting[] => {
   const saved = (settings.aiProviders || []).filter((p, i, all) => AI_PROVIDERS.some(info => info.id === p?.id) && all.findIndex(q => q.id === p.id) === i);
   let list: AiProviderSetting[];
@@ -69,7 +71,7 @@ export const providerList = (settings: Partial<Settings>): AiProviderSetting[] =
     const id = legacyId(settings);
     const ownUrl = (id === 'custom' || id === 'ollama') && settings.aiBaseUrl;
     list = [{ id, enabled: true, ...(settings.aiModel ? { model: settings.aiModel } : {}), ...(ownUrl ? { baseUrl: settings.aiBaseUrl } : {}) }];
-    if (id !== 'gemini') list.push({ id: 'gemini', enabled: true });
+    if (id !== 'gemini') list.push({ id: 'gemini', enabled: id !== 'ollama' && id !== 'custom' });
   }
   for (const info of AI_PROVIDERS) if (!list.some(p => p.id === info.id)) list.push({ id: info.id, enabled: false });
   return list;

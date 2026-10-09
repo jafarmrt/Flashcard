@@ -152,13 +152,31 @@ function lookupStore(): LookupStore | null {
   return fileLookups.store;
 }
 
-// The bytes one key takes: Redis is asked for the length, the file store
-// measures the value as it would be written.
-async function keyBytes(key: string): Promise<number> {
+// The bytes each key takes: Redis is asked for the lengths (in one pipeline
+// request per 100 keys), the file store measures each value as it would be
+// written.
+async function keysBytes(keys: string[]): Promise<number[]> {
   const kv = kvConfig();
-  if (kv) return Number(await kvCommand(kv, ['STRLEN', key])) || 0;
-  const value = loadFileStore().get(key);
-  return value === undefined ? 0 : Buffer.byteLength(JSON.stringify(value), 'utf-8');
+  if (!kv) {
+    const store = loadFileStore();
+    return keys.map(key => {
+      const value = store.get(key);
+      return value === undefined ? 0 : Buffer.byteLength(JSON.stringify(value), 'utf-8');
+    });
+  }
+  const out: number[] = [];
+  for (let i = 0; i < keys.length; i += 100) {
+    const batch = keys.slice(i, i + 100);
+    const response = await fetch(`${kv.url}/pipeline`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${kv.token}` },
+      body: JSON.stringify(batch.map(key => ['STRLEN', key])),
+    });
+    if (!response.ok) throw new Error(`Cloud storage request failed (${response.status}).`);
+    const results = await response.json();
+    out.push(...batch.map((_, n) => Number(Array.isArray(results) ? results[n]?.result : 0) || 0));
+  }
+  return out;
 }
 
 export async function storageUsage(username: string): Promise<{ backend: 'redis' | 'file'; recordBytes: number; chapters: number; chapterBytes: number; translationEmail: boolean }> {
@@ -166,14 +184,11 @@ export async function storageUsage(username: string): Promise<{ backend: 'redis'
   const ids: string[] = (user?.data?.chapters || [])
     .filter((c: any) => c && !c.isDeleted && typeof c.id === 'string' && CHAPTER_ID.test(c.id))
     .map((c: any) => c.id);
-  let chapterBytes = 0;
-  for (let i = 0; i < ids.length; i += 10) {
-    const sizes = await Promise.all(ids.slice(i, i + 10).map(id => keyBytes(chapterKey(username, id))));
-    chapterBytes += sizes.reduce((a, b) => a + b, 0);
-  }
+  const [recordBytes, ...chapterSizes] = await keysBytes([getUserKey(username), ...ids.map(id => chapterKey(username, id))]);
+  const chapterBytes = chapterSizes.reduce((a, b) => a + b, 0);
   return {
     backend: kvConfig() ? 'redis' : 'file',
-    recordBytes: await keyBytes(getUserKey(username)),
+    recordBytes,
     chapters: ids.length,
     chapterBytes,
     translationEmail: !!process.env.MYMEMORY_EMAIL, // a larger free translation quota

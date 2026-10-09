@@ -4,7 +4,7 @@
 // dragging over them, a phrase can be marked where it occurs ("took it into
 // account" for "take into account"), and a sentence can be picked whole.
 
-import { isFormOf, tokensOf } from './lemma.js';
+import { isFormOf, termPattern } from './lemma.js';
 import { splitSentences } from './textChunker.js';
 
 export interface ReaderWord {
@@ -123,17 +123,18 @@ export const sentenceOf = (section: ReaderSection, wordIndex: number): { text: s
 // Where a term occurs, as word ranges, in any inflected form and with up to
 // one word between its parts ("took it into account").
 export const phraseRanges = (section: ReaderSection, term: string): [number, number][] => {
-  const parts = tokensOf(term.toLowerCase());
+  const { words: parts, gaps } = termPattern(term);
   if (parts.length === 0) return [];
   const out: [number, number][] = [];
   const words = section.words;
   for (let start = 0; start < words.length; start++) {
     if (!isFormOf(words[start].text, parts[0])) continue;
+    const sentence = words[start].sentence;
     let i = start + 1;
     let ok = true;
     for (let p = 1; p < parts.length && ok; p++) {
-      if (i < words.length && !isFormOf(words[i].text, parts[p]) && words[i].sentence === words[start].sentence) i++;
-      ok = i < words.length && words[i].sentence === words[start].sentence && isFormOf(words[i].text, parts[p]);
+      for (let skipped = 0; skipped < gaps[p] && i < words.length && words[i].sentence === sentence && !isFormOf(words[i].text, parts[p]); skipped++) i++;
+      ok = i < words.length && words[i].sentence === sentence && isFormOf(words[i].text, parts[p]);
       i++;
     }
     if (ok) out.push([start, i - 1]);

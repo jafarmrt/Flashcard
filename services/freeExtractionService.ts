@@ -112,8 +112,9 @@ export const extractWithFreeDictionaries = async ({ text, level, count, exclude 
     try {
       const e = await freeEnrich(term.word, term.kind === 'phrase');
       if (term.kind === 'phrase' && !e.found) return null;
-      // The frequency that picked the word gives its level when the lookup has none.
-      const frequency = e.frequency ?? (frequencies || {})[term.word];
+      // The frequency that picked the word gives its level, so the level agrees
+      // with the reason it was picked.
+      const frequency = (frequencies || {})[term.word] ?? e.frequency;
       return enrichmentToCard(term.word, term.sentence, { ...e, frequency }, term.kind);
     } catch {
       // The lookup failed (no connection): a bare card, not one the

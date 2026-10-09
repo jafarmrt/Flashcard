@@ -24,7 +24,11 @@ export const GrammarPractice: React.FC<GrammarPracticeProps> = ({ card, revealed
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState('');
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  // Set on mount too: StrictMode runs the cleanup once before remounting.
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
 
   const hasRule = !!ruleOfCard(card);
 
@@ -72,9 +76,10 @@ export const GrammarPractice: React.FC<GrammarPracticeProps> = ({ card, revealed
       ) : (
         <div role="status" className="flex flex-col gap-2 rounded-2xl bg-slate-50 dark:bg-slate-900/50 p-4">
           <p dir="ltr" className="font-en text-lg text-ink dark:text-white">{checked}</p>
-          {rule !== undefined && (
-            <p className={`text-sm font-bold ${rule ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
-              {rule ? 'ساختار در جمله‌ات هست.' : 'برنامه این ساختار را در جمله‌ات پیدا نکرد.'}
+          {/* The AI reads more than the rules: once it finds the structure, the rules' line goes. */}
+          {rule !== undefined && !ai?.usesStructure && (
+            <p className={`text-sm font-bold ${rule ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-800 dark:text-amber-200'}`}>
+              {rule ? 'ساختار در جمله‌ات هست.' : `برنامه این ساختار را در جمله‌ات پیدا نکرد${ai || aiBusy ? '.' : '؛ اگر مطمئنی درست است، خودت امتیاز بده.'}`}
             </p>
           )}
           {aiBusy && <p className="text-sm text-ink-muted dark:text-slate-400">هوش مصنوعی جمله را می‌خواند…</p>}

@@ -101,6 +101,7 @@ export const suggestRating = (rule: boolean | undefined, ai?: PracticeFeedback |
     if (!ai.usesStructure) return 'AGAIN';
     return ai.correct && ai.mistakes.length === 0 ? 'GOOD' : 'HARD';
   }
-  if (rule === undefined) return undefined;
-  return rule ? 'GOOD' : 'AGAIN';
+  // The rules can miss a structure written another way, so on their own they
+  // suggest only a pass.
+  return rule ? 'GOOD' : undefined;
 };

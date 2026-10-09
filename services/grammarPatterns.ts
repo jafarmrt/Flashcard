@@ -396,6 +396,13 @@ const CLEFT_BLOCK = wordSet(`so such too pity shame wonder surprise miracle reli
 const CLEFT_BLOCK_LATER = wordSet('best worst most least first last only same kind sort type way time day moment year reason');
 
 const COMPARATIVES = wordSet('more less fewer better worse further farther sooner later longer');
+const QUESTION_WORDS = wordSet('how why when where what who which');
+// Nouns ending in -er, never comparatives.
+const ER_NOUNS = wordSet(`water river summer winter number mother father brother sister teacher paper letter member order
+  other power matter corner dinner finger flower tower answer computer center centre chapter character daughter danger
+  weather silver after under never ever over however whether together rather either neither player writer user owner
+  leader worker reader speaker officer partner manager customer monster master minister soldier farmer driver doctor
+  printer border butter hunger anger laughter shoulder quarter theater theatre spider ladder cover paper`);
 
 // --- Word tests ---
 
@@ -422,8 +429,15 @@ const isBaseVerb = (w: string): boolean => {
   return true;
 };
 
-const isComparative = (w: string): boolean =>
-  COMPARATIVES.has(w) || (w.length >= 5 && w.endsWith('er') && !FUNCTION.has(w));
+// A comparative after "the": a known one, or an -er word followed by its
+// clause ("The bigger they are", "the harder the fall").
+const isComparativeAt = (c: Ctx, k: number): boolean => {
+  const w = at(c, k);
+  if (COMPARATIVES.has(w)) return true;
+  if (w.length < 5 || !w.endsWith('er') || FUNCTION.has(w) || ER_NOUNS.has(w)) return false;
+  const next = at(c, k + 1);
+  return SUBJ_PRON.has(next) || DETS.has(next) || isName(c, k + 1) || commaAfter(c, k) || k + 1 >= c.t.length;
+};
 
 // --- Tokens: words with contractions expanded ---
 
@@ -453,15 +467,18 @@ const resolveD = (ws: string[], i: number): string => {
 
 // "it's": "has" before "been"/"got", an intransitive verb or a verb with an
 // object ("she's taken my book"); otherwise "is" ("it's made of wood").
-const resolveS = (ws: string[], i: number): string => {
+const resolveS = (ws: string[], i: number, spans: WordSpan[]): string => {
   const j = skipAdverbsIn(ws, i + 1);
   const next = ws[j] ?? '';
   if (next === 'been' || next === 'got' || next === 'gotten') return 'has';
   if (!isPP(next) || BASE_PP.has(next)) return 'is';
   if (INTRANSITIVE_PP.has(next)) return 'has';
   const after = ws[j + 1] ?? '';
-  return DETS.has(after) || OBJ_PRON.has(after) ? 'has' : 'is';
+  // An object right after the verb: "she's visited Paris", "she's eaten all of it".
+  return DETS.has(after) || OBJ_PRON.has(after) || HAS_OBJECT.has(after) || /^\d/.test(after)
+    || /^\p{Lu}/u.test(spans[j + 1]?.text ?? '') ? 'has' : 'is';
 };
+const HAS_OBJECT = wordSet('all both everything something nothing anything everyone someone lots twice once several');
 
 const expand = (spans: WordSpan[]): Tok[] => {
   const ws = spans.map(s => norm(s.text));
@@ -475,7 +492,7 @@ const expand = (spans: WordSpan[]): Tok[] => {
       const [, stem, end] = m;
       push(stem);
       push(end === 've' ? 'have' : end === 'll' ? 'will' : end === 're' ? 'are' : end === 'm' ? 'am'
-        : end === 'd' ? resolveD(ws, i) : resolveS(ws, i));
+        : end === 'd' ? resolveD(ws, i) : resolveS(ws, i, spans));
       return;
     }
     push(w);
@@ -523,6 +540,13 @@ const gapAfter = (c: Ctx, k: number): string => {
 const commaAfter = (c: Ctx, k: number): boolean => gapAfter(c, k).includes(',');
 const breakAfter = (c: Ctx, k: number): boolean => /[,;:–—]/.test(gapAfter(c, k));
 
+// Whether the tokens from `a` to `b` follow each other with only spaces
+// between them: in '"Yes, it was," said Tom' the "was" and "said" do not.
+const joined = (c: Ctx, a: number, b: number): boolean => {
+  for (let m = a; m < b; m++) if (/[^\s]/.test(gapAfter(c, m))) return false;
+  return true;
+};
+
 // A capitalized word that is not the first of the sentence.
 const isName = (c: Ctx, k: number): boolean => {
   const tok = c.t[k];
@@ -542,7 +566,14 @@ const tenses = (c: Ctx, add: Add): void => {
       const g = skipAdv(c, j + 1);
       if (isVerbIng(at(c, g))) { add(continuous, [k, j, g]); return; }
     }
-    if (isPP(p) && !HAVE_ADJ_ED.has(p) && !(p === 'got' && at(c, k) !== 'had')) add(simple, [k, j]);
+    if (isPP(p) && !HAVE_ADJ_ED.has(p) && !(p === 'got' && at(c, k) !== 'had') && joined(c, k, j)) add(simple, [k, j]);
+  };
+  // "Have you ever been to Japan?", "Had she left?": the auxiliary opens a question.
+  const perfectQuestion = (k: number, simple: string) => {
+    const s = k + 1;
+    if (!(SUBJ_PRON.has(at(c, s)) || isName(c, s))) return;
+    const j = skipAdv(c, s + 1);
+    if (isPP(at(c, j)) && !HAVE_ADJ_ED.has(at(c, j)) && joined(c, k, j)) add(simple, [k, j]);
   };
   for (let k = 0; k < c.t.length; k++) {
     const w = at(c, k);
@@ -550,26 +581,33 @@ const tenses = (c: Ctx, add: Add): void => {
     if (BE.has(w)) {
       const j = skipAdv(c, k + 1);
       const p = at(c, j);
-      if (isPP(p) && !NOT_PASSIVE.has(p) && !((p === 'used' || p === 'supposed') && at(c, j + 1) === 'to')) {
+      // Not "there is limited time" (an adjective after "there is"), not "it is
+      // unexpected" (un- words read as adjectives unless "by" follows).
+      const adjective = at(c, k - 1) === 'there' || (p.startsWith('un') && isRegularEd(p) && at(c, j + 1) !== 'by');
+      if (isPP(p) && !NOT_PASSIVE.has(p) && !adjective && joined(c, k, j) && !((p === 'used' || p === 'supposed') && at(c, j + 1) === 'to')) {
         add('passive', w === 'being' && BE.has(at(c, k - 1)) ? [k - 1, k, j] : [k, j]);
       }
     }
     if ((w === 'have' || w === 'has') && !MODALS.has(prev) && prev !== 'to') perfect(k, 'present-perfect', 'present-perfect-continuous');
     if (w === 'had' && !MODALS.has(prev)) perfect(k, 'past-perfect', 'past-perfect-continuous');
+    if (c.question && (k === 0 || (k === 1 && QUESTION_WORDS.has(at(c, 0)))) && isFirstOfWord(c, k)) {
+      if (w === 'have' || w === 'has') perfectQuestion(k, 'present-perfect');
+      if (w === 'had') perfectQuestion(k, 'past-perfect');
+    }
     if (w === 'will' || w === 'shall') {
       const j = skipAdv(c, k + 1);
       if (at(c, j) === 'have') {
         const p = skipAdv(c, j + 1);
-        if (isPP(at(c, p))) add('future-perfect', [k, j, p]);
+        if (isPP(at(c, p)) && joined(c, k, p)) add('future-perfect', [k, j, p]);
       } else if (at(c, j) === 'be') {
         const g = skipAdv(c, j + 1);
-        if (isVerbIng(at(c, g))) add('future-continuous', [k, j, g]);
+        if (isVerbIng(at(c, g)) && joined(c, k, g)) add('future-continuous', [k, j, g]);
       }
     }
     if (['should', 'could', 'might', 'must', 'would', 'may', 'can'].includes(w)) {
       const j = skipAdv(c, k + 1);
       const p = skipAdv(c, j + 1);
-      if (at(c, j) === 'have' && isPP(at(c, p))) add('modal-perfect', [k, j, p]);
+      if (at(c, j) === 'have' && isPP(at(c, p)) && joined(c, k, p)) add('modal-perfect', [k, j, p]);
     }
   }
 };
@@ -774,7 +812,9 @@ const relative = (c: Ctx, add: Add): void => {
       const a = k - 1;
       const ok = w === 'when'
         ? TIME_NOUNS.has(at(c, a)) && detBefore(c, a)
-        : isNounish(c, a) && (detBefore(c, a) || isName(c, a) || /[^s]s$/.test(at(c, a)));
+        : at(c, k + 1) !== 'to' && isNounish(c, a) && (detBefore(c, a) || isName(c, a)
+          // a plural noun, not a verb after its subject ("he goes where …")
+          || (/[^s]s$/.test(at(c, a)) && !SUBJ_PRON.has(at(c, prevNonAdv(c, a))) && !isName(c, prevNonAdv(c, a))));
       if (ok) add('relative-clause', [a, k]);
     }
   }
@@ -803,6 +843,9 @@ const wish = (c: Ctx, add: Add): void => {
   }
 };
 
+// Determiners before a noun that "used to" then describes ("the tools used to …").
+const NOUN_DETS = wordSet('the a an this that these those some any each every no');
+
 const usedTo = (c: Ctx, add: Add): void => {
   for (let k = 0; k < c.t.length; k++) {
     const w = at(c, k);
@@ -814,9 +857,13 @@ const usedTo = (c: Ctx, add: Add): void => {
       if (GET.has(before) && x) add('be-used-to', [p, k, k + 1]);
       else if (BE.has(before)) {
         if (isIng(x) || DETS.has(x) || OBJ_PRON.has(x)) add('be-used-to', [p, k, k + 1]);
-      } else if (!HAVE.has(before) && isBaseVerb(x)) add('used-to', [k, k + 1]);
+      } else if (!HAVE.has(before) && isBaseVerb(x) && !(NOUN_DETS.has(at(c, p - 1)) && !FUNCTION.has(before))) {
+        add('used-to', [k, k + 1]); // not "the method used to measure it" (a passive participle)
+      }
     } else if (w === 'use' && at(c, k - 1) === 'not' && at(c, k - 2) === 'did' && isBaseVerb(x)) {
       add('used-to', [k - 2, k, k + 1]); // "didn't use to"
+    } else if (w === 'use' && at(c, k - 2) === 'did' && (SUBJ_PRON.has(at(c, k - 1)) || isName(c, k - 1)) && isBaseVerb(x)) {
+      add('used-to', [k - 2, k, k + 1]); // "Did you use to …?"
     }
   }
 };
@@ -859,6 +906,9 @@ const participle = (c: Ctx, add: Add): void => {
   }
   const ing = isVerbIng(w) && !PREP_ING.has(w);
   const pp = isPP(w) && !BASE_PP.has(w) && !NOT_PARTICIPLE_START.has(w);
+  // One word before the comma is a clause only when a subject follows
+  // ("Smiling, she waved"), not "Beijing, the capital, …".
+  if (comma === k && !SUBJ_PRON.has(after) && !isName(c, comma + 1)) return;
   if (ing || pp) add('participle-clause', range(0, k + 1));
 };
 
@@ -866,9 +916,9 @@ const participle = (c: Ctx, add: Add): void => {
 const comparativeCorrelative = (c: Ctx, add: Add): void => {
   const n = c.t.length;
   for (let k = 0; k < n - 3; k++) {
-    if (at(c, k) !== 'the' || !isComparative(at(c, k + 1))) continue;
+    if (at(c, k) !== 'the' || !isComparativeAt(c, k + 1)) continue;
     for (let b = k + 2; b < n - 1; b++) {
-      if (at(c, b) !== 'the' || !commaAfter(c, b - 1) || !isComparative(at(c, b + 1))) continue;
+      if (at(c, b) !== 'the' || !commaAfter(c, b - 1) || !isComparativeAt(c, b + 1)) continue;
       if (b === k + 2 && !COMPARATIVES.has(at(c, k + 1))) continue; // "The singer, the dancer"
       add('comparative-correlative', [k, k + 1, b, b + 1]);
       return;

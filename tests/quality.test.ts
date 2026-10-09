@@ -5,7 +5,7 @@ import { ProxyError } from '../services/apiService';
 import {
   aiChain, aiRequestOptions, providerKey, providerList, providerName, providerProblem, withPrimaryProvider,
 } from '../services/aiSettings';
-import { learnerStep, levelOfFrequency, isAboveLevel } from '../services/wordLevel';
+import { learnerStep, levelOfFrequency, isAboveLevel, isBelowLevel } from '../services/wordLevel';
 import { checkReasons, meaningCheckCandidates, needsCheck } from '../services/cardCheck';
 import { buildMeaningCheckPrompt, MEANING_CHECK_BATCH, parseMeaningVerdicts } from '../services/meaningCheck';
 import { parsePracticeFeedback, ruleCheck, suggestRating } from '../services/practiceCheck';
@@ -37,6 +37,8 @@ test('settings from before the list become: the old service first, then Gemini',
   const chain = aiChain(old);
   assert.deepEqual(chain.map(providerName), ['Groq', 'Gemini']);
   assert.equal(chain[1].customApiKey, undefined, 'a Groq key is never sent to Google');
+  const local = settings({ aiProvider: 'openai-compatible', aiBaseUrl: 'http://localhost:11434/v1' });
+  assert.deepEqual(providerList(local).slice(0, 2).map(p => [p.id, p.enabled]), [['ollama', true], ['gemini', false]], 'texts for a local service never go to Google');
 });
 
 test('a switched-on service without its key is skipped; with none usable, Gemini on the server key', () => {
@@ -106,6 +108,12 @@ test('a word\'s level comes from how often it is used', () => {
   assert.equal(isAboveLevel('C1', 'B2'), true);
   assert.equal(isAboveLevel('B2', 'B2'), false);
   assert.equal(isAboveLevel(undefined, 'B2'), false);
+  assert.equal(isBelowLevel('B1', 'B2'), true);
+  assert.equal(isBelowLevel('B2', 'B2'), false);
+  // A C2 learner still gets C2 words picked.
+  assert.equal(isBelowLevel('C2', 'C2'), false);
+  assert.equal(isBelowLevel('B2', 'IELTS'), false);
+  assert.equal(isBelowLevel(undefined, 'C2'), false);
 });
 
 test('a free dictionary card carries its level and whether the dictionary knew it', () => {
@@ -127,6 +135,9 @@ test('flags: not in the dictionary, no Persian meaning, not in its sentence; a c
   assert.deepEqual(checkReasons(card({ sourceSentence: 'He went home.' })), ['not-in-sentence']);
   assert.deepEqual(checkReasons(card({ front: 'take into account', sourceSentence: 'They took it into account.' })), [], 'inflected phrases count');
   assert.deepEqual(checkReasons(card({ front: 'decide', sourceSentence: 'She decided to stay.' })), [], 'inflected words count');
+  assert.deepEqual(checkReasons(card({ front: 'take something into account', sourceSentence: 'They took the cost into account.' })), [], 'placeholders are not looked for');
+  assert.deepEqual(checkReasons(card({ front: 'be fond of sb', sourceSentence: 'He grew fond of her.' })), [], 'a leading "be" is not looked for');
+  assert.deepEqual(checkReasons(card({ front: 'child', sourceSentence: 'The children played.' })), [], 'irregular plurals count');
   assert.equal(needsCheck(card({ back: '', checkedAt: T0.toISOString() })), false);
   assert.deepEqual(checkReasons(card({ kind: 'grammar', front: 'Passive voice', notInDictionary: true, sourceSentence: 'It was built.' })), [], 'grammar is not a dictionary term');
 });
@@ -173,7 +184,7 @@ test('practice: the rule sees the structure; the AI result suggests the rating',
   assert.equal(ruleCheck(card({ kind: 'grammar', front: 'Past Perfect Tense' }), 'I had left before he came.'), true, 'an AI card is matched to the rule by its name');
 
   assert.equal(suggestRating(true, null), 'GOOD');
-  assert.equal(suggestRating(false, null), 'AGAIN');
+  assert.equal(suggestRating(false, null), undefined, 'the rules alone never fail a sentence');
   assert.equal(suggestRating(undefined, null), undefined);
   const ai = parsePracticeFeedback({ usesStructure: true, correct: false, corrected: 'The cake was eaten.', feedback: 'خوب بود', mistakes: [{ wrong: 'was eat', right: 'was eaten', why: 'اسم مفعول لازم است' }] }, 'The cake was eat.');
   assert.equal(ai.mistakes.length, 1);
@@ -216,6 +227,14 @@ test('without AI, extraction adds a couple of structures per section from the ru
     text, level: 'B2', perSection: 5, source: 'free', existingFronts: [grammar[0].front, 'Passive Voice'], extractFree: async () => [],
   });
   assert.ok(!again.cards.some(c => c.grammarId === grammar[0].grammarId), 'a structure with a card is not suggested again');
+  const word = await extractFromLongText({
+    text: 'I wish I had more time.', level: 'B2', perSection: 5, source: 'free', existingFronts: ['wish'], extractFree: async () => [],
+  });
+  assert.deepEqual(word.cards.map(c => c.grammarId), ['wish'], 'a word card named like a structure does not hide it');
+  const byId = await extractFromLongText({
+    text: 'I wish I had more time.', level: 'B2', perSection: 5, source: 'free', existingFronts: [], knownRuleIds: ['wish'], extractFree: async () => [],
+  });
+  assert.equal(byId.cards.length, 0, 'the caller\'s list of structures with cards is used');
   const off = await extractFromLongText({ text, level: 'B2', perSection: 5, source: 'free', existingFronts: [], includeGrammar: false, extractFree: async () => [] });
   assert.equal(off.cards.length, 0);
 });

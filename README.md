@@ -90,8 +90,8 @@ translation quota about tenfold.
 ## Checks
 
 - Each word card gets a level (A1 to C2), from how often the word is used or
-  from the AI. Words at or below your level (Settings) are listed but not
-  picked.
+  from the AI. Words the AI picks below your level (Settings) are listed but
+  not ticked.
 - A card is flagged «نیاز به بررسی» when the dictionary did not know its
   term, it has no Persian meaning, or its term is not in its sentence. A
   book's «بررسی» tab lists them: confirm one with «درسته», or fix its meaning

@@ -32,6 +32,7 @@ export interface LongTextExtractionParams {
   perSection: number; // items to extract from each section
   source: ExtractionSource;
   existingFronts: string[];
+  knownRuleIds?: Iterable<string>; // structures that already have a card, when the caller knows
   knownTerms?: string[]; // the "I know it" list: never suggested, in any form
   includeGrammar?: boolean;
   aiOptions?: AiRequestOptions;
@@ -59,7 +60,7 @@ export { isPermanentAiError };
 
 export const extractFromLongText = async (params: LongTextExtractionParams): Promise<LongTextExtractionResult> => {
   const {
-    text, level, perSection, source, existingFronts, knownTerms = [], includeGrammar = true, aiOptions, signal, onProgress,
+    text, level, perSection, source, existingFronts, knownRuleIds, knownTerms = [], includeGrammar = true, aiOptions, signal, onProgress,
     chunkWords = DEFAULT_CHUNK_WORDS,
     extractAi = extractVocabularyFromText,
     extractFree = extractWithFreeDictionaries,
@@ -76,8 +77,13 @@ export const extractFromLongText = async (params: LongTextExtractionParams): Pro
   // Terms found in earlier sections are excluded from later ones too.
   const known = new Set(existingFronts.map(normalizeTerm));
   const userKnows = new Set(knownTerms.map(normalizeTerm));
-  // Structures that already have a card (an AI may have named one its own way).
-  const knownRules = new Set(existingFronts.map(front => ruleForName(front)?.id).filter((id): id is string => !!id));
+  // Structures that already have a card (an AI may have named one its own
+  // way). Without the caller's list, only fronts that read like a structure's
+  // name count, so a word card such as "used to" does not hide a rule.
+  const knownRules = new Set(knownRuleIds ?? existingFronts
+    .filter(front => /^[A-Z]/.test(front) && /\s/.test(front.trim()))
+    .map(front => ruleForName(front)?.id)
+    .filter((id): id is string => !!id));
 
   for (const section of sections) {
     if (signal?.aborted) break;

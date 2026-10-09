@@ -13,7 +13,7 @@ import { analyzeSentence, grammarCards, Sense, SenseBatcher, sensesInContext } f
 import { detectGrammar, ruleById } from '../services/grammarPatterns';
 import { explainInSentence, ruleCard, ruleIdsWithCards } from '../services/grammarCards';
 import { normalizeTerm } from '../services/vocabMerge';
-import { isAboveLevel } from '../services/wordLevel';
+import { isBelowLevel } from '../services/wordLevel';
 import { isSpeechSupported, speakText, stopSpeech } from '../services/ttsService';
 import { CHUNK_COMPLETE_XP, isChestSection } from '../services/xpRules';
 import { fa, Icon } from './common/ui';
@@ -467,6 +467,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
         perSection,
         source,
         existingFronts: [...existingFronts, ...listed],
+        knownRuleIds: [...rulesInDeck, ...items.map(it => it.grammarId).filter((id): id is string => !!id)],
         knownTerms,
         includeGrammar,
         aiOptions,
@@ -476,8 +477,9 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
       const listedKeys = new Set(listed.map(normalizeTerm));
       const fresh = result.cards
         .filter(c => !listedKeys.has(normalizeTerm(c.front)))
-        // A word the AI rates at or below the learner's level is listed but not picked.
-        .map(c => toItem({ ...c, selected: !c.alreadyInDeck && !(c.kind === 'word' && c.level && !isAboveLevel(c.level, level)) }));
+        // A word the AI chose but rates below the learner's level is listed but
+        // not picked. Free dictionaries already pick by level, so theirs stay.
+        .map(c => toItem({ ...c, selected: !c.alreadyInDeck && !(c.kind === 'word' && c.origin?.by === 'ai' && isBelowLevel(c.level, level)) }));
       if (result.fallbackSections > 0) {
         showToast(`هوش مصنوعی جواب نداد؛ از دیکشنری رایگان استفاده شد.${result.aiError ? ` ${ltr(result.aiError)}` : ''}`);
       } else if (fresh.length === 0) {
