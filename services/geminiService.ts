@@ -1,12 +1,18 @@
 // File: /services/geminiService.ts
 // Handles Gemini API calls via backend server proxy with support for custom API keys and models.
 
-import { Flashcard, ExtractedWordCard } from '../types';
+import { Flashcard, ExtractedWordCard, CardOrigin, CefrLevel } from '../types';
 import { callProxy } from './apiService';
+import { aiGenerate, providerFields } from './aiClient';
+import { aiOrigin } from './aiSettings';
+import { ruleForName } from './grammarPatterns';
+
+export { providerFields };
 
 export interface PersianDetails {
   back: string; // Persian translation
   notes: string;
+  origin?: CardOrigin; // the service that answered
 }
 
 export interface PronunciationResult {
@@ -20,18 +26,9 @@ export interface AiRequestOptions {
   aiBaseUrl?: string;
   customApiKey?: string;
   model?: string;
+  fallbacks?: AiRequestOptions[]; // tried in order when this one fails (services/aiClient)
 }
 
-// The provider fields every proxy call sends.
-export const providerFields = (options?: AiRequestOptions) => {
-  const openAi = options?.aiProvider === 'openai-compatible';
-  return {
-    aiProvider: openAi ? 'openai-compatible' : 'gemini',
-    aiBaseUrl: openAi ? options?.aiBaseUrl || undefined : undefined,
-    model: options?.model || (openAi ? 'llama-3.3-70b-versatile' : 'gemini-2.5-flash'),
-    customApiKey: options?.customApiKey || undefined,
-  };
-};
 
 // Models wrap JSON in code fences, add a sentence before it, or stop early.
 // Take the first JSON object or array found in the reply.
@@ -80,8 +77,7 @@ Please provide the following:
 1. "translation": The most common Persian translation.
 2. "notes": A brief note or mnemonic in Persian to help remember the word. For example, mention a root word, a similar sounding Persian word, or a cultural context.`;
 
-    const response = await callProxy('gemini-generate', {
-      ...providerFields(options),
+    const response = await aiGenerate(options, {
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -94,13 +90,14 @@ Please provide the following:
           required: ["translation", "notes"],
         },
       },
-    });
+    }, 'details');
 
     const parsed = parseJsonFromAiResponse(response.text);
     
     return {
       back: parsed.translation || '',
       notes: parsed.notes || '',
+      origin: aiOrigin(response.used),
     };
   } catch (error) {
     // Never return a message as if it were a translation: it would be saved on the card.
@@ -155,8 +152,8 @@ export const evaluatePronunciation = async (
       2. "feedback": Concise, encouraging feedback in Persian.
       3. "correction": Optional IPA correction if needed.`
     };
-    const response = await callProxy('gemini-generate', {
-      ...providerFields({ ...options, aiProvider: 'gemini' }),
+    // Only Gemini hears audio: the other services are not asked.
+    const response = await aiGenerate({ ...options, aiProvider: 'gemini', fallbacks: undefined }, {
       contents: { parts: [textPart, audioPart] },
       config: {
         responseMimeType: "application/json",
@@ -170,7 +167,7 @@ export const evaluatePronunciation = async (
           required: ["score", "feedback"]
         }
       }
-    });
+    }, 'pronunciation');
     
     return parseJsonFromAiResponse(response.text);
   } catch (error) {
@@ -201,8 +198,7 @@ Generate a quiz for these words: ${JSON.stringify(targetWords)}
 Return the output as a single JSON object with a key "questions", which is an array of objects. Each object must have these keys: "targetWord", "sourceSentence", "questionText", "options", and "correctAnswer".
 `;
 
-    const response = await callProxy('gemini-generate', {
-      ...providerFields(options),
+    const response = await aiGenerate(options, {
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -227,7 +223,7 @@ Return the output as a single JSON object with a key "questions", which is an ar
           required: ["questions"]
         }
       }
-    });
+    }, 'quiz');
     
     const parsed = parseJsonFromAiResponse(response.text);
     return parsed.questions || [];
@@ -247,6 +243,11 @@ export interface ExtractVocabularyParams {
 }
 
 const KINDS = ['word', 'phrase', 'idiom', 'grammar'] as const;
+export const CEFR_LEVELS: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+export const parseLevel = (value: unknown): CefrLevel | undefined => {
+  const level = String(value || '').trim().toUpperCase();
+  return (CEFR_LEVELS as string[]).includes(level) ? (level as CefrLevel) : undefined;
+};
 
 export const buildExtractionPrompt = ({ text, level, count = 10, exclude = [], includeGrammar = true }: ExtractVocabularyParams): string => `You are an expert linguistics tutor helping a Persian-speaking student learn English.
 Analyze the following text and extract up to ${count} valuable, high-impact items for a learner at level: "${level}".
@@ -262,6 +263,7 @@ CRITICAL INSTRUCTIONS:
    - "back": accurate, natural Persian translation of the item as used in the text.
    - "pronunciation": IPA ("/rɪˈlʌk.tənt/"); empty for grammar.
    - "partOfSpeech": "adj.", "v.", "n.", "phrasal verb", "idiom" or "grammar".
+   - "level": the CEFR level of the item: "A1", "A2", "B1", "B2", "C1" or "C2".
    - "definition": 1-2 concise English definitions (for grammar: what the structure expresses).
    - "sourceSentence": the EXACT sentence of the text where the item appears, copied verbatim.
    - "exampleSentenceTarget": 1-2 NEW example sentences (not the source sentence).
@@ -313,6 +315,8 @@ export const parseExtractedItems = (parsed: any): ExtractedWordCard[] => {
           .filter((c: { phrase: string }) => c.phrase.trim()),
         grammarPattern: w.grammarPattern || undefined,
         practicePrompt: w.practicePrompt || undefined,
+        ...(kind !== 'grammar' && parseLevel(w.level) ? { level: parseLevel(w.level) } : {}),
+        ...(kind === 'grammar' && ruleForName(String(w.front), w.grammarPattern) ? { grammarId: ruleForName(String(w.front), w.grammarPattern)!.id } : {}),
         selected: true,
       };
     });
@@ -325,8 +329,7 @@ export const extractVocabularyFromText = async (
   const prompt = buildExtractionPrompt(params);
 
   try {
-    const response = await callProxy('gemini-generate', {
-      ...providerFields(options),
+    const response = await aiGenerate(options, {
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
@@ -343,6 +346,7 @@ export const extractVocabularyFromText = async (
                   back: { type: 'STRING', description: 'Persian translation' },
                   pronunciation: { type: 'STRING', description: 'IPA pronunciation' },
                   partOfSpeech: { type: 'STRING', description: 'Part of speech' },
+                  level: { type: 'STRING', enum: [...CEFR_LEVELS], description: 'CEFR level' },
                   definition: { type: 'ARRAY', items: { type: 'STRING' }, description: 'English definitions' },
                   sourceSentence: { type: 'STRING', description: 'Exact sentence of the input text' },
                   exampleSentenceTarget: { type: 'ARRAY', items: { type: 'STRING' }, description: 'New example sentences' },
@@ -368,9 +372,10 @@ export const extractVocabularyFromText = async (
           required: ['words']
         }
       }
-    });
+    }, 'extract');
 
-    return parseExtractedItems(parseJsonFromAiResponse(response.text));
+    const origin = aiOrigin(response.used);
+    return parseExtractedItems(parseJsonFromAiResponse(response.text)).map(card => ({ ...card, origin }));
   } catch (error) {
     console.error('Error extracting vocabulary from text with AI:', error);
     throw error;

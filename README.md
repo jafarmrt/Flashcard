@@ -72,7 +72,41 @@ characters) on Vercel; on a VPS one is generated in `DATA_DIR/.session_secret`.
 
 ## AI
 
-The server's `GEMINI_API_KEY` (or `API_KEY`) is used when the app's AI
-settings have no key. In the settings you can instead pick Gemini, Groq,
-OpenRouter, DeepSeek or a local Ollama, each with its own key. When the AI
-fails, word extraction falls back to the free dictionaries and says why.
+In Settings, under «سرویس‌های هوش مصنوعی», list the AI services in the order
+they should be tried: Gemini, Groq, OpenRouter, DeepSeek, a local Ollama or
+another OpenAI-compatible service, each with its own key and model. When one
+fails (its free quota is used up, its key is wrong, it is down), the next is
+asked, and the free dictionaries come last. Gemini without a key uses the
+server's `GEMINI_API_KEY` (or `API_KEY`). Keys stay on the device; the order
+syncs. Every card records which service made it.
+
+The usage page («گزارش مصرف», from Settings) shows, for the last 30 days on
+this device: requests to each service per day, failures with their message,
+the cards each service made, roughly how much of the free daily translation
+quota (MyMemory) is left today, and how much data the account keeps on the
+server and in the browser. Setting `MYMEMORY_EMAIL` on the server raises the
+translation quota about tenfold.
+
+## Checks
+
+- Each word card gets a level (A1 to C2), from how often the word is used or
+  from the AI. Words the AI picks below your level (Settings) are listed but
+  not ticked.
+- A card is flagged «نیاز به بررسی» when the dictionary did not know its
+  term, it has no Persian meaning, or its term is not in its sentence. A
+  book's «بررسی» tab lists them: confirm one with «درسته», or fix its meaning
+  in place. Editing a card also clears the flag.
+- On the same tab an AI checks the meanings of flagged and dictionary-made
+  cards against the book's sentence, 20 at a time, and suggests a better one
+  where it does not fit. Nothing changes until you accept a suggestion.
+- About 20 grammar structures (passive, perfect tenses, conditionals,
+  inversion, relative clauses, wish, used to, cleft sentences and more) are
+  found by the app's own rules and lightly underlined while reading. Tapping
+  a helper word of one (was, had, if, who…) makes a full grammar card with a
+  Persian explanation and an exercise, with no AI; with AI the explanation is
+  about that very sentence. Without AI, word extraction also adds up to two
+  structures per section.
+- Reviewing a grammar card asks for your own sentence with the structure. The
+  rules say at once whether the structure is there; with AI you also get the
+  mistakes with a short Persian explanation and a corrected sentence, and a
+  suggested rating.

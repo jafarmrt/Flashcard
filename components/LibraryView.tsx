@@ -7,7 +7,10 @@ import { masteryStage, STAGE_NAMES } from '../services/masteryService';
 import { convertToCSV, downloadCSV } from '../services/csvService';
 import { isChestSection } from '../services/xpRules';
 import { knownList } from '../services/knownWords';
+import { needsCheck } from '../services/cardCheck';
+import type { AiRequestOptions } from '../services/geminiService';
 import { AddSourceForm } from './AddSourceForm';
+import { CardCheckPanel } from './CardCheckPanel';
 import { fa, Icon, StageDots } from './common/ui';
 
 const KIND_NAMES: Record<SourceKind, string> = { book: 'کتاب', article: 'مقاله', text: 'متن' };
@@ -37,6 +40,8 @@ interface LibraryViewProps {
   sectionReview: { sourceId: string; chapterId: string; chunk: number; cardIds: string[] } | null;
   onStartSectionReview: () => void;
   onDismissSectionReview: () => void;
+  aiOptions?: AiRequestOptions;
+  onCheckCards: (changes: { id: string; back?: string }[]) => Promise<void>;
 }
 
 // Cards met in each source: card id -> set of source ids, without deleted rows.
@@ -158,7 +163,9 @@ const SourceWords: React.FC<{ source: Source; chapters: Chapter[]; occurrences: 
                   <div className="flex items-center gap-2 flex-wrap">
                     <span dir="ltr" className="font-en font-bold text-ink dark:text-white">{card.front}</span>
                     {card.kind && CARD_KIND[card.kind] && <span className="text-[11px] rounded-full bg-slate-100 dark:bg-slate-700 px-2">{CARD_KIND[card.kind]}</span>}
+                    {card.level && <span className="font-en text-[11px] rounded-full bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-100 px-2" title="سطح واژه">{card.level}</span>}
                     <span className="text-sm text-ink dark:text-slate-200">{card.back}</span>
+                    {needsCheck(card) && <span className="text-[11px] rounded-full bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100 px-2">نیاز به بررسی</span>}
                     <span className="flex-1" />
                     <span className="flex items-center gap-1.5 text-[11px] text-ink-muted dark:text-slate-400" title={STAGE_NAMES[masteryStage(card)]}>
                       <StageDots stage={masteryStage(card)} />{STAGE_NAMES[masteryStage(card)]}
@@ -180,8 +187,20 @@ const SourceWords: React.FC<{ source: Source; chapters: Chapter[]; occurrences: 
 
 const SourcePage: React.FC<LibraryViewProps & { source: Source }> = props => {
   const { source, chapters: allChapters, occurrences, cards, decks, activeChapterId, onOpenSource, onOpenChapter, onOpenChunk, onDeleteSource } = props;
-  const [tab, setTab] = useState<'read' | 'words'>('read');
+  const [tab, setTab] = useState<'read' | 'words' | 'check'>('read');
   const chapters = chaptersOf(source.id, allChapters);
+  // This source's cards, each with the sentence of this source it was met in.
+  const sourceCards: Flashcard[] = useMemo(() => {
+    const byId = new Map<string, Flashcard>(cards.filter((c: Flashcard) => !c.isDeleted).map((c: Flashcard) => [c.id, c]));
+    const seen = new Map<string, Flashcard>();
+    for (const o of occurrences) {
+      if (o.isDeleted || o.sourceId !== source.id || seen.has(o.cardId)) continue;
+      const card = byId.get(o.cardId);
+      if (card) seen.set(card.id, o.sentence ? { ...card, sourceSentence: o.sentence } : card);
+    }
+    return [...seen.values()];
+  }, [cards, occurrences, source.id]);
+  const flagged: number = useMemo(() => sourceCards.filter(needsCheck).length, [sourceCards]);
   const progress = sourceProgress(chapters);
   const cardCount = useCardsBySource(occurrences, cards).get(source.id)?.size || 0;
   const single = chapters.length === 1;
@@ -235,15 +254,18 @@ const SourcePage: React.FC<LibraryViewProps & { source: Source }> = props => {
       )}
 
       <div role="tablist" className="flex gap-1 p-1 rounded-2xl bg-white dark:bg-slate-800 self-start">
-        {([['read', single ? 'مسیر خواندن' : 'فصل‌ها'], ['words', `واژه‌ها (${fa(cardCount)})`]] as const).map(([id, label]) => (
+        {([['read', single ? 'مسیر خواندن' : 'فصل‌ها'], ['words', `واژه‌ها (${fa(cardCount)})`], ['check', flagged ? `بررسی (${fa(flagged)})` : 'بررسی']] as const).map(([id, label]) => (
           <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
             className={`min-h-[40px] px-4 rounded-xl text-sm ${tab === id ? 'bg-brand-100 text-brand-700 font-bold dark:bg-brand-900/60 dark:text-brand-200' : 'text-ink-muted dark:text-slate-400'}`}>
             {label}
+            {id === 'check' && flagged > 0 && tab !== id && <span className="inline-block w-2 h-2 rounded-full bg-amber-500 ms-1.5 align-middle" aria-hidden="true" />}
           </button>
         ))}
       </div>
 
-      {tab === 'words' ? (
+      {tab === 'check' ? (
+        <CardCheckPanel cards={sourceCards} aiOptions={props.aiOptions} onCheckCards={props.onCheckCards} />
+      ) : tab === 'words' ? (
         <SourceWords source={source} chapters={chapters} occurrences={occurrences} cards={cards} decks={decks} />
       ) : activeChapter ? (
         <>

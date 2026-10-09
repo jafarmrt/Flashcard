@@ -33,6 +33,7 @@ export interface FreeEnrichment extends DictionaryEntry {
   found: boolean;
   translation: string;
   collocations: { phrase: string }[];
+  frequency?: number | null; // per million words, for the word's level
 }
 
 // --- Dictionary -------------------------------------------------------------
@@ -226,9 +227,11 @@ export async function freeEnrich(term: string, fetchImpl: FetchLike = defaultFet
   if (!dictionary && onlyIfFound) {
     return { found: false, headword, pronunciation: '', partOfSpeech: '', definitions: [], examples: [], translation: '', collocations: [] };
   }
-  const [translation, collocations] = await Promise.all([
+  const single = /^[a-z][a-z'-]*$/.test(headword);
+  const [translation, collocations, frequencies] = await Promise.all([
     freeTranslate(headword, fetchImpl),
     lookupCollocations(headword, fetchImpl),
+    single ? lookupFrequencies([headword], fetchImpl, 1) : Promise.resolve({} as Record<string, number | null>),
   ]);
   return {
     found: !!dictionary,
@@ -240,5 +243,6 @@ export async function freeEnrich(term: string, fetchImpl: FetchLike = defaultFet
     audioUrl: dictionary?.audioUrl,
     translation,
     collocations,
+    ...(single && typeof frequencies[headword] === 'number' ? { frequency: frequencies[headword] } : {}),
   };
 }

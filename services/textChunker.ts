@@ -2,7 +2,7 @@
 // Splits long texts into sections of at most N words, on sentence boundaries,
 // so each section can be analysed on its own (AI prompt size, free API limits).
 
-import { isFormOf, tokensOf } from './lemma.js';
+import { isFormOf, termPattern, tokensOf } from './lemma.js';
 
 export const DEFAULT_CHUNK_WORDS = 300;
 
@@ -84,12 +84,13 @@ export const wordCount = countWords;
 // any inflected form ("decided" for "decide", "took" for "take") and allowing
 // one word between the parts of a phrase ("take it into account").
 export const findSentence = (text: string, term: string): string | undefined => {
-  const words = tokensOf(term.toLowerCase());
+  const { words, gaps } = termPattern(term);
   if (words.length === 0) return undefined;
   const matchesAt = (tokens: string[], start: number): boolean => {
     let i = start;
     for (let w = 0; w < words.length; w++) {
-      if (w > 0 && i < tokens.length && !isFormOf(tokens[i], words[w])) i++; // one word between
+      // Words allowed between the parts: one, or more where a placeholder was.
+      for (let skipped = 0; skipped < gaps[w] && i < tokens.length && !isFormOf(tokens[i], words[w]); skipped++) i++;
       if (i >= tokens.length || !isFormOf(tokens[i], words[w])) return false;
       i++;
     }

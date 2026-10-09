@@ -14,6 +14,8 @@ interface SelectionBarProps {
   busy: SelectionTask | null;
   translation?: string;
   structures?: { uid: string; name: string }[]; // grammar found in the sentence
+  rules?: { id: string; name: string }[]; // structures the app's rules see in the sentence
+  onOpenRule?: (id: string) => void;
   onGrow: (side: -1 | 1) => void;
   onWholeSentence: () => void;
   onMeaning: () => void;
@@ -57,6 +59,17 @@ export const SelectionBar: React.FC<SelectionBarProps> = props => {
       </div>
       {words > maxMeaningWords && <p className="text-xs text-ink-muted dark:text-slate-400">برای معنی، حداکثر {fa(maxMeaningWords)} واژه انتخاب کن؛ برای جملهٔ کامل، ساختار یا ترجمه را بزن.</p>}
       {props.aiNote && <p className="text-xs text-ink-muted dark:text-slate-400">{props.aiNote}</p>}
+      {props.rules && props.rules.length > 0 && !(props.structures && props.structures.length > 0) && (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-sm text-ink-muted dark:text-slate-400">ساختارهایی که برنامه در این جمله دید؛ برای توضیح و کارت بزن:</p>
+          <div className="flex flex-wrap gap-1.5">
+            {props.rules.map(r => (
+              <button key={r.id} type="button" onClick={() => props.onOpenRule?.(r.id)} dir="ltr"
+                className="min-h-[36px] px-3 rounded-full border border-dashed border-rose-300 dark:border-rose-700 text-rose-800 dark:text-rose-200 text-sm font-en">{r.name}</button>
+            ))}
+          </div>
+        </div>
+      )}
       {props.translation && <p className="rounded-xl bg-slate-50 dark:bg-slate-900/50 px-3 py-2 text-ink dark:text-slate-100">{props.translation}</p>}
       {props.structures && props.structures.length > 0 && (
         <div className="flex flex-col gap-1.5">

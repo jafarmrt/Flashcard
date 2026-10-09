@@ -10,7 +10,9 @@ import { fetchAudioData } from '../services/dictionaryService';
 import { isSpeechSupported, speakText } from '../services/ttsService';
 import { dayString } from '../services/streakService';
 import { CardPlace, originText } from '../services/library';
+import type { AiRequestOptions } from '../services/geminiService';
 import { fa, Icon, Kbd, StageDots } from './common/ui';
+import { GrammarPractice } from './GrammarPractice';
 
 const RATINGS: { rating: PerformanceRating; label: string; key: string; className: string }[] = [
   { rating: 'AGAIN', label: 'دوباره', key: '1', className: 'bg-red-100 text-red-900 hover:bg-red-200 dark:bg-red-900/50 dark:text-red-100' },
@@ -34,6 +36,7 @@ interface StudyViewProps {
   goal: { progress: number; target: number };
   onExit: (updatedCards: Flashcard[], summary: SessionSummary, next?: 'home' | 'more') => void;
   places?: Map<string, CardPlace[]>; // where each card was met while reading
+  aiOptions?: AiRequestOptions; // checks sentences written for grammar cards
 }
 
 // Reads a word, phrase or sentence aloud with the browser's speech synthesis.
@@ -168,7 +171,7 @@ interface Snapshot {
   card?: Flashcard; // the card as it was before this answer
 }
 
-export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak, studiedToday, goal, onExit, places }) => {
+export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak, studiedToday, goal, onExit, places, aiOptions }) => {
   const [queue, setQueue] = useState<Flashcard[]>([]);
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
@@ -184,6 +187,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
   const [gain, setGain] = useState<{ value: number; id: number } | null>(null);
   const [history, setHistory] = useState<Snapshot[]>([]);
   const [audioBusy, setAudioBusy] = useState(false);
+  const [suggested, setSuggested] = useState<PerformanceRating | undefined>(undefined);
   const startedAt = useRef(Date.now());
   const busy = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -258,6 +262,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
     setRevealed(false);
     setTyped('');
     setAnswerState(null);
+    setSuggested(undefined);
     if (index + 1 < nextQueue.length) setIndex(index + 1);
     else setDone(true);
     busy.current = false;
@@ -279,6 +284,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
     setReviews(last.reviews);
     setFirstAnswers(last.firstAnswers);
     setRevealed(true);
+    setSuggested(undefined);
     setDone(false);
   };
 
@@ -422,6 +428,10 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
             )}
           </div>
 
+          {card.kind === 'grammar' && (
+            <GrammarPractice key={`${card.id}-${index}`} card={card} revealed={revealed} aiOptions={aiOptions} onReveal={() => setRevealed(true)} onSuggest={setSuggested} />
+          )}
+
           {revealed ? (
             <>
               {answerState && (
@@ -431,7 +441,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
               )}
               <CardAnswer card={card} places={places?.get(card.id)} />
             </>
-          ) : mode === 'flip' ? (
+          ) : card.kind === 'grammar' ? null : mode === 'flip' ? (
             <button type="button" onClick={() => setRevealed(true)}
               className="self-center inline-flex items-center gap-2 min-h-[56px] px-10 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold text-lg">
               نمایش پاسخ <Kbd className="text-white">Space</Kbd>
@@ -448,8 +458,9 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
           {revealed && (
             <div className="grid grid-cols-4 gap-2 md:gap-2.5">
               {RATINGS.map(r => (
-                <button key={r.rating} type="button" onClick={() => rate(r.rating)}
-                  className={`min-h-[64px] rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-colors ${r.className}`}>
+                <button key={r.rating} type="button" onClick={() => rate(r.rating)} aria-describedby={suggested === r.rating ? 'suggested-rating' : undefined}
+                  className={`relative min-h-[64px] rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-colors ${r.className} ${suggested === r.rating ? 'ring-2 ring-offset-2 ring-brand-500 dark:ring-offset-slate-800' : ''}`}>
+                  {suggested === r.rating && <span id="suggested-rating" className="absolute -top-2.5 rounded-full bg-brand-500 text-white text-[10px] px-2 py-0.5">پیشنهاد</span>}
                   <span className="font-extrabold">{r.label} <Kbd>{r.key}</Kbd></span>
                   <span className="text-xs">{intervalLabel(intervals[r.rating])}</span>
                 </button>

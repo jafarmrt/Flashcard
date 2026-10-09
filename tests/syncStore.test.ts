@@ -257,3 +257,38 @@ test('only public web pages are fetched for articles', async () => {
   const page = (async () => new Response('<html><body><p>Hi</p></body></html>', { headers: { 'content-type': 'text/html; charset=utf-8' } })) as typeof fetch;
   assert.deepEqual(await fetchPublicPage('https://site.example/post', page, lookup), { url: 'https://site.example/post', html: '<html><body><p>Hi</p></body></html>' });
 });
+
+test('the usage page reads the sizes kept on the server, from a file or in one Redis request', async () => {
+  setupServer();
+  await call({ action: 'auth-register', username: 'jafar', password: 'long-enough-password' });
+  await call({ action: 'sync', since: 0, changes: { chapters: [{ id: 's1-c1', sourceId: 's1', order: 1, title: 'One', chunkCount: 1, wordCount: 7, completed: [], createdAt: T0, updatedAt: T0 }] } }, 'jafar');
+  await call({ action: 'chapter-put', id: 's1-c1', sourceId: 's1', chunks: ['Emma Woodhouse, handsome, clever, and rich.'] }, 'jafar');
+  const file = await call({ action: 'storage-usage' }, 'jafar');
+  assert.equal(file.status, 200);
+  assert.equal(file.body.backend, 'file');
+  assert.equal(file.body.chapters, 1);
+  assert.ok(file.body.recordBytes > 0 && file.body.chapterBytes > 0);
+
+  // Redis: the record is read once, then every size comes in one pipeline request.
+  const user = { username: 'jafar', data: { chapters: [{ id: 'a' }, { id: 'b' }, { id: 'bad id!' }, { id: 'c', isDeleted: true }] } };
+  const requests: string[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init: { body: string }) => {
+    requests.push(String(url));
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith('/pipeline')) return new Response(JSON.stringify(body.map((_: unknown, i: number) => ({ result: (i + 1) * 100 }))));
+    return new Response(JSON.stringify({ result: JSON.stringify(user) }));
+  }) as typeof fetch;
+  process.env.KV_REST_API_URL = 'https://kv.example/';
+  process.env.KV_REST_API_TOKEN = 't';
+  try {
+    const kv = await call({ action: 'storage-usage' }, 'jafar');
+    assert.equal(kv.status, 200);
+    assert.deepEqual(kv.body, { backend: 'redis', recordBytes: 100, chapters: 2, chapterBytes: 500, translationEmail: false });
+    assert.deepEqual(requests, ['https://kv.example', 'https://kv.example/pipeline']);
+  } finally {
+    globalThis.fetch = realFetch;
+    delete process.env.KV_REST_API_URL;
+    delete process.env.KV_REST_API_TOKEN;
+  }
+});

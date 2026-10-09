@@ -33,6 +33,46 @@ export const IRREGULAR_FORMS: Record<string, string> = {
   mistaken: 'mistake', strove: 'strive', striven: 'strive', wound: 'wind', bound: 'bind', ground: 'grind',
 };
 
+// Irregular plurals of nouns that often get a card.
+export const IRREGULAR_PLURALS: Record<string, string> = {
+  children: 'child', men: 'man', women: 'woman', mice: 'mouse', feet: 'foot', teeth: 'tooth', geese: 'goose',
+  people: 'person', analyses: 'analysis', criteria: 'criterion', phenomena: 'phenomenon', crises: 'crisis',
+  theses: 'thesis', hypotheses: 'hypothesis', lives: 'life', wives: 'wife', knives: 'knife', leaves: 'leaf',
+  halves: 'half', shelves: 'shelf', wolves: 'wolf', thieves: 'thief',
+};
+
+// Words a dictionary writes in place of a real object or subject ("take
+// something into account", "be fond of sb"): not looked for in a text.
+const PLACEHOLDERS = new Set(['something', 'someone', 'somebody', 'sth', 'sb', 'smb', "one's", 'oneself', "someone's", "somebody's"]);
+
+// How to find a term in a text: its words, without placeholders or a leading
+// "be"/"to" ("be fond of sb" -> fond of), unless nothing else is left; and how
+// many words may come before each word: one ("take it into account"), or a
+// few where a placeholder stood ("take the whole cost into account").
+export interface TermPattern { words: string[]; gaps: number[] }
+
+const PLACEHOLDER_GAP = 4;
+
+export const termPattern = (term: string): TermPattern => {
+  const all = tokensOf(term.toLowerCase().replace(/’/g, "'"));
+  const real = all.filter(w => !PLACEHOLDERS.has(w));
+  // One leading "be" or "to" is dropped when other words follow.
+  let dropFirst = real.length > 1 && (real[0] === 'be' || real[0] === 'to');
+  const words: string[] = [];
+  const gaps: number[] = [];
+  let gap = 1;
+  for (const w of all) {
+    if (PLACEHOLDERS.has(w)) { if (words.length > 0) gap = PLACEHOLDER_GAP; continue; }
+    if (dropFirst) { dropFirst = false; continue; }
+    words.push(w);
+    gaps.push(words.length === 1 ? 0 : gap);
+    gap = 1;
+  }
+  return words.length > 0 ? { words, gaps } : { words: all, gaps: all.map((_, i) => (i === 0 ? 0 : 1)) };
+};
+
+export const termWords = (term: string): string[] => termPattern(term).words;
+
 // The word as written first, then its likely base forms, most likely first.
 export function lemmaCandidates(word: string): string[] {
   const w = word.toLowerCase().replace(/’/g, "'").trim();
@@ -46,6 +86,8 @@ export function lemmaCandidates(word: string): string[] {
   }
   const irregular = IRREGULAR_FORMS[w];
   if (irregular && !out.includes(irregular)) out.push(irregular); // went -> go
+  const singular = IRREGULAR_PLURALS[w];
+  if (singular && !out.includes(singular)) out.push(singular); // children -> child
   if (w.endsWith("'s")) add(w.slice(0, -2));
   if (w.length < 4) return out;
   // The "e" forms come before the bare stem: noted -> note (not "not"),

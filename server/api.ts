@@ -152,6 +152,49 @@ function lookupStore(): LookupStore | null {
   return fileLookups.store;
 }
 
+// The bytes each key takes: Redis is asked for the lengths (in one pipeline
+// request per 100 keys), the file store measures each value as it would be
+// written.
+async function keysBytes(keys: string[]): Promise<number[]> {
+  const kv = kvConfig();
+  if (!kv) {
+    const store = loadFileStore();
+    return keys.map(key => {
+      const value = store.get(key);
+      return value === undefined ? 0 : Buffer.byteLength(JSON.stringify(value), 'utf-8');
+    });
+  }
+  const out: number[] = [];
+  for (let i = 0; i < keys.length; i += 100) {
+    const batch = keys.slice(i, i + 100);
+    const response = await fetch(`${kv.url}/pipeline`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${kv.token}` },
+      body: JSON.stringify(batch.map(key => ['STRLEN', key])),
+    });
+    if (!response.ok) throw new Error(`Cloud storage request failed (${response.status}).`);
+    const results = await response.json();
+    out.push(...batch.map((_, n) => Number(Array.isArray(results) ? results[n]?.result : 0) || 0));
+  }
+  return out;
+}
+
+export async function storageUsage(username: string): Promise<{ backend: 'redis' | 'file'; recordBytes: number; chapters: number; chapterBytes: number; translationEmail: boolean }> {
+  const user = await getUser(username);
+  const ids: string[] = (user?.data?.chapters || [])
+    .filter((c: any) => c && !c.isDeleted && typeof c.id === 'string' && CHAPTER_ID.test(c.id))
+    .map((c: any) => c.id);
+  const [recordBytes, ...chapterSizes] = await keysBytes([getUserKey(username), ...ids.map(id => chapterKey(username, id))]);
+  const chapterBytes = chapterSizes.reduce((a, b) => a + b, 0);
+  return {
+    backend: kvConfig() ? 'redis' : 'file',
+    recordBytes,
+    chapters: ids.length,
+    chapterBytes,
+    translationEmail: !!process.env.MYMEMORY_EMAIL, // a larger free translation quota
+  };
+}
+
 const getUser = (username: string): Promise<any | null> => getKey(getUserKey(username));
 const setUser = (userData: any): Promise<void> => setKey(getUserKey(userData.username), userData);
 
@@ -617,6 +660,10 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         if (!text) return res.status(404).json({ error: 'This chapter is not on the server yet. Open the app on the device that added it.' });
         return res.status(200).json(unpackChapter(text));
       }
+
+      // How much this account keeps on the server, for the usage page.
+      case 'storage-usage':
+        return res.status(200).json(await storageUsage(signedInUser!));
 
       // The page of an article link, read by the browser into plain text.
       case 'fetch-page': {
