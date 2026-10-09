@@ -293,7 +293,12 @@ export const useAppLogic = () => {
 
   const handleSync = async () => {
     if (!currentUser?.username) return;
+    await mergeWithCloud();
+  };
 
+  // Send everything in this browser to the account and take back the merged
+  // result. Nothing local is dropped: the server merges, it never replaces.
+  const mergeWithCloud = async () => {
     setSyncStatus('syncing');
     try {
         // Fix: Read directly from the database to ensure the latest data is synced,
@@ -944,13 +949,18 @@ export const useAppLogic = () => {
     }
   };
 
+  // Cards made before signing in (or with an older version that kept them
+  // only in this browser) must survive signing in.
+  const hasLocalData = async () => (await db.flashcards.count()) + (await db.texts.count()) > 0;
+
   const handleLogin = async (username: string, password: string) => {
       setAuthLoading(true);
       try {
           const res = await callProxy('auth-login', { username, password });
           const user = { username: res.username || username };
           setCurrentUser(user);
-          await loadDataFromCloud(user.username);
+          if (await hasLocalData()) await mergeWithCloud();
+          else await loadDataFromCloud(user.username);
           setIsLoggedIn(true);
           showToast(`Welcome back, ${username}!`);
       } catch(e) {
@@ -966,8 +976,8 @@ export const useAppLogic = () => {
           const res = await callProxy('auth-register', { username, password });
           const user = { username: res.username || username };
           setCurrentUser(user);
-          await (db as any).delete().then(() => (db as any).open());
-          await fetchData();
+          if (await hasLocalData()) await mergeWithCloud();
+          else await fetchData();
           setIsLoggedIn(true);
           showToast(`Account created! Welcome, ${username}!`);
       } catch (e) {
