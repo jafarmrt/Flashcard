@@ -8,6 +8,7 @@ import { CHUNK_COMPLETE_XP, DEFAULT_DAILY_REVIEW_GOAL, isChestSection } from '..
 import { completeChunk, createTextDoc } from '../services/textLibrary';
 import { ALL_ACHIEVEMENTS } from '../services/achievements';
 import { AUTH_REQUIRED_EVENT, callProxy } from '../services/apiService';
+import { applyIncomingSettings, toSyncedSettings } from '../services/settingsSync';
 import { convertToCSV, parseCSV } from '../services/csvService';
 import { freeEnrich, FreeEnrichment } from '../services/freeExtractionService';
 import { 
@@ -40,6 +41,14 @@ const savedReviewGoal = (): number => {
     return goal > 0 ? goal : DEFAULT_DAILY_REVIEW_GOAL;
   } catch {
     return DEFAULT_DAILY_REVIEW_GOAL;
+  }
+};
+
+const readSavedSettings = (): Partial<Settings> => {
+  try {
+    return JSON.parse(localStorage.getItem('appSettings') || '{}');
+  } catch {
+    return {};
   }
 };
 
@@ -274,6 +283,14 @@ export const useAppLogic = () => {
       setUserProfile(updatedProfile);
   };
 
+  // Take settings changed on another device, keeping this device's AI key.
+  const adoptCloudSettings = (incoming?: Partial<Settings>) => {
+    const merged = applyIncomingSettings(readSavedSettings(), incoming);
+    if (!merged) return;
+    localStorage.setItem('appSettings', JSON.stringify(merged));
+    setSettings({ ...defaultSettings, ...merged } as Settings);
+  };
+
   const handleSync = async () => {
     if (!currentUser?.username) return;
 
@@ -295,6 +312,7 @@ export const useAppLogic = () => {
             studyHistory: allStudyHistory,
             userProfile: profile,
             userAchievements: allAchievements,
+            settings: toSyncedSettings(readSavedSettings()),
         };
 
         const response = await callProxy('sync-merge', { data: localData });
@@ -315,6 +333,7 @@ export const useAppLogic = () => {
                 if (mergedData.userAchievements) await db.userAchievements.bulkPut(mergedData.userAchievements);
                 if (mergedData.texts) await db.texts.bulkPut(mergedData.texts);
             });
+            adoptCloudSettings(mergedData.settings);
             reloadingFromSync.current = true;
             await fetchData();
         }
@@ -342,6 +361,7 @@ export const useAppLogic = () => {
             if (userProfile) await db.userProfile.put(userProfile);
             if (userAchievements) await db.userAchievements.bulkPut(userAchievements);
         });
+        adoptCloudSettings(response.data.settings);
       }
       await fetchData();
       setSyncStatus('synced');
@@ -430,10 +450,11 @@ export const useAppLogic = () => {
     setSyncStatus('syncing'); 
     const handler = setTimeout(() => handleSync(), 2000);
     return () => clearTimeout(handler);
-  }, [flashcards, decks, userProfile, earnedAchievements, texts, isLoggedIn, autoFixProgress]); // Added autoFixProgress dependency
+  }, [flashcards, decks, userProfile, earnedAchievements, texts, isLoggedIn, autoFixProgress, settings.updatedAt]); // Added autoFixProgress dependency
 
 
-  const updateSettings = (newSettings: Partial<Settings>) => {
+  const updateSettings = (changes: Partial<Settings>) => {
+      const newSettings = { ...changes, updatedAt: new Date().toISOString() };
       if (newSettings.dailyReviewGoal !== undefined) {
           // Save first so the goal refresh below already sees the new value.
           const saved = JSON.parse(localStorage.getItem('appSettings') || '{}');

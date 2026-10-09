@@ -115,6 +115,7 @@ export interface Settings {
     userLevel?: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2' | 'IELTS' | 'TOEFL';
     extractionSource?: 'ai' | 'free';
     dailyReviewGoal?: number; // reviews per day for the daily goal
+    updatedAt?: string; // when settings last changed; the newest wins across devices
 }
 
 // A long text the user reads section by section (the "path").
