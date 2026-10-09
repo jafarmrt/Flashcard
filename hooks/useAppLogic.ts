@@ -8,6 +8,8 @@ import { CHUNK_COMPLETE_XP, DEFAULT_DAILY_REVIEW_GOAL, isChestSection } from '..
 import { completeChunk, createTextDoc } from '../services/textLibrary';
 import { ALL_ACHIEVEMENTS } from '../services/achievements';
 import { AUTH_REQUIRED_EVENT, callProxy } from '../services/apiService';
+import { applicableRows, cardStamp, deckStamp, newStudyLogs, profileStamp, stampMap, syncFingerprint } from '../services/syncState';
+import { isDue, isNewCard } from '../services/srsService';
 import { applyIncomingSettings, toSyncedSettings } from '../services/settingsSync';
 import { convertToCSV, parseCSV } from '../services/csvService';
 import { freeEnrich, FreeEnrichment } from '../services/freeExtractionService';
@@ -43,6 +45,9 @@ const savedReviewGoal = (): number => {
     return DEFAULT_DAILY_REVIEW_GOAL;
   }
 };
+
+// The account last signed in on this browser, so the app opens offline.
+const LAST_USER_KEY = 'lc_last_user';
 
 const readSavedSettings = (): Partial<Settings> => {
   try {
@@ -109,9 +114,22 @@ export const useAppLogic = () => {
   const [earnedAchievements, setEarnedAchievements] = useState<UserAchievement[]>([]);
   
   const isInitialMount = useRef(true);
-  // Set while a sync reloads the merged data, so that reload does not start
-  // another sync (which used to repeat every 2 seconds).
-  const reloadingFromSync = useRef(false);
+  // Fingerprint of the data as of the last finished sync: the automatic sync
+  // runs only when the data differs from it (reloading the merged data used to
+  // start a new sync every 2 seconds, forever).
+  const lastSyncedFingerprint = useRef<string | null>(null);
+  const syncInFlight = useRef(false);
+  const syncAgain = useRef(false);
+  const lastSyncAt = useRef(0);
+  const signedInUser = useRef<string | null>(null);
+  // Bumped for every study session, so a new session starts with fresh counters.
+  const [studySessionId, setStudySessionId] = useState(0);
+
+  const signIn = (username: string) => {
+    signedInUser.current = username;
+    setCurrentUser({ username });
+    localStorage.setItem(LAST_USER_KEY, username);
+  };
 
   const showToast = (message: string) => {
     setToastMessage(message);
@@ -187,23 +205,28 @@ export const useAppLogic = () => {
     }
     setUserProfile(profile);
     
-    return { cards: allCards, decks: allDecks, logs: allLogs, profile, achievements: allAchievements };
+    return { cards: allCards, decks: allDecks, texts: allTexts, logs: allLogs, profile, achievements: allAchievements };
   };
   
+  // Reads everything from the database: React state can be a step behind
+  // right after a save.
   const handleCheckAchievements = async (quizScore?: { score: number, total: number }) => {
-    if (!userProfile) return;
-    const studyLogs = await db.studyHistory.toArray();
+    const profile = await db.userProfile.get(1);
+    if (!profile) return;
     const newAchievements = await checkAndAwardAchievements({
-        allCards: flashcards,
-        allDecks: decks,
-        studyLogs,
-        userProfile,
-        earnedAchievements,
+        allCards: (await db.flashcards.toArray()).filter(c => !c.isDeleted),
+        allDecks: await db.decks.toArray(),
+        studyLogs: await db.studyHistory.toArray(),
+        userProfile: profile,
+        earnedAchievements: await db.userAchievements.toArray(),
         quizScore,
+    }).catch(error => {
+        console.error('Achievement check failed:', error);
+        return [];
     });
 
     if (newAchievements.length > 0) {
-        setEarnedAchievements(prev => [...prev, ...newAchievements]);
+        setEarnedAchievements(prev => [...prev.filter(a => !newAchievements.some(n => n.achievementId === a.achievementId)), ...newAchievements]);
         newAchievements.forEach(ua => {
             const achievementData = ALL_ACHIEVEMENTS.find(a => a.id === ua.achievementId);
             if (achievementData) {
@@ -216,23 +239,32 @@ export const useAppLogic = () => {
   };
 
 
-  const awardXP = async (points: number, message?: string) => {
-    const currentProfile = await db.userProfile.get(1);
-    if (!currentProfile) return;
+  // Read, change and write the profile in one transaction, so two updates at
+  // the same moment (quiz XP and its goal, say) never overwrite each other.
+  const updateProfile = async (change: (p: UserProfile) => UserProfile): Promise<{ before: UserProfile; after: UserProfile } | null> => {
+    let result: { before: UserProfile; after: UserProfile } | null = null;
+    await (db as any).transaction('rw', db.userProfile, async () => {
+      const before = await db.userProfile.get(1);
+      if (!before) return;
+      const after: UserProfile = { ...change(before), profileLastUpdated: new Date().toISOString() };
+      await db.userProfile.put(after);
+      result = { before, after };
+    });
+    if (result) setUserProfile((result as { after: UserProfile }).after);
+    return result;
+  };
 
-    const newXp = currentProfile.xp + points;
-    const { level } = calculateLevel(newXp);
-    
-    const updatedProfile: UserProfile = { ...currentProfile, xp: newXp, level };
-    
-    if (level > currentProfile.level) {
-        showToast(`Level Up! You reached Level ${level}! 🎉`);
+  const awardXP = async (points: number, message?: string) => {
+    const result = await updateProfile(p => {
+      const xp = (p.xp || 0) + points;
+      return { ...p, xp, level: calculateLevel(xp).level };
+    });
+    if (!result) return;
+    if (result.after.level > result.before.level) {
+        showToast(`Level Up! You reached Level ${result.after.level}! 🎉`);
     } else if (message) {
         showToast(message);
     }
-    
-    await db.userProfile.put(updatedProfile);
-    setUserProfile(updatedProfile);
     handleCheckAchievements();
   };
 
@@ -241,17 +273,18 @@ export const useAppLogic = () => {
         await awardXP(value);
         return;
     }
-    const currentProfile = await db.userProfile.get(1);
-    if (!currentProfile?.dailyGoals) return;
+    // A new day starts a new goal, even when the app stayed open past midnight.
+    const stored = await db.userProfile.get(1);
+    if (stored) await checkAndRefreshDailyGoals(stored, streak);
 
-    const { updatedProfile: profileWithGoalProgress, xpGained, newlyCompletedGoals } = updateGoalProgress(type, value, currentProfile);
-    
-    const updatedProfile = {
-        ...profileWithGoalProgress,
-        profileLastUpdated: new Date().toISOString()
-    };
-    await db.userProfile.put(updatedProfile);
-    setUserProfile(updatedProfile);
+    let progress: ReturnType<typeof updateGoalProgress> | null = null;
+    const result = await updateProfile(p => {
+      if (!p.dailyGoals) return p;
+      progress = updateGoalProgress(type, value, p);
+      return progress.updatedProfile;
+    });
+    if (!result || !progress) return;
+    const { xpGained, newlyCompletedGoals } = progress as ReturnType<typeof updateGoalProgress>;
 
     if (xpGained > 0) await awardXP(xpGained);
 
@@ -259,28 +292,23 @@ export const useAppLogic = () => {
         setTimeout(() => showToast(`Goal Complete: ${goal.description} (+${goal.xp} XP)`), 500);
     });
 
-    if (updatedProfile.dailyGoals.allCompleteAwarded && !currentProfile.dailyGoals.allCompleteAwarded) {
+    if (result.after.dailyGoals?.allCompleteAwarded && !result.before.dailyGoals?.allCompleteAwarded) {
         setTimeout(() => showToast(`All goals complete! Bonus +50 XP! ✨`), newlyCompletedGoals.length > 0 ? 1000 : 500);
     }
   };
 
+  // Once a day, after the first reviews of the day: a bonus for keeping the
+  // streak going (2 days or more).
   const checkStreakBonus = async () => {
-      if (!userProfile) return;
-      // Fix: Use local date for streak check as well to maintain consistency with daily goals
-      const today = new Date().toLocaleDateString('en-CA'); 
-      if (userProfile.lastStreakCheck === today) return;
-
+      const today = dayString(new Date());
+      const profile = await db.userProfile.get(1);
+      if (!profile || profile.lastStreakCheck === today) return;
       const logs = await db.studyHistory.toArray();
-      const newStreak = calculateStreak(logs, userProfile.frozenDates);
-
-      if (newStreak > streak) {
-          await awardXP(newStreak * 10, `Streak Bonus: ${newStreak} days! 🔥`);
-      }
-      handleGoalUpdate('STREAK', newStreak);
-      
-      const updatedProfile = { ...userProfile, lastStreakCheck: today };
-      await db.userProfile.put(updatedProfile);
-      setUserProfile(updatedProfile);
+      if (!logs.some(l => l.date === today)) return;
+      const newStreak = calculateStreak(logs, profile.frozenDates);
+      await updateProfile(p => ({ ...p, lastStreakCheck: today }));
+      if (newStreak >= 2) await awardXP(newStreak * 10, `Streak Bonus: ${newStreak} days! 🔥`);
+      await handleGoalUpdate('STREAK', newStreak);
   };
 
   // Take settings changed on another device, keeping this device's AI key.
@@ -292,23 +320,40 @@ export const useAppLogic = () => {
   };
 
   const handleSync = async () => {
-    if (!currentUser?.username) return;
+    if (!signedInUser.current) return;
     await mergeWithCloud();
+  };
+
+  // Remember what the data looked like after a sync, so the automatic sync
+  // knows nothing changed since.
+  const rememberSynced = (fresh: Awaited<ReturnType<typeof fetchData>>) => {
+    lastSyncedFingerprint.current = syncFingerprint({
+      cards: fresh.cards, decks: fresh.decks, texts: fresh.texts, profile: fresh.profile,
+      achievements: fresh.achievements, settingsUpdatedAt: readSavedSettings().updatedAt,
+    });
   };
 
   // Send everything in this browser to the account and take back the merged
   // result. Nothing local is dropped: the server merges, it never replaces.
+  // Rows edited here while the request was in flight keep their local version
+  // and go out with the next sync.
   const mergeWithCloud = async () => {
+    if (syncInFlight.current) { syncAgain.current = true; return; }
+    syncInFlight.current = true;
     setSyncStatus('syncing');
     try {
-        // Fix: Read directly from the database to ensure the latest data is synced,
-        // preventing race conditions with React state.
         const allCards = await db.flashcards.toArray();
         const allDecks = await db.decks.toArray();
         const allStudyHistory = await db.studyHistory.toArray();
         const profile = await db.userProfile.get(1);
         const allAchievements = await db.userAchievements.toArray();
         const allTexts = await db.texts.toArray();
+        const sent = {
+            cards: stampMap(allCards, cardStamp),
+            decks: stampMap(allDecks, deckStamp),
+            texts: stampMap(allTexts, cardStamp),
+            profile: profileStamp(profile),
+        };
 
         const localData = {
             texts: allTexts,
@@ -323,29 +368,40 @@ export const useAppLogic = () => {
         const response = await callProxy('sync-merge', { data: localData });
         
         const { data: mergedData } = response;
+        let skipped = 0;
         if (mergedData) {
             await (db as any).transaction('rw', [db.decks, db.flashcards, db.studyHistory, db.userProfile, db.userAchievements, db.texts], async () => {
-                // Bug Fix: Do NOT clear tables here. Clearing tables wipes out any changes made locally 
-                // while the network request was in flight (the "Reversion" bug).
-                // We use bulkPut which updates existing items and adds new ones.
-                // Since 'sync-merge' handles the logic of what is deleted (via isDeleted flags),
-                // this is safe and prevents data loss.
-                
-                if (mergedData.decks) await db.decks.bulkPut(mergedData.decks);
-                if (mergedData.cards) await db.flashcards.bulkPut(mergedData.cards);
-                if (mergedData.studyHistory) await db.studyHistory.bulkPut(mergedData.studyHistory);
-                if (mergedData.userProfile) await db.userProfile.put(mergedData.userProfile);
+                const decks = applicableRows<Deck>(mergedData.decks, sent.decks, stampMap(await db.decks.toArray(), deckStamp));
+                const cards = applicableRows<Flashcard>(mergedData.cards, sent.cards, stampMap(await db.flashcards.toArray(), cardStamp));
+                const textRows = applicableRows<TextDoc>(mergedData.texts, sent.texts, stampMap(await db.texts.toArray(), cardStamp));
+                skipped = decks.skipped + cards.skipped + textRows.skipped;
+                if (decks.rows.length) await db.decks.bulkPut(decks.rows);
+                if (cards.rows.length) await db.flashcards.bulkPut(cards.rows);
+                if (textRows.rows.length) await db.texts.bulkPut(textRows.rows);
+                const logs = newStudyLogs(await db.studyHistory.toArray(), mergedData.studyHistory);
+                if (logs.length) await db.studyHistory.bulkAdd(logs);
+                if (mergedData.userProfile) {
+                    if (profileStamp(await db.userProfile.get(1)) === sent.profile) await db.userProfile.put(mergedData.userProfile);
+                    else skipped++;
+                }
                 if (mergedData.userAchievements) await db.userAchievements.bulkPut(mergedData.userAchievements);
-                if (mergedData.texts) await db.texts.bulkPut(mergedData.texts);
             });
             adoptCloudSettings(mergedData.settings);
-            reloadingFromSync.current = true;
-            await fetchData();
+            const fresh = await fetchData();
+            if (skipped === 0) rememberSynced(fresh);
+            else lastSyncedFingerprint.current = null; // local edits still to send
         }
+        lastSyncAt.current = Date.now();
         setSyncStatus('synced');
     } catch (error) {
         console.error('Sync failed:', error);
         setSyncStatus('error');
+    } finally {
+        syncInFlight.current = false;
+        if (syncAgain.current) {
+            syncAgain.current = false;
+            setTimeout(() => handleSync(), 0);
+        }
     }
 };
 
@@ -362,13 +418,14 @@ export const useAppLogic = () => {
             if (texts) await db.texts.bulkPut(texts);
             if (decks) await db.decks.bulkPut(decks);
             if (cards) await db.flashcards.bulkPut(cards);
-            if (studyHistory) await db.studyHistory.bulkPut(studyHistory);
+            if (studyHistory) await db.studyHistory.bulkAdd(newStudyLogs([], studyHistory));
             if (userProfile) await db.userProfile.put(userProfile);
             if (userAchievements) await db.userAchievements.bulkPut(userAchievements);
         });
         adoptCloudSettings(response.data.settings);
       }
-      await fetchData();
+      rememberSynced(await fetchData());
+      lastSyncAt.current = Date.now();
       setSyncStatus('synced');
       showToast('Profile loaded successfully!');
     } catch (error) {
@@ -381,16 +438,25 @@ export const useAppLogic = () => {
   useEffect(() => {
     // The server knows who is signed in from its HttpOnly session cookie.
     const checkSession = async () => {
+        const startSignedIn = async (username: string) => {
+            signIn(username);
+            setIsLoggedIn(true);
+            await (db as any).open();
+            await fetchData();
+        };
         try {
             const { username } = await callProxy('auth-session', {});
-            if (username) {
-                setCurrentUser({ username });
-                setIsLoggedIn(true);
-                await (db as any).open();
-                await fetchData();
-            }
+            if (username) await startSignedIn(username);
+            else localStorage.removeItem(LAST_USER_KEY);
         } catch (e) {
             console.error('Could not check the session:', e);
+            // No connection (common on a filtered or cut network): open this
+            // browser's own cards; the next sync signs in or asks to.
+            const lastUser = localStorage.getItem(LAST_USER_KEY);
+            if (lastUser && e instanceof TypeError) {
+                await startSignedIn(lastUser);
+                setSyncStatus('error');
+            }
         }
         setAppLoading(false);
     };
@@ -398,11 +464,22 @@ export const useAppLogic = () => {
     checkSession();
 
     const onAuthRequired = () => {
+        signedInUser.current = null;
         setIsLoggedIn(false);
         setCurrentUser(null);
         showToast('Your session has expired. Please sign in again.');
     };
     window.addEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
+
+    // Pick up changes made on another device when coming back to the app or
+    // back online, at most once a minute.
+    const syncWhenBack = () => {
+        if (document.visibilityState !== 'visible' || !signedInUser.current) return;
+        if (Date.now() - lastSyncAt.current < 60_000) return;
+        handleSync();
+    };
+    document.addEventListener('visibilitychange', syncWhenBack);
+    window.addEventListener('online', syncWhenBack);
     
     const savedSettings = localStorage.getItem('appSettings');
     if (savedSettings) {
@@ -416,7 +493,11 @@ export const useAppLogic = () => {
     }
     checkApis();
     (db as any).open().then(() => setDbStatus('ok')).catch(() => setDbStatus('error'));
-    return () => window.removeEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
+    return () => {
+        window.removeEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
+        document.removeEventListener('visibilitychange', syncWhenBack);
+        window.removeEventListener('online', syncWhenBack);
+    };
   }, []);
 
   useEffect(() => {
@@ -447,12 +528,11 @@ export const useAppLogic = () => {
         return;
     }
 
-    if (reloadingFromSync.current) {
-        reloadingFromSync.current = false;
-        return;
-    }
+    const fingerprint = syncFingerprint({
+        cards: flashcards, decks, texts, profile: userProfile, achievements: earnedAchievements, settingsUpdatedAt: settings.updatedAt,
+    });
+    if (fingerprint === lastSyncedFingerprint.current) return;
 
-    setSyncStatus('syncing'); 
     const handler = setTimeout(() => handleSync(), 2000);
     return () => clearTimeout(handler);
   }, [flashcards, decks, userProfile, earnedAchievements, texts, isLoggedIn, autoFixProgress, settings.updatedAt]); // Added autoFixProgress dependency
@@ -504,7 +584,7 @@ export const useAppLogic = () => {
     let deck = allDecks.find(d => d.name.toLowerCase() === trimmedDeckName.toLowerCase() && !d.isDeleted);
 
     if (!deck) {
-      const newDeck: Deck = { id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, name: trimmedDeckName };
+      const newDeck: Deck = { id: crypto.randomUUID(), name: trimmedDeckName, updatedAt: new Date().toISOString() };
       await db.decks.add(newDeck);
       deck = newDeck;
     }
@@ -522,7 +602,7 @@ export const useAppLogic = () => {
       const now = new Date().toISOString();
       const newCard: Flashcard = {
         ...cardData,
-        id: Date.now().toString(),
+        id: crypto.randomUUID(),
         deckId: deck!.id,
         repetition: 0,
         easinessFactor: 2.5,
@@ -563,7 +643,7 @@ export const useAppLogic = () => {
     let deck = allDecks.find(d => d.name.toLowerCase() === trimmedDeckName.toLowerCase() && !d.isDeleted);
 
     if (!deck) {
-        const newDeck: Deck = { id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, name: trimmedDeckName };
+        const newDeck: Deck = { id: crypto.randomUUID(), name: trimmedDeckName, updatedAt: new Date().toISOString() };
         await db.decks.add(newDeck);
         deck = newDeck;
     }
@@ -571,7 +651,7 @@ export const useAppLogic = () => {
     const now = new Date().toISOString();
     const newCards: Flashcard[] = cardsToSave.map((cardData, index) => ({
         ...cardData,
-        id: `${Date.now()}-${index}`,
+        id: crypto.randomUUID(),
         deckId: deck!.id,
         repetition: 0,
         easinessFactor: 2.5,
@@ -602,7 +682,7 @@ export const useAppLogic = () => {
     let deck = allDecks.find(d => d.name.toLowerCase() === trimmedDeckName.toLowerCase() && !d.isDeleted);
 
     if (!deck) {
-      const newDeck: Deck = { id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, name: trimmedDeckName };
+      const newDeck: Deck = { id: crypto.randomUUID(), name: trimmedDeckName, updatedAt: new Date().toISOString() };
       await db.decks.add(newDeck);
       deck = newDeck;
     }
@@ -655,6 +735,7 @@ export const useAppLogic = () => {
     // XP is added once per session so an undone answer never counts.
     if (summary.xp > 0) await awardXP(summary.xp);
     if (summary.reviews > 0) await handleGoalUpdate('STUDY', summary.reviews);
+    await checkStreakBonus();
     const fresh = await fetchData();
     handleCheckAchievements();
     if (next === 'more') {
@@ -707,7 +788,7 @@ export const useAppLogic = () => {
         const allDecks = await db.decks.toArray();
         // Explicitly type the Map to ensure deck retrieval is strongly typed and avoid 'unknown' errors
         const deckNameMap = new Map<string, Deck>();
-        allDecks.forEach(d => deckNameMap.set(d.name.toLowerCase(), d));
+        allDecks.filter(d => !d.isDeleted).forEach(d => deckNameMap.set(d.name.toLowerCase(), d));
         
         const newDecks: Deck[] = [];
         const newCards: Flashcard[] = [];
@@ -725,7 +806,7 @@ export const useAppLogic = () => {
             let deck = deckNameMap.get(lowerDeckName);
 
             if (!deck) {
-                const newDeck: Deck = { id: `${Date.now()}-${rowCount}`, name: deckName };
+                const newDeck: Deck = { id: crypto.randomUUID(), name: deckName, updatedAt: new Date().toISOString() };
                 deckNameMap.set(lowerDeckName, newDeck);
                 newDecks.push(newDeck);
                 deck = newDeck;
@@ -733,7 +814,7 @@ export const useAppLogic = () => {
 
             const now = new Date().toISOString();
             const newCard: Flashcard = {
-                id: `${Date.now()}-${rowCount}`,
+                id: crypto.randomUUID(),
                 deckId: deck.id,
                 front: row.front,
                 back: row.back,
@@ -757,7 +838,10 @@ export const useAppLogic = () => {
         
         await fetchData();
         handleCheckAchievements();
-        showToast(`${newCards.length} cards imported successfully!`);
+        const skippedRows = parsedData.length - newCards.length;
+        showToast(skippedRows > 0
+            ? `${newCards.length} cards imported; ${skippedRows} row(s) skipped (no front or back).`
+            : `${newCards.length} cards imported successfully!`);
         setView('DECKS');
 
     } catch (error) {
@@ -780,30 +864,25 @@ export const useAppLogic = () => {
   };
   
   const handleStartStudySession = (options: StudySessionOptions, deckIdOverride?: string | null, sourceCards: Flashcard[] = flashcards) => {
-    checkStreakBonus();
     const deckId = deckIdOverride !== undefined ? deckIdOverride : studyDeckId;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayISOString = today.toISOString();
 
     const visibleFlashcards = sourceCards.filter(c => !c.isDeleted);
     let cardsToStudy = deckId
-      ? visibleFlashcards.filter(card => card.deckId === studyDeckId)
+      ? visibleFlashcards.filter(card => card.deckId === deckId)
       : visibleFlashcards;
 
     switch (options.filter) {
       case 'new': 
-        // Fix: Stricter check for new cards
-        cardsToStudy = cardsToStudy.filter(c => c.repetition === 0 && c.interval === 0); 
+        cardsToStudy = cardsToStudy.filter(isNewCard);
         break;
       case 'review': 
-        cardsToStudy = cardsToStudy.filter(c => (c.repetition > 0 || c.interval > 0) && c.dueDate <= todayISOString); 
+        cardsToStudy = cardsToStudy.filter(c => !isNewCard(c) && isDue(c));
         break;
       case 'all-cards': 
         break;
       case 'all-due': 
       default: 
-        cardsToStudy = cardsToStudy.filter(c => c.dueDate <= todayISOString); 
+        cardsToStudy = cardsToStudy.filter(c => isDue(c));
         break;
     }
     
@@ -822,6 +901,7 @@ export const useAppLogic = () => {
     }
 
     setStudyCards(cardsToStudy);
+    setStudySessionId(id => id + 1);
     setIsStudySetupModalOpen(false);
     setView('STUDY');
     return true;
@@ -830,9 +910,7 @@ export const useAppLogic = () => {
   // "Start review" on the Today screen: every due card, no setup dialog.
   const startQuickReview = (mode: StudyMode = 'flip', limit = 0, sourceCards: Flashcard[] = flashcards) => {
     setStudyMode(mode);
-    const endOfToday = new Date();
-    endOfToday.setHours(23, 59, 59, 999);
-    const due = sourceCards.filter(c => !c.isDeleted && new Date(c.dueDate) <= endOfToday);
+    const due = sourceCards.filter(c => !c.isDeleted && isDue(c));
     if (due.length === 0) {
       showToast('امروز کارت موعددار نداری. می‌توانی مرور آزاد را انتخاب کنی.');
       setStudyDeckId(null);
@@ -897,11 +975,10 @@ export const useAppLogic = () => {
     await saveText(updated);
     await awardXP(CHUNK_COMPLETE_XP, `بخش ${index + 1} تمام شد. +${CHUNK_COMPLETE_XP} امتیاز`);
     if (isChestSection(index)) {
-      const profile = await db.userProfile.get(1);
-      if (profile && availableFreezes(profile.streakFreezesEarned, profile.frozenDates) < MAX_HELD_FREEZES) {
-        const withFreeze = { ...profile, streakFreezesEarned: (profile.streakFreezesEarned || 0) + 1, profileLastUpdated: new Date().toISOString() };
-        await db.userProfile.put(withFreeze);
-        setUserProfile(withFreeze);
+      const result = await updateProfile(p => (availableFreezes(p.streakFreezesEarned, p.frozenDates) < MAX_HELD_FREEZES
+        ? { ...p, streakFreezesEarned: (p.streakFreezesEarned || 0) + 1 }
+        : p));
+      if (result && result.after.streakFreezesEarned !== result.before.streakFreezesEarned) {
         setTimeout(() => showToast('صندوق جایزه: یک محافظ زنجیره گرفتی.'), 1200);
       }
     }
@@ -920,12 +997,14 @@ export const useAppLogic = () => {
   }
 
   const handleRenameDeck = async (deckId: string, newName: string) => {
-    const existingDeck: Deck | undefined = decks.find(d => d.name.toLowerCase() && newName.toLowerCase() && !d.isDeleted);
-    if (existingDeck && existingDeck.id !== deckId) {
+    const name = newName.trim();
+    if (!name) return;
+    const existingDeck = decks.find(d => !d.isDeleted && d.id !== deckId && d.name.trim().toLowerCase() === name.toLowerCase());
+    if (existingDeck) {
         showToast('A deck with this name already exists.');
         return;
     }
-    await db.decks.update(deckId, { name: newName });
+    await db.decks.update(deckId, { name, updatedAt: new Date().toISOString() });
     await fetchData();
     showToast('Deck renamed successfully!');
   };
@@ -939,7 +1018,7 @@ export const useAppLogic = () => {
           if (cardIdsToSoftDelete.length > 0) {
               await db.flashcards.where('id').anyOf(cardIdsToSoftDelete).modify({ isDeleted: true, updatedAt: now });
           }
-          await db.decks.update(deckId, { isDeleted: true });
+          await db.decks.update(deckId, { isDeleted: true, updatedAt: now });
       });
       await fetchData(); 
       showToast('Deck and its cards deleted successfully!');
@@ -958,7 +1037,7 @@ export const useAppLogic = () => {
       try {
           const res = await callProxy('auth-login', { username, password });
           const user = { username: res.username || username };
-          setCurrentUser(user);
+          signIn(user.username);
           if (await hasLocalData()) await mergeWithCloud();
           else await loadDataFromCloud(user.username);
           setIsLoggedIn(true);
@@ -975,7 +1054,7 @@ export const useAppLogic = () => {
       try {
           const res = await callProxy('auth-register', { username, password });
           const user = { username: res.username || username };
-          setCurrentUser(user);
+          signIn(user.username);
           if (await hasLocalData()) await mergeWithCloud();
           else await fetchData();
           setIsLoggedIn(true);
@@ -990,6 +1069,7 @@ export const useAppLogic = () => {
   const handleLogout = async () => {
     if(confirm("Are you sure you want to log out?")) {
         await callProxy('auth-logout', {}).catch(e => console.error('Logout request failed:', e));
+        localStorage.removeItem(LAST_USER_KEY);
         window.location.reload();
     }
   };
@@ -1148,7 +1228,7 @@ export const useAppLogic = () => {
   return {
       // State
       flashcards, decks, view, editingCard, toastMessage, isLoggedIn, currentUser, authLoading, appLoading,
-      syncStatus, studyDeckId, studyCards, isStudySetupModalOpen, studyMode, studyLogs, texts, activeTextId, activeChunk, dbStatus, apiStatus,
+      syncStatus, studyDeckId, studyCards, studySessionId, isStudySetupModalOpen, studyMode, studyLogs, texts, activeTextId, activeChunk, dbStatus, apiStatus,
       freeDictApiStatus, mwDictApiStatus, settings, userProfile, streak, earnedAchievements,
       previousViewRef, autoFixProgress, autoFixReport,
       // Handlers

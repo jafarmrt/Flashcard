@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../services/localDBService';
 import { Flashcard, StudyLog } from '../types';
 import { calculateStreak } from '../services/gamificationService';
+import { dayString } from '../services/streakService';
 
 interface Stats {
   streak: number;
@@ -16,7 +17,7 @@ const generateDateMap = (days: number): Map<string, number> => {
   for (let i = 0; i < days; i++) {
     const date = new Date();
     date.setDate(date.getDate() - i);
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = dayString(date);
     map.set(dateStr, 0);
   }
   return map;
@@ -85,7 +86,7 @@ const WeeklyActivityChart: React.FC<{ activity: Map<string, number> }> = ({ acti
     for (let i = days - 1; i >= 0; i--) {
         const date = new Date();
         date.setDate(today.getDate() - i);
-        const dateStr = date.toISOString().split('T')[0];
+        const dateStr = dayString(date);
         const count = activity.get(dateStr) || 0;
         maxCount = Math.max(maxCount, count);
         
@@ -199,7 +200,8 @@ export const StatsView: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       // Fix: Use .filter() for non-indexed properties like 'isDeleted'. The .where() clause is for indexed properties and does not support booleans, causing a type error.
       const allCards = await db.flashcards.filter(card => !card.isDeleted).toArray();
       
-      const streak = calculateStreak(allLogs);
+      const profile = await db.userProfile.get(1);
+      const streak = calculateStreak(allLogs, profile?.frozenDates);
       const activity = calculateActivity(allLogs, 90); // Keep 90 for calculations if needed later, but display 7
       const { difficultCards, reviewSoonCards, masteredCards } = getCardAnalytics(allLogs, allCards);
       

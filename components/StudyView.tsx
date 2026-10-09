@@ -8,6 +8,7 @@ import { db } from '../services/localDBService';
 import { levenshtein } from '../services/stringSimilarity';
 import { fetchAudioData } from '../services/dictionaryService';
 import { isSpeechSupported, speakText } from '../services/ttsService';
+import { dayString } from '../services/streakService';
 import { fa, Icon, Kbd, StageDots } from './common/ui';
 
 const RATINGS: { rating: PerformanceRating; label: string; key: string; className: string }[] = [
@@ -131,6 +132,7 @@ interface Snapshot {
   reviews: number;
   firstAnswers: Map<string, boolean>;
   logId?: number;
+  card?: Flashcard; // the card as it was before this answer
 }
 
 export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak, studiedToday, goal, onExit }) => {
@@ -181,7 +183,9 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
     }
     setAudioBusy(true);
     try {
-      const audio = new Audio(await fetchAudioData(card.audioSrc));
+      // Audio saved inside the card (data:/blob:) plays as is; links go through the server.
+      const src = /^(data|blob):/.test(card.audioSrc) ? card.audioSrc : await fetchAudioData(card.audioSrc);
+      const audio = new Audio(src);
       audio.onended = () => setAudioBusy(false);
       await audio.play();
     } catch (error) {
@@ -196,11 +200,15 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
     busy.current = true;
     const snapshot: Snapshot = { queue, index, updated, combo, xp, reviews, firstAnswers };
 
-    const logId = await db.studyHistory.add({ cardId: card.id, date: new Date().toISOString().split('T')[0], rating }) as number;
-    const next = calculateSrs(current, rating);
+    const next = { ...calculateSrs(current, rating), updatedAt: new Date().toISOString() };
+    // Saved at once, so closing the app mid-session keeps every answer.
+    const logId = await db.transaction('rw', db.studyHistory, db.flashcards, async () => {
+      await db.flashcards.put(next);
+      return await db.studyHistory.add({ uid: crypto.randomUUID(), cardId: card.id, date: dayString(new Date()), rating }) as number;
+    });
     const gained = reviewXp(rating, combo);
 
-    setHistory(h => [...h.slice(-20), { ...snapshot, logId }]);
+    setHistory(h => [...h.slice(-20), { ...snapshot, logId, card: current }]);
     setUpdated(prev => new Map(prev).set(next.id, next));
     setCombo(nextCombo(rating, combo));
     setXp(v => v + gained);
@@ -225,7 +233,10 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
   const undo = async () => {
     const last = history[history.length - 1];
     if (!last || busy.current) return;
-    if (last.logId !== undefined) await db.studyHistory.delete(last.logId);
+    await db.transaction('rw', db.studyHistory, db.flashcards, async () => {
+      if (last.logId !== undefined) await db.studyHistory.delete(last.logId);
+      if (last.card) await db.flashcards.put({ ...last.card, updatedAt: new Date().toISOString() });
+    });
     setHistory(h => h.slice(0, -1));
     setQueue(last.queue);
     setIndex(last.index);
@@ -248,17 +259,21 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
   // Keyboard: Space/Enter shows the answer, 1-4 rate, P plays, Z undoes, Esc leaves.
   useEffect(() => {
     if (done) return;
+    // Keys are matched by position (e.code), so they also work while the
+    // Persian keyboard layout is on; Ctrl/Cmd/Alt combinations stay the browser's.
     const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       const typing = (e.target as HTMLElement).closest('input, textarea');
       if (e.key === 'Escape') { exitEarly(); return; }
       if (typing && !revealed) return;
       if (!revealed && (e.code === 'Space' || e.key === 'Enter') && mode === 'flip') { e.preventDefault(); setRevealed(true); return; }
       if (revealed) {
-        const r = RATINGS.find(x => x.key === e.key);
+        const digit = /^(?:Digit|Numpad)([1-4])$/.exec(e.code)?.[1];
+        const r = RATINGS.find(x => x.key === digit);
         if (r) { e.preventDefault(); rate(r.rating); return; }
       }
-      if (e.key === 'p' || e.key === 'P') { playAudio(); return; }
-      if ((e.key === 'z' || e.key === 'Z') && !e.ctrlKey && !e.metaKey) { undo(); }
+      if (e.code === 'KeyP') { playAudio(); return; }
+      if (e.code === 'KeyZ') { undo(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

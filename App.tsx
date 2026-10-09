@@ -22,7 +22,7 @@ import { TodayView } from './components/TodayView';
 import { MeView } from './components/MeView';
 import { TextsView } from './components/TextsView';
 import { ChunkReaderView } from './components/ChunkReaderView';
-import { isNewCard } from './services/srsService';
+import { isDue, isNewCard } from './services/srsService';
 import { dayString } from './services/streakService';
 import { DEFAULT_DAILY_REVIEW_GOAL } from './services/xpRules';
 import { AutoFixReportModal } from './components/AutoFixReportModal';
@@ -42,16 +42,14 @@ const App: React.FC = () => {
         updateSettings, handleCheckAchievements, handleGoalUpdate, studyCards,
         handleCompleteCardDetails, handleAutoFixCards, handleStopAutoFix, autoFixProgress,
         handleCloseAutoFixReport, handleSaveExtractedCards, previousViewRef,
-        syncStatus, studyMode, studyLogs, texts, activeTextId, activeChunk,
+        syncStatus, studyMode, studyLogs, studySessionId, texts, activeTextId, activeChunk,
         startQuickReview, openStudySetup, handleCreateText, handleOpenText, handleOpenChunk,
         handleDeleteText, handleCompleteChunk
     } = useAppLogic();
 
     const visibleFlashcards = flashcards.filter(c => !c.isDeleted);
     const visibleDecks = decks.filter(d => !d.isDeleted);
-    const endOfToday = new Date();
-    endOfToday.setHours(23, 59, 59, 999);
-    const dueCards = visibleFlashcards.filter(c => new Date(c.dueDate) <= endOfToday);
+    const dueCards = visibleFlashcards.filter(c => isDue(c));
     const health = [
         { label: 'DB', status: dbStatus },
         { label: 'AI', status: apiStatus },
@@ -120,6 +118,7 @@ const App: React.FC = () => {
                 />;
             case 'STUDY':
                 return <StudyView
+                    key={studySessionId}
                     cards={studyCards}
                     initialMode={studyMode}
                     streak={streak}

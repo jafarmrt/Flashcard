@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Deck, Flashcard, UserProfile } from '../types';
+import { isDue } from '../services/srsService';
 import { Dashboard } from './Dashboard';
 // Fix: Import DailyGoalsWidget to resolve 'Cannot find name' error.
 import { DailyGoalsWidget } from './DailyGoalsWidget';
@@ -114,12 +115,9 @@ const DeckList: React.FC<DeckListProps> = ({ decks, cards, onStudyDeck, onRename
         );
     }
     
-    const today = new Date();
-    today.setHours(0,0,0,0);
-
     const deckData = decks.map(deck => {
         const cardsInDeck = cards.filter(card => card.deckId === deck.id);
-        const dueCardsInDeck = cardsInDeck.filter(card => new Date(card.dueDate) <= today);
+        const dueCardsInDeck = cardsInDeck.filter(card => isDue(card));
         return {
             ...deck,
             cardCount: cardsInDeck.length,

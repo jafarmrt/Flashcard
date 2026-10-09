@@ -1,14 +1,19 @@
-// Streak days, streak freezes and the weekly strip. Dates are YYYY-MM-DD in
-// UTC, the same format StudyLog.date uses.
+// Streak days, streak freezes and the weekly strip. Dates are YYYY-MM-DD on
+// the device's own calendar, the same format StudyLog.date uses: a review at
+// 01:00 in Tehran counts for that day, not for the previous UTC day.
 
 export const MAX_HELD_FREEZES = 2;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export const dayString = (date: Date): string => date.toISOString().split('T')[0];
+const pad = (n: number) => String(n).padStart(2, '0');
 
+export const dayString = (date: Date): string =>
+  `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+
+// Calendar arithmetic on YYYY-MM-DD strings (time zones play no part).
 export const addDays = (day: string, delta: number): string =>
-  dayString(new Date(Date.parse(`${day}T12:00:00Z`) + delta * DAY_MS));
+  new Date(Date.parse(`${day}T12:00:00Z`) + delta * DAY_MS).toISOString().split('T')[0];
 
 export const availableFreezes = (earned = 0, frozenDates: string[] = []): number =>
   Math.max(0, earned - frozenDates.length);
