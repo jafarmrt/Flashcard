@@ -7,6 +7,7 @@ import { ExtractedWordCard } from '../types';
 import { callProxy } from './apiService';
 import { dictionaryOrigin } from './aiSettings';
 import { candidatePhrasalVerbs, candidateWords, pickHardWords } from './freeCandidates';
+import { cachedLookup } from './lookupCache';
 
 export interface FreeEnrichment {
   found: boolean;
@@ -20,8 +21,9 @@ export interface FreeEnrichment {
   collocations: { phrase: string }[];
 }
 
+// Looked up once per word on this device (services/lookupCache).
 export const freeEnrich = (term: string, onlyIfFound = false): Promise<FreeEnrichment> =>
-  callProxy('free-enrich', { term, onlyIfFound });
+  cachedLookup(term, () => callProxy('free-enrich', { term, onlyIfFound }));
 
 export const freeTranslate = async (text: string): Promise<string> => {
   const res = await callProxy('free-translate', { text });

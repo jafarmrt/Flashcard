@@ -14,6 +14,7 @@ interface AiTextExtractorViewProps {
   onCancel: () => void;
   showToast: (msg: string) => void;
   existingFronts: string[];
+  knownTerms?: string[]; // the "I know it" list: never suggested
 }
 
 const KIND_LABELS: Record<string, { label: string; className: string }> = {
@@ -122,6 +123,7 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
   onCancel,
   showToast,
   existingFronts,
+  knownTerms = [],
 }) => {
   const [inputText, setInputText] = useState('');
   const [targetLevel, setTargetLevel] = useState<string>(settings.userLevel || 'B2');
@@ -312,6 +314,7 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
         perSection: wordCount,
         source,
         existingFronts,
+        knownTerms,
         includeGrammar: source === 'ai' && includeGrammar,
         aiOptions: aiRequestOptions(settings),
         signal: controller.signal,

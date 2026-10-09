@@ -1,11 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import type { Chapter, Deck, Flashcard, Occurrence, Source, SourceKind } from '../types';
+import type { Chapter, Deck, Flashcard, KnownWord, Occurrence, Source, SourceKind } from '../types';
 import type { View } from '../hooks/useAppLogic';
 import type { ImportedSource } from '../services/importers';
 import { chaptersOf, continuePoint, currentChunkOf, isChapterFinished, isChunkOpen, originText, sourceProgress } from '../services/library';
 import { masteryStage, STAGE_NAMES } from '../services/masteryService';
 import { convertToCSV, downloadCSV } from '../services/csvService';
 import { isChestSection } from '../services/xpRules';
+import { knownList } from '../services/knownWords';
 import { AddSourceForm } from './AddSourceForm';
 import { fa, Icon, StageDots } from './common/ui';
 
@@ -31,6 +32,11 @@ interface LibraryViewProps {
   onOpenChunk: (chapter: Chapter, index: number) => void;
   onDeleteSource: (sourceId: string) => void;
   onNavigate: (view: View) => void;
+  knownWords: KnownWord[];
+  onUnmarkKnown: (term: string) => void;
+  sectionReview: { sourceId: string; chapterId: string; chunk: number; cardIds: string[] } | null;
+  onStartSectionReview: () => void;
+  onDismissSectionReview: () => void;
 }
 
 // Cards met in each source: card id -> set of source ids, without deleted rows.
@@ -183,6 +189,13 @@ const SourcePage: React.FC<LibraryViewProps & { source: Source }> = props => {
   const next = continuePoint(source, chapters);
 
   const back = () => (activeChapter && !single ? onOpenChapter(null) : onOpenSource(null));
+  // A section just finished here: its cards, for a short review.
+  const review = props.sectionReview?.sourceId === source.id ? props.sectionReview : null;
+  const reviewCount = useMemo(() => {
+    if (!review) return 0;
+    const live = new Set(cards.filter(c => !c.isDeleted).map(c => c.id));
+    return review.cardIds.filter(id => live.has(id)).length;
+  }, [review, cards]);
 
   return (
     <div className="flex flex-col gap-5">
@@ -208,6 +221,18 @@ const SourcePage: React.FC<LibraryViewProps & { source: Source }> = props => {
         </div>
         {source.url && <a href={source.url} target="_blank" rel="noopener noreferrer" dir="ltr" className="font-en text-xs text-brand-500 dark:text-brand-300 truncate hover:underline">{source.url}</a>}
       </div>
+
+      {review && (
+        <div role="status" className="rounded-3xl bg-emerald-50 dark:bg-emerald-900/30 p-5 flex flex-wrap items-center gap-3 animate-reveal">
+          <p className="flex-1 min-w-[14rem] text-ink dark:text-slate-100">
+            بخش {fa(review.chunk + 1)} تمام شد. {fa(reviewCount)} کارت این بخش را همین حالا یک مرور کوتاه کن تا بهتر بماند.
+          </p>
+          <div className="flex gap-2">
+            <button type="button" onClick={props.onStartSectionReview} className="min-h-[44px] px-5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold">مرور کوتاه</button>
+            <button type="button" onClick={props.onDismissSectionReview} className="min-h-[44px] px-4 rounded-xl text-emerald-900 dark:text-emerald-100 hover:bg-emerald-100 dark:hover:bg-emerald-900/50">بعداً</button>
+          </div>
+        </div>
+      )}
 
       <div role="tablist" className="flex gap-1 p-1 rounded-2xl bg-white dark:bg-slate-800 self-start">
         {([['read', single ? 'مسیر خواندن' : 'فصل‌ها'], ['words', `واژه‌ها (${fa(cardCount)})`]] as const).map(([id, label]) => (
@@ -261,6 +286,38 @@ const SourcePage: React.FC<LibraryViewProps & { source: Source }> = props => {
         </>
       )}
     </div>
+  );
+};
+
+// Words on the "I know it" list: never suggested again while reading. A word
+// taken off comes back in suggestions.
+const SHOWN_KNOWN = 60;
+const KnownWordsPanel: React.FC<{ rows: KnownWord[]; onRemove: (term: string) => void }> = ({ rows, onRemove }) => {
+  const [all, setAll] = useState(false);
+  const list = useMemo(() => knownList(rows), [rows]);
+  if (list.length === 0) return null;
+  const shown = all ? list : list.slice(0, SHOWN_KNOWN);
+  return (
+    <details className="group bg-white dark:bg-slate-800 rounded-3xl p-5">
+      <summary className="cursor-pointer list-none flex items-center gap-2 font-bold text-ink dark:text-white">
+        <Icon.Back size={18} className="transition-transform rotate-180 group-open:-rotate-90" />
+        واژه‌هایی که بلدی ({fa(list.length)})
+      </summary>
+      <p className="text-sm text-ink-muted dark:text-slate-400 mt-3">این واژه‌ها هنگام خواندن پیشنهاد نمی‌شوند، در هیچ کتابی. با × از فهرست بیرون می‌روند.</p>
+      <ul dir="ltr" className="flex flex-wrap gap-1.5 mt-3">
+        {shown.map(k => (
+          <li key={k.term} className="inline-flex items-center gap-1 rounded-full bg-emerald-50 dark:bg-emerald-900/40 text-emerald-900 dark:text-emerald-100 ps-3 pe-1 py-0.5 font-en text-sm">
+            {k.term}
+            <button type="button" onClick={() => onRemove(k.term)} aria-label={`بیرون بردن ${k.term} از فهرست بلدم`} className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-emerald-100 dark:hover:bg-emerald-800"><Icon.Close size={14} /></button>
+          </li>
+        ))}
+      </ul>
+      {list.length > SHOWN_KNOWN && (
+        <button type="button" onClick={() => setAll(v => !v)} className="mt-3 text-sm text-brand-500 dark:text-brand-300 hover:underline">
+          {all ? 'کمتر' : `همهٔ ${fa(list.length)} واژه`}
+        </button>
+      )}
+    </details>
   );
 };
 
@@ -325,6 +382,8 @@ export const LibraryView: React.FC<LibraryViewProps> = props => {
           })}
         </ul>
       )}
+
+      <KnownWordsPanel rows={props.knownWords} onRemove={props.onUnmarkKnown} />
     </div>
   );
 };

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile, UserAchievement, ExtractedWordCard, StudyLog, Source, Chapter, ChapterText, Occurrence } from '../types';
+import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile, UserAchievement, ExtractedWordCard, StudyLog, Source, Chapter, ChapterText, Occurrence, KnownWord } from '../types';
 import { db } from '../services/localDBService';
 import { calculateLevel, calculateStreak, checkAndAwardAchievements } from '../services/gamificationService';
 import { generateNewDailyGoals, updateGoalProgress, reviewGoalId } from '../services/dailyGoalsService';
@@ -7,6 +7,7 @@ import { availableFreezes, dayString, daysToFreeze, MAX_HELD_FREEZES } from '../
 import { CHUNK_COMPLETE_XP, DEFAULT_DAILY_REVIEW_GOAL, isChestSection } from '../services/xpRules';
 import { buildSource, cardIndex, cardsInText, chaptersOf, findCard, markChunkDone, migrateTexts, newOccurrence, SourceInput } from '../services/library';
 import { normalizeTerm } from '../services/vocabMerge';
+import { forgetRows, newKnownWord } from '../services/knownWords';
 import { ALL_ACHIEVEMENTS } from '../services/achievements';
 import { aiRequestOptions } from '../services/aiSettings';
 import { AUTH_REQUIRED_EVENT, callProxy } from '../services/apiService';
@@ -134,6 +135,9 @@ export const useAppLogic = () => {
   const [sources, setSources] = useState<Source[]>([]);
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [occurrences, setOccurrences] = useState<Occurrence[]>([]);
+  const [knownWords, setKnownWords] = useState<KnownWord[]>([]);
+  // A section just finished: its cards, offered for a short review.
+  const [sectionReview, setSectionReview] = useState<{ sourceId: string; chapterId: string; chunk: number; cardIds: string[] } | null>(null);
   const [activeSourceId, setActiveSourceId] = useState<string | null>(null);
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null);
   const [activeChunk, setActiveChunk] = useState(0);
@@ -166,6 +170,8 @@ export const useAppLogic = () => {
   const signedInUser = useRef<string | null>(null);
   // Bumped for every study session, so a new session starts with fresh counters.
   const [studySessionId, setStudySessionId] = useState(0);
+  // Where a study session goes back to when it ends.
+  const sessionReturn = useRef<View>('TODAY');
 
   const signIn = (username: string) => {
     signedInUser.current = username;
@@ -243,9 +249,11 @@ export const useAppLogic = () => {
     const allSources = await db.sources.toArray();
     const allChapters = await db.chapters.toArray();
     const allOccurrences = await db.occurrences.toArray();
+    const allKnown = await db.knownWords.toArray();
     setSources(allSources);
     setChapters(allChapters);
     setOccurrences(allOccurrences);
+    setKnownWords(allKnown);
     setFlashcards(allCards);
     setDecks(allDecks);
     setEarnedAchievements(allAchievements);
@@ -282,7 +290,7 @@ export const useAppLogic = () => {
     
     return {
       cards: allCards, decks: allDecks, sources: allSources, chapters: allChapters, occurrences: allOccurrences,
-      logs: allLogs, profile, achievements: allAchievements,
+      knownWords: allKnown, logs: allLogs, profile, achievements: allAchievements,
     };
   };
   
@@ -407,7 +415,7 @@ export const useAppLogic = () => {
   const rememberSynced = (fresh: Awaited<ReturnType<typeof fetchData>>) => {
     lastSyncedFingerprint.current = syncFingerprint({
       cards: fresh.cards, decks: fresh.decks, sources: fresh.sources, chapters: fresh.chapters, occurrences: fresh.occurrences,
-      profile: fresh.profile, achievements: fresh.achievements, settingsUpdatedAt: readSavedSettings().updatedAt,
+      knownWords: fresh.knownWords, profile: fresh.profile, achievements: fresh.achievements, settingsUpdatedAt: readSavedSettings().updatedAt,
     });
   };
 
@@ -417,6 +425,7 @@ export const useAppLogic = () => {
     sources: await db.sources.toArray(),
     chapters: await db.chapters.toArray(),
     occurrences: await db.occurrences.toArray(),
+    knownWords: await db.knownWords.toArray(),
     logs: await db.studyHistory.toArray(),
     profile: await db.userProfile.get(1),
     achievements: await db.userAchievements.toArray(),
@@ -425,6 +434,7 @@ export const useAppLogic = () => {
 
   const SYNC_DB_TABLES: Record<SyncTable, any> = {
     decks: db.decks, cards: db.flashcards, sources: db.sources, chapters: db.chapters, occurrences: db.occurrences,
+    knownWords: db.knownWords,
   };
   const stampOf = (table: SyncTable) => (table === 'decks' ? deckStamp : cardStamp) as (row: any) => string;
 
@@ -476,7 +486,7 @@ export const useAppLogic = () => {
 
             let maxBefore = 0;
             let maxAfter = 0;
-            await (db as any).transaction('rw', [db.decks, db.flashcards, db.sources, db.chapters, db.occurrences, db.studyHistory, db.userProfile, db.userAchievements], async () => {
+            await (db as any).transaction('rw', [db.decks, db.flashcards, db.sources, db.chapters, db.occurrences, db.knownWords, db.studyHistory, db.userProfile, db.userAchievements], async () => {
                 for (const table of SYNC_TABLES) {
                     const incoming = changes[table];
                     if (!Array.isArray(incoming) || incoming.length === 0) continue;
@@ -622,13 +632,13 @@ export const useAppLogic = () => {
     }
 
     const fingerprint = syncFingerprint({
-        cards: flashcards, decks, sources, chapters, occurrences, profile: userProfile, achievements: earnedAchievements, settingsUpdatedAt: settings.updatedAt,
+        cards: flashcards, decks, sources, chapters, occurrences, knownWords, profile: userProfile, achievements: earnedAchievements, settingsUpdatedAt: settings.updatedAt,
     });
     if (fingerprint === lastSyncedFingerprint.current) return;
 
     const handler = setTimeout(() => handleSync(), 2000);
     return () => clearTimeout(handler);
-  }, [flashcards, decks, userProfile, earnedAchievements, sources, chapters, occurrences, isLoggedIn, autoFixProgress, settings.updatedAt]);
+  }, [flashcards, decks, userProfile, earnedAchievements, sources, chapters, occurrences, knownWords, isLoggedIn, autoFixProgress, settings.updatedAt]);
 
 
   const updateSettings = (changes: Partial<Settings>) => {
@@ -814,7 +824,7 @@ export const useAppLogic = () => {
       startQuickReview(studyMode, 10, fresh.cards);
       return;
     }
-    setView('TODAY');
+    setView(sessionReturn.current);
   };
 
   const handleExportCSV = () => {
@@ -929,7 +939,7 @@ export const useAppLogic = () => {
     setIsStudySetupModalOpen(true);
   };
   
-  const handleStartStudySession = (options: StudySessionOptions, deckIdOverride?: string | null, sourceCards: Flashcard[] = flashcards) => {
+  const handleStartStudySession = (options: StudySessionOptions, deckIdOverride?: string | null, sourceCards: Flashcard[] = flashcards, returnTo: View = 'TODAY') => {
     const deckId = deckIdOverride !== undefined ? deckIdOverride : studyDeckId;
 
     const visibleFlashcards = sourceCards.filter(c => !c.isDeleted);
@@ -969,6 +979,7 @@ export const useAppLogic = () => {
     setStudyCards(cardsToStudy);
     setStudySessionId(id => id + 1);
     setIsStudySetupModalOpen(false);
+    sessionReturn.current = returnTo;
     setView('STUDY');
     return true;
   };
@@ -1042,6 +1053,7 @@ export const useAppLogic = () => {
 
   // Opening a section remembers it as the place to continue from, on every device.
   const handleOpenChunk = async (chapter: Chapter, index: number) => {
+    setSectionReview(null);
     setActiveSourceId(chapter.sourceId);
     setActiveChapterId(chapter.id);
     setActiveChunk(index);
@@ -1079,6 +1091,10 @@ export const useAppLogic = () => {
       setView('TEXTS');
       return;
     }
+    const offerReview = (placed: Occurrence[]) => {
+      const live = new Set(placed.filter(o => !o.isDeleted && o.chapterId === chapterId && o.chunk === index).map(o => o.cardId));
+      setSectionReview(live.size ? { sourceId: chapter.sourceId, chapterId, chunk: index, cardIds: Array.from(live) } : null);
+    };
     const text = (await db.chapterTexts.get(chapterId))?.chunks[index] || '';
     const placed = new Set((await db.occurrences.where('sourceId').equals(chapter.sourceId).toArray()).filter(o => !o.isDeleted).map(o => o.cardId));
     const now = new Date();
@@ -1090,6 +1106,7 @@ export const useAppLogic = () => {
     });
     setChapters(prev => prev.map(c => (c.id === updated.id ? updated : c)));
     if (seenAgain.length) setOccurrences(prev => [...prev.filter(o => !seenAgain.some(s => s.id === o.id)), ...seenAgain]);
+    offerReview(await db.occurrences.where('chapterId').equals(chapterId).toArray());
     await awardXP(CHUNK_COMPLETE_XP, `بخش ${fa(index + 1)} تمام شد. +${fa(CHUNK_COMPLETE_XP)} امتیاز${seenAgain.length ? `؛ ${fa(seenAgain.length)} واژهٔ کارت‌دار در این بخش دوباره دیده شد` : ''}`);
     if (isChestSection(index)) {
       const result = await updateProfile(p => (availableFreezes(p.streakFreezesEarned, p.frozenDates) < MAX_HELD_FREEZES
@@ -1153,6 +1170,36 @@ export const useAppLogic = () => {
     if (newCards.length) parts.push(`${fa(newCards.length)} کارت تازه در «${deck.name}»`);
     if (attached) parts.push(`${fa(attached)} واژه که کارت داشت، این جمله را هم گرفت`);
     showToast(parts.join('؛ ') || 'چیزی برای ذخیره نبود.');
+  };
+
+  // The "I know it" list: one tap and the term is never suggested again, in
+  // any book, on any device.
+  const handleMarkKnown = async (term: string) => {
+    const key = normalizeTerm(term);
+    if (!key) return;
+    if ((await db.knownWords.where('term').equals(key).toArray()).some(r => !r.isDeleted)) return;
+    const row = newKnownWord(key);
+    await db.knownWords.put(row);
+    setKnownWords(prev => [...prev, row]);
+  };
+
+  const handleUnmarkKnown = async (term: string) => {
+    const gone = forgetRows(await db.knownWords.where('term').equals(normalizeTerm(term)).toArray(), term);
+    if (gone.length === 0) return;
+    await db.knownWords.bulkPut(gone);
+    const byId = new Map(gone.map(r => [r.id, r]));
+    setKnownWords(prev => prev.map(r => byId.get(r.id) || r));
+  };
+
+  // A short review of the cards of the section just finished, then back to
+  // the book.
+  const handleStartSectionReview = () => {
+    if (!sectionReview) return;
+    const ids = new Set(sectionReview.cardIds);
+    setSectionReview(null);
+    setStudyMode('flip');
+    setStudyDeckId(null);
+    handleStartStudySession({ filter: 'all-cards', limit: 0 }, null, flashcards.filter(c => ids.has(c.id)), 'TEXTS');
   };
 
   const handleNavigate = (newView: View) => {
@@ -1396,7 +1443,7 @@ export const useAppLogic = () => {
       // State
       flashcards, decks, view, editingCard, toastMessage, isLoggedIn, currentUser, authLoading, appLoading,
       syncStatus, studyDeckId, studyCards, studySessionId, isStudySetupModalOpen, studyMode, studyLogs, dbStatus, apiStatus,
-      sources, chapters, occurrences, activeSourceId, activeChapterId, activeChunk,
+      sources, chapters, occurrences, activeSourceId, activeChapterId, activeChunk, knownWords, sectionReview,
       freeDictApiStatus, mwDictApiStatus, settings, userProfile, streak, earnedAchievements,
       previousViewRef, autoFixProgress, autoFixReport,
       // Handlers
@@ -1407,6 +1454,7 @@ export const useAppLogic = () => {
       updateSettings, handleCheckAchievements, handleGoalUpdate, handleCompleteCardDetails,
       handleAutoFixCards, handleStopAutoFix, handleCloseAutoFixReport, handleSaveExtractedCards,
       startQuickReview, openStudySetup, setStudyMode, handleAddSource, handleOpenSource, handleOpenChapter, handleOpenChunk,
-      handleDeleteSource, handleCompleteChunk, loadChapterText, handleSaveReaderCards
+      handleDeleteSource, handleCompleteChunk, loadChapterText, handleSaveReaderCards,
+      handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview: () => setSectionReview(null),
   };
 };

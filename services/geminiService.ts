@@ -23,7 +23,7 @@ export interface AiRequestOptions {
 }
 
 // The provider fields every proxy call sends.
-const providerFields = (options?: AiRequestOptions) => {
+export const providerFields = (options?: AiRequestOptions) => {
   const openAi = options?.aiProvider === 'openai-compatible';
   return {
     aiProvider: openAi ? 'openai-compatible' : 'gemini',

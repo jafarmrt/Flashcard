@@ -6,10 +6,10 @@
 // batches small enough for Vercel's request limit, plus the last server rev it
 // saw; the server answers with what other devices changed after that rev.
 
-import type { Chapter, Deck, Flashcard, Occurrence, Source, StudyLog, UserAchievement, UserProfile } from '../types';
+import type { Chapter, Deck, Flashcard, KnownWord, Occurrence, Source, StudyLog, UserAchievement, UserProfile } from '../types';
 import { cardStamp, deckStamp, profileStamp } from './syncState.js';
 
-export const SYNC_TABLES = ['decks', 'cards', 'sources', 'chapters', 'occurrences'] as const;
+export const SYNC_TABLES = ['decks', 'cards', 'sources', 'chapters', 'occurrences', 'knownWords'] as const;
 export type SyncTable = (typeof SYNC_TABLES)[number];
 
 type Stamped = { id: string; updatedAt?: string; isDeleted?: boolean };
@@ -32,10 +32,12 @@ export const FULL_PUSH_EVERY_MS = 7 * 24 * 60 * 60 * 1000;
 export const ROWS_PER_REQUEST = 300;
 export const LOGS_PER_REQUEST = 2000;
 
+const emptyStamps = () => Object.fromEntries(SYNC_TABLES.map(t => [t, {}])) as Record<SyncTable, Record<string, string>>;
+
 export const freshSyncState = (user: string, now = Date.now()): SyncState => ({
   user,
   rev: 0,
-  stamps: { decks: {}, cards: {}, sources: {}, chapters: {}, occurrences: {} },
+  stamps: emptyStamps(),
   logCursor: 0,
   fullAt: now,
 });
@@ -78,6 +80,7 @@ export interface LocalData {
   sources: Source[];
   chapters: Chapter[];
   occurrences: Occurrence[];
+  knownWords: KnownWord[];
   logs: StudyLog[];
   profile?: UserProfile | null;
   achievements: UserAchievement[];
@@ -110,7 +113,7 @@ export interface Outgoing {
 // the batch limits.
 export const nextOutgoing = (local: LocalData, state: SyncState): Outgoing => {
   const changes: Record<string, any> = {};
-  const sent = { decks: {}, cards: {}, sources: {}, chapters: {}, occurrences: {} } as Outgoing['sent'];
+  const sent = emptyStamps();
   let room = ROWS_PER_REQUEST;
   let remaining = 0;
   for (const table of SYNC_TABLES) {

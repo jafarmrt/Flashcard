@@ -245,7 +245,7 @@ test('files are read from a ZIP archive, stored or compressed', async () => {
 // --- What a browser sends at each sync ---
 
 const local = (over: Partial<LocalData> = {}): LocalData => ({
-  decks: [], cards: [], sources: [], chapters: [], occurrences: [], logs: [], achievements: [], ...over,
+  decks: [], cards: [], sources: [], chapters: [], occurrences: [], knownWords: [], logs: [], achievements: [], ...over,
 });
 const log = (id: number): StudyLog => ({ id, cardId: 'c1', date: '2026-10-01', rating: 'GOOD' } as StudyLog);
 
@@ -280,7 +280,7 @@ test('only rows changed since the last confirmed sync are sent, in batches', () 
 
 test('the log cursor skips logs taken from the server but not a review saved meanwhile', () => {
   const state = { ...freshSyncState('ann'), logCursor: 10 };
-  const sent = { changes: {}, sent: { decks: {}, cards: {}, sources: {}, chapters: {}, occurrences: {} }, remaining: 0, lastLogId: 12 };
+  const sent = { changes: {}, sent: { decks: {}, cards: {}, sources: {}, chapters: {}, occurrences: {}, knownWords: {} }, remaining: 0, lastLogId: 12 };
   assert.equal(nextLogCursor(state, sent, 12, 20), 20, 'nothing new here: skip past the received logs');
   assert.equal(nextLogCursor(state, sent, 13, 20), 12, 'a review saved meanwhile is sent next time');
   const none = { ...sent, lastLogId: undefined };

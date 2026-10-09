@@ -5,6 +5,8 @@ import { randomUUID } from 'crypto';
 import { fetchDictionaryEntries, freeEnrich, freeTranslate, lookupFrequencies } from './freeLookup.js';
 import { applyChanges, changesSince, upgradeStore } from './syncStore.js';
 import { fetchPublicPage, PageFetchError } from './pageFetch.js';
+import { packChapter, unpackChapter } from './chapterText.js';
+import { cachedEnrich, fileLookupStore, LOOKUP_TTL_MS, LookupStore } from './lookupCache.js';
 import {
   PUBLIC_ACTIONS, USERNAME_PATTERN, MIN_PASSWORD_LENGTH, registrationAllowed,
   hashPassword, verifyPassword, getSessionSecret, createSessionToken, sessionUser,
@@ -131,6 +133,23 @@ async function setKey(key: string, value: unknown): Promise<void> {
     if (previous === undefined) store.delete(key); else store.set(key, previous);
     throw e;
   }
+}
+
+// Where dictionary lookups are kept: Redis, a file on the VPS, or nowhere
+// (Vercel without cloud storage).
+let fileLookups: { file: string; store: LookupStore } | null = null;
+function lookupStore(): LookupStore | null {
+  const kv = kvConfig();
+  if (kv) {
+    return {
+      get: async key => { const result = await kvCommand(kv, ['GET', key]); return result ? JSON.parse(result) : null; },
+      set: async (key, value) => { await kvCommand(kv, ['SET', key, JSON.stringify(value), 'EX', Math.round(LOOKUP_TTL_MS / 1000)]); },
+    };
+  }
+  if (process.env.VERCEL) return null;
+  const file = path.join(dataDir(), '.lookup_cache.json');
+  if (fileLookups?.file !== file) fileLookups = { file, store: fileLookupStore(file) };
+  return fileLookups.store;
 }
 
 const getUser = (username: string): Promise<any | null> => getKey(getUserKey(username));
@@ -443,7 +462,8 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         const { term } = payload;
         if (!term || typeof term !== 'string') return res.status(400).json({ error: 'term is required.' });
         if (term.length > 100) return res.status(400).json({ error: 'term is too long.' });
-        return res.status(200).json(await freeEnrich(term, undefined, payload.onlyIfFound === true));
+        const onlyIfFound = payload.onlyIfFound === true;
+        return res.status(200).json(await cachedEnrich(term, lookupStore(), () => freeEnrich(term, undefined, onlyIfFound)));
       }
 
       case 'free-translate': {
@@ -560,7 +580,7 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
           // Texts moved out of the record are saved before the record
           // without them, so a failure in between loses nothing.
           for (const text of chapterTexts) {
-            if (!(await getKey(chapterKey(signedInUser!, text.id)))) await setKey(chapterKey(signedInUser!, text.id), text);
+            if (!(await getKey(chapterKey(signedInUser!, text.id)))) await setKey(chapterKey(signedInUser!, text.id), packChapter(text));
           }
           // A device that knows another database, or a later rev than this
           // one has, starts over from the beginning.
@@ -577,7 +597,8 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         return res.status(200).json(result);
       }
 
-      // A chapter's text is saved once under its own key; it never changes.
+      // A chapter's text is saved once under its own key, compressed; it
+      // never changes.
       case 'chapter-put': {
         const { id, sourceId, chunks } = payload;
         if (typeof id !== 'string' || !CHAPTER_ID.test(id) || typeof sourceId !== 'string' || !CHAPTER_ID.test(sourceId)) {
@@ -585,7 +606,7 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         }
         if (!Array.isArray(chunks) || chunks.some((c: unknown) => typeof c !== 'string')) return res.status(400).json({ error: 'chunks must be a list of texts.' });
         if (chunks.reduce((n: number, c: string) => n + c.length, 0) > MAX_CHAPTER_CHARS) return res.status(413).json({ error: 'This chapter is too long to save.' });
-        await setKey(chapterKey(signedInUser!, id), { id, sourceId, chunks });
+        await setKey(chapterKey(signedInUser!, id), packChapter({ id, sourceId, chunks }));
         return res.status(200).json({ ok: true });
       }
 
@@ -594,7 +615,7 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         if (typeof id !== 'string' || !CHAPTER_ID.test(id)) return res.status(400).json({ error: 'A chapter id is required.' });
         const text = await getKey(chapterKey(signedInUser!, id));
         if (!text) return res.status(404).json({ error: 'This chapter is not on the server yet. Open the app on the device that added it.' });
-        return res.status(200).json(text);
+        return res.status(200).json(unpackChapter(text));
       }
 
       // The page of an article link, read by the browser into plain text.

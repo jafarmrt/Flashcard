@@ -10,6 +10,7 @@ import { aiOrigin, dictionaryOrigin } from './aiSettings';
 import { extractWithFreeDictionaries } from './freeExtractionService';
 import { DEFAULT_CHUNK_WORDS, findSentence, splitIntoChunks } from './textChunker';
 import { existingTermsInText, markExisting, mergeExtracted, normalizeTerm } from './vocabMerge';
+import { isKnownTerm, knownFormsInText } from './knownWords';
 
 export type ExtractionSource = 'ai' | 'free';
 
@@ -26,6 +27,7 @@ export interface LongTextExtractionParams {
   perSection: number; // items to extract from each section
   source: ExtractionSource;
   existingFronts: string[];
+  knownTerms?: string[]; // the "I know it" list: never suggested, in any form
   includeGrammar?: boolean;
   aiOptions?: AiRequestOptions;
   chunkWords?: number;
@@ -53,7 +55,7 @@ export const isPermanentAiError = (error: unknown) =>
 
 export const extractFromLongText = async (params: LongTextExtractionParams): Promise<LongTextExtractionResult> => {
   const {
-    text, level, perSection, source, existingFronts, includeGrammar = true, aiOptions, signal, onProgress,
+    text, level, perSection, source, existingFronts, knownTerms = [], includeGrammar = true, aiOptions, signal, onProgress,
     chunkWords = DEFAULT_CHUNK_WORDS,
     extractAi = extractVocabularyFromText,
     extractFree = extractWithFreeDictionaries,
@@ -69,10 +71,11 @@ export const extractFromLongText = async (params: LongTextExtractionParams): Pro
 
   // Terms found in earlier sections are excluded from later ones too.
   const known = new Set(existingFronts.map(normalizeTerm));
+  const userKnows = new Set(knownTerms.map(normalizeTerm));
 
   for (const section of sections) {
     if (signal?.aborted) break;
-    const exclude = existingTermsInText(section, known);
+    const exclude = [...existingTermsInText(section, known), ...knownFormsInText(section, userKnows)];
     let found: ExtractedWordCard[] = [];
     let byAi = false;
 
@@ -102,6 +105,7 @@ export const extractFromLongText = async (params: LongTextExtractionParams): Pro
 
     const origin = byAi ? aiOrigin(aiOptions) : dictionaryOrigin();
     for (const card of found) {
+      if (card.kind !== 'grammar' && isKnownTerm(card.front, userKnows)) continue;
       collected.push({ ...card, origin: card.origin || origin, sourceSentence: card.sourceSentence || findSentence(section, card.front) });
       known.add(normalizeTerm(card.front));
     }
