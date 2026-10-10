@@ -3,6 +3,7 @@ import { Flashcard, Deck } from '../types';
 import { fetchAudioData } from '../services/dictionaryService';
 import { CardPlace, originText } from '../services/library';
 import { fa, Icon } from './common/ui';
+import { isLeech, lacksExtras } from '../services/cardExtras';
 
 interface FlashcardListProps {
   cards: Flashcard[];
@@ -15,6 +16,9 @@ interface FlashcardListProps {
   onStopAutoFix: () => void;
   autoFixProgress: { current: number, total: number } | null;
   places?: Map<string, CardPlace[]>; // where each card was met while reading
+  onFillExtras?: (cards: Flashcard[]) => void; // synonyms, word family… for the cards that lack them
+  extrasProgress?: { current: number, total: number } | null;
+  onStopFillExtras?: () => void;
 }
 
 const EditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>;
@@ -65,7 +69,8 @@ const CardSource: React.FC<{ places?: CardPlace[]; origin: string | null }> = ({
 
 const control = 'block w-full min-h-[44px] rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-ink dark:text-white focus:border-brand-500 focus:outline-none';
 
-const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onDelete, onBackToDecks, onCompleteCard, onAutoFixAll, onStopAutoFix, autoFixProgress, places }) => {
+const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onDelete, onBackToDecks, onCompleteCard, onAutoFixAll, onStopAutoFix, autoFixProgress, places, onFillExtras, extrasProgress, onStopFillExtras }) => {
+  const [show, setShow] = useState<'all' | 'leech' | 'no-extras'>('all');
   const [sortKey, setSortKey] = useState<string>('front-asc');
   const [selectedDeckId, setSelectedDeckId] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -84,6 +89,9 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
         result = result.filter(card => card.deckId === selectedDeckId);
     }
 
+    if (show === 'leech') result = result.filter(isLeech);
+    else if (show === 'no-extras') result = result.filter(lacksExtras);
+
     // 2. Search Filter
     if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
@@ -94,7 +102,10 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
     }
 
     return result;
-  }, [cards, selectedDeckId, searchQuery]);
+  }, [cards, selectedDeckId, searchQuery, show]);
+
+  const leechCount = useMemo(() => cards.filter(isLeech).length, [cards]);
+  const missingExtras = useMemo(() => cards.filter(lacksExtras), [cards]);
 
   const sortedCards = useMemo(() => {
     let sortableCards = [...filteredCards];
@@ -131,7 +142,7 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
   // Reset page when filters change
   useMemo(() => {
       setCurrentPage(1);
-  }, [selectedDeckId, searchQuery, sortKey]);
+  }, [selectedDeckId, searchQuery, sortKey, show]);
 
 
   const playAudio = async (audioUrl: string, e: React.MouseEvent) => {
@@ -187,14 +198,32 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                     <StopIcon /> توقف ({fa(autoFixProgress.current)} از {fa(autoFixProgress.total)})
                  </button>
             ) : (
-                <button onClick={onAutoFixAll} title="جزئیات ناقص همهٔ کارت‌ها پر شود"
+                <button onClick={onAutoFixAll} disabled={!!extrasProgress} title="جزئیات ناقص همهٔ کارت‌ها پر شود"
                     className="inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 transition-colors shrink-0">
                     <MagicWandIcon /> تکمیل خودکار همه
                 </button>
             )}
         </header>
 
-        <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto_auto] gap-2">
+        {onFillExtras && (extrasProgress || missingExtras.length > 0) && (
+            <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-white dark:bg-slate-800 p-4">
+                <p className="flex-1 min-w-[12rem] text-sm text-ink dark:text-slate-200">
+                    {extrasProgress
+                        ? <>در حال افزودن هم‌معنی‌ها، اشتباه رایج، سبک و خانوادهٔ واژه: {fa(extrasProgress.current)} از {fa(extrasProgress.total)}</>
+                        : <>{fa(missingExtras.length)} کارت هنوز هم‌معنی، اشتباه رایج، سبک و خانوادهٔ واژه ندارد.</>}
+                </p>
+                {extrasProgress ? (
+                    <button type="button" onClick={onStopFillExtras} className="inline-flex items-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold text-white bg-red-600 hover:bg-red-700"><StopIcon /> توقف</button>
+                ) : (
+                    <button type="button" onClick={() => onFillExtras(missingExtras)} disabled={!!autoFixProgress}
+                        className="inline-flex items-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold text-brand-700 dark:text-brand-200 bg-brand-50 dark:bg-brand-900/40 hover:bg-brand-100 disabled:opacity-50">
+                        <MagicWandIcon /> افزودن با هوش مصنوعی
+                    </button>
+                )}
+            </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-2">
             <div className="relative">
                 <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
                     <SearchIcon />
@@ -211,6 +240,11 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
             </div>
 
             <div className="grid grid-cols-2 sm:contents gap-2">
+                <select id="show-filter" aria-label="نمایش" value={show} onChange={e => setShow(e.target.value as typeof show)} className={`${control} px-3 min-w-0 sm:w-auto col-span-2 sm:col-span-1`}>
+                    <option value="all">همهٔ کارت‌ها</option>
+                    <option value="leech">کارت‌های سمج ({fa(leechCount)})</option>
+                    <option value="no-extras">بدون هم‌معنی و خانواده ({fa(missingExtras.length)})</option>
+                </select>
                 <select id="deck-filter" aria-label="دسته" value={selectedDeckId} onChange={e => setSelectedDeckId(e.target.value)} className={`${control} px-3 min-w-0 sm:w-auto`}>
                     <option value="all">همهٔ دسته‌ها</option>
                     {decks.map(deck => <option key={deck.id} value={deck.id}>{deck.name}</option>)}
@@ -243,6 +277,7 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                                 {deckName
                                     ? <span dir="auto" title={deckName} className="font-en bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-full truncate max-w-[8rem] shrink-0">{deckName}</span>
                                     : <span className="bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-full shrink-0">دستهٔ نامعلوم</span>}
+                                {isLeech(card) && <span title={`${fa(card.lapses || 0)} بار فراموش شده`} className="shrink-0 rounded-full bg-rose-50 text-rose-900 dark:bg-rose-900/30 dark:text-rose-100 px-2 py-0.5 text-[11px]">سمج</span>}
                                 <MissingInfoIndicator card={card} />
                             </div>
                             <CardSource places={places?.get(card.id)} origin={originText(card.origin)} />

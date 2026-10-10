@@ -3,7 +3,8 @@
 // the card again, then show what would change next to what the card says now.
 // Nothing is replaced until the user picks the fields to take.
 
-import type { CardOrigin, CefrLevel, Collocation, Flashcard, Settings } from '../types';
+import type { CardOrigin, CefrLevel, Collocation, Flashcard, Settings, Synonym, WordFamilyMember } from '../types';
+import { EXTRA_NAMES, extrasPromptLines, familyText, parseExtras, synonymsText } from './cardExtras';
 import type { AiRequestOptions } from './geminiService';
 import { parseJsonFromAiResponse } from './geminiService';
 import { aiGenerate } from './aiClient';
@@ -17,7 +18,8 @@ import { CEFR, levelOfFrequency } from './wordLevel';
 // The parts of a card a source can fill again.
 export type RefreshField =
   | 'back' | 'notes' | 'pronunciation' | 'partOfSpeech' | 'definition' | 'exampleSentenceTarget'
-  | 'collocations' | 'audioSrc' | 'level' | 'grammarPattern' | 'practicePrompt';
+  | 'collocations' | 'audioSrc' | 'level' | 'grammarPattern' | 'practicePrompt'
+  | 'synonyms' | 'commonMistake' | 'register' | 'wordFamily' | 'wordRoot';
 
 export const FIELD_NAMES: Record<RefreshField, string> = {
   back: 'معنی فارسی',
@@ -31,13 +33,15 @@ export const FIELD_NAMES: Record<RefreshField, string> = {
   level: 'سطح',
   grammarPattern: 'ساختار گرامری',
   practicePrompt: 'تمرین جمله‌سازی',
+  ...EXTRA_NAMES,
 };
 
-const FIELD_ORDER: RefreshField[] = ['back', 'notes', 'grammarPattern', 'practicePrompt', 'pronunciation', 'partOfSpeech', 'level', 'definition', 'exampleSentenceTarget', 'collocations', 'audioSrc'];
+const FIELD_ORDER: RefreshField[] = ['back', 'notes', 'grammarPattern', 'practicePrompt', 'pronunciation', 'partOfSpeech', 'level', 'definition', 'exampleSentenceTarget', 'collocations', 'commonMistake', 'register', 'synonyms', 'wordFamily', 'wordRoot', 'audioSrc'];
 
 export type CardContent = Pick<Flashcard, 'front' | 'back'> & Partial<Pick<Flashcard,
   'notes' | 'pronunciation' | 'partOfSpeech' | 'definition' | 'exampleSentenceTarget' | 'collocations' | 'audioSrc'
-  | 'level' | 'grammarPattern' | 'practicePrompt' | 'kind' | 'sourceSentence' | 'origin'>>;
+  | 'level' | 'grammarPattern' | 'practicePrompt' | 'kind' | 'sourceSentence' | 'origin'
+  | 'synonyms' | 'commonMistake' | 'register' | 'wordFamily' | 'wordRoot'>>;
 
 export type CardProposal = Partial<Pick<Flashcard, RefreshField>> & { origin: CardOrigin };
 
@@ -91,6 +95,7 @@ ${grammar ? `- "pattern": the structure as a short formula, e.g. "had + past par
 - "partOfSpeech": noun, verb, adjective, adverb, phrasal verb, idiom…
 - "level": its CEFR level, one of A1 A2 B1 B2 C1 C2
 - "collocations": up to 4 common expressions with it, each {"phrase": English, "meaning": Persian}
+${extrasPromptLines()}
 `}- "definitions": 1 or 2 short English definitions
 - "examples": 2 short natural English example sentences`;
 };
@@ -99,7 +104,7 @@ const text = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
 const texts = (v: unknown, max: number): string[] =>
   (Array.isArray(v) ? v : typeof v === 'string' ? [v] : []).map(text).filter(Boolean).slice(0, max);
 
-export const parseCardRefresh = (parsed: any, card: Pick<CardContent, 'kind'>): Omit<CardProposal, 'origin'> => {
+export const parseCardRefresh = (parsed: any, card: Pick<CardContent, 'kind'> & { front?: string }): Omit<CardProposal, 'origin'> => {
   const p = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
   const out: Omit<CardProposal, 'origin'> = {};
   const set = <K extends RefreshField>(key: K, value: Flashcard[K] | undefined) => {
@@ -123,6 +128,7 @@ export const parseCardRefresh = (parsed: any, card: Pick<CardContent, 'kind'>): 
       .filter((c: Collocation) => c.phrase)
       .slice(0, 4);
     set('collocations', collocations);
+    Object.assign(out, parseExtras(p, card.front || ''));
   }
   return out;
 };
@@ -193,6 +199,8 @@ export const refreshErrorText = (error: unknown, source: RefreshSource): string 
 
 export const shownValue = (field: RefreshField, value: unknown): string => {
   if (value === undefined || value === null) return '';
+  if (field === 'synonyms') return synonymsText(value as Synonym[]);
+  if (field === 'wordFamily') return familyText(value as WordFamilyMember[]);
   if (field === 'collocations') return (value as Collocation[]).map(c => (c.meaning ? `${c.phrase} = ${c.meaning}` : c.phrase)).join('\n');
   if (Array.isArray(value)) return value.map(String).join('\n');
   return String(value).trim();
