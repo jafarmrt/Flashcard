@@ -320,7 +320,14 @@ const App: React.FC = () => {
     }
 
     if (!isLoggedIn) {
-        return <AuthView onLogin={handleLogin} onRegister={handleRegister} isLoading={authLoading} />
+        // The toast carries sign-in errors (wrong password, registration
+        // closed, server trouble), so it must show on this screen too.
+        return (
+            <>
+                <AuthView onLogin={handleLogin} onRegister={handleRegister} isLoading={authLoading} />
+                {toastMessage && <Toast message={toastMessage} />}
+            </>
+        );
     }
 
     // New screens are Persian (right to left); the older screens keep their
