@@ -19,6 +19,7 @@ import {
 } from '../services/syncClient';
 import { isDue, isNewCard } from '../services/srsService';
 import { applyIncomingSettings, toSyncedSettings } from '../services/settingsSync';
+import { applyServerKeys, localKeyEntries, stampKeyChanges } from '../services/keySync';
 import { convertToCSV, downloadCSV, parseCollocations, parseCSV, parseKind, splitList } from '../services/csvService';
 import { freeEnrich, FreeEnrichment } from '../services/freeExtractionService';
 import { 
@@ -437,12 +438,23 @@ export const useAppLogic = () => {
       await handleGoalUpdate('STREAK', newStreak);
   };
 
-  // Take settings changed on another device, keeping this device's AI key.
+  // Take settings changed on another device; the keys come apart (syncKeys).
   const adoptCloudSettings = (incoming?: Partial<Settings>) => {
     const merged = applyIncomingSettings(readSavedSettings(), incoming);
     if (!merged) return;
     localStorage.setItem('appSettings', JSON.stringify(merged));
     setSettings({ ...defaultSettings, ...merged } as Settings);
+  };
+
+  // Send this device's AI and dictionary keys and take the account's, so a
+  // key typed on one device works on all of them.
+  const syncKeys = async () => {
+    const response = await callProxy('keys-sync', { keys: localKeyEntries(readSavedSettings()) });
+    const change = applyServerKeys(readSavedSettings(), response?.keys);
+    if (!change) return;
+    const merged = { ...readSavedSettings(), ...change };
+    localStorage.setItem('appSettings', JSON.stringify(merged));
+    setSettings(prev => ({ ...prev, ...change }));
   };
 
   const handleSync = async () => {
@@ -510,6 +522,7 @@ export const useAppLogic = () => {
     try {
         let state: SyncState = usableSyncState((await db.meta.get('sync'))?.value, user);
         if (options.pullOnly) state = markAllSynced(freshSyncState(user), await readLocal());
+        await syncKeys();
         await uploadChapterTexts();
 
         let needPull = true;
@@ -700,7 +713,10 @@ export const useAppLogic = () => {
           if (isLoggedIn) fetchData();
       }
       setSettings(prev => {
-          const updated = { ...prev, ...newSettings };
+          const updated: Settings = { ...prev, ...newSettings };
+          // A key typed or removed here is stamped, so it wins on the other devices.
+          const keyStamps = stampKeyChanges(prev, updated);
+          if (keyStamps) updated.keyStamps = keyStamps;
           localStorage.setItem('appSettings', JSON.stringify(updated));
           return updated;
       })

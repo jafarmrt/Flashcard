@@ -133,7 +133,7 @@ const AiProviders: React.FC<{ settings: Settings; onUpdateSettings: (s: Partial<
     return (
         <div className="px-5 pb-5 flex flex-col gap-3">
             <p className="text-sm text-ink-muted dark:text-slate-400">
-                از بالا به پایین امتحان می‌شوند: اگر سهمیهٔ رایگان اولی تمام شود یا کلیدش خطا بدهد، سراغ بعدی می‌رود و در آخر دیکشنری رایگان. کلیدها فقط روی همین دستگاه می‌مانند.
+                از بالا به پایین امتحان می‌شوند: اگر سهمیهٔ رایگان اولی تمام شود یا کلیدش خطا بدهد، سراغ بعدی می‌رود و در آخر دیکشنری رایگان. کلیدها با حسابت رمزنگاری‌شده روی سرور نگه داشته می‌شوند؛ یک بار وارد کنی، روی هر دستگاهی که با همین حساب وارد شوی کار می‌کنند.
             </p>
             <ol className="flex flex-col gap-2">
                 {list.map((entry, i) => {
@@ -208,7 +208,7 @@ const AiProviders: React.FC<{ settings: Settings; onUpdateSettings: (s: Partial<
 type DictDraft = Partial<Record<DictionaryKeyId, string>>;
 
 // The dictionaries, in the order they are tried: the first that knows a term
-// gives its meaning, pronunciation and examples. Keys stay on this device.
+// gives its meaning, pronunciation and examples. Keys follow the account.
 const Dictionaries: React.FC<{ settings: Settings; onUpdateSettings: (s: Partial<Settings>) => void }> = ({ settings, onUpdateSettings }) => {
     const list = dictionaryList(settings);
     const [open, setOpen] = useState<string | null>(null);
@@ -254,7 +254,7 @@ const Dictionaries: React.FC<{ settings: Settings; onUpdateSettings: (s: Partial
     return (
         <div className="px-5 pb-5 flex flex-col gap-3">
             <p className="text-sm text-ink-muted dark:text-slate-400">
-                برای پر کردن کارت و نگاه کردن واژه، از بالا به پایین پرسیده می‌شوند و اولین دیکشنری‌ای که واژه را بشناسد جواب می‌دهد. Wiktionary فعل‌های عبارتی، ایدیوم‌ها و اسلنگ را هم دارد. کلیدها فقط روی همین دستگاه می‌مانند.
+                برای پر کردن کارت و نگاه کردن واژه، از بالا به پایین پرسیده می‌شوند و اولین دیکشنری‌ای که واژه را بشناسد جواب می‌دهد. Wiktionary فعل‌های عبارتی، ایدیوم‌ها و اسلنگ را هم دارد. کلیدها با حسابت رمزنگاری‌شده روی سرور نگه داشته می‌شوند؛ یک بار وارد کنی، روی هر دستگاهی که با همین حساب وارد شوی کار می‌کنند.
             </p>
             <ol className="flex flex-col gap-2">
                 {list.map((entry, i) => {

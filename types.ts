@@ -142,7 +142,7 @@ export interface DictionaryEntrySetting {
 export interface Settings {
     theme: 'light' | 'dark' | 'system';
     dictionaries?: DictionaryEntrySetting[]; // the order they are tried in
-    dictKeys?: Partial<Record<import('./services/dictionaryCatalog').DictionaryKeyId, string>>; // never leaves this device
+    dictKeys?: Partial<Record<import('./services/dictionaryCatalog').DictionaryKeyId, string>>; // kept with the account, encrypted (services/keySync)
     extractKinds?: CardKind[]; // what extraction looks for in a text; all when unset
     bulkAddConcurrency?: number;
     bulkAddAiTimeout?: number;
@@ -152,7 +152,8 @@ export interface Settings {
     customApiKey?: string;
     aiModel?: string;
     aiProviders?: AiProviderSetting[]; // the order they are tried in; replaces aiProvider/aiBaseUrl/aiModel
-    aiKeys?: Partial<Record<AiProviderId, string>>; // never leaves this device; replaces customApiKey
+    aiKeys?: Partial<Record<AiProviderId, string>>; // kept with the account, encrypted (services/keySync); replaces customApiKey
+    keyStamps?: Partial<Record<import('./services/keySync').KeyId, number>>; // when each key was last changed on this device
     userLevel?: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2' | 'IELTS' | 'TOEFL';
     extractionSource?: 'ai' | 'free';
     dailyReviewGoal?: number; // reviews per day for the daily goal

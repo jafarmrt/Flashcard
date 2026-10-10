@@ -1,7 +1,7 @@
 // File: /services/dictSettings.ts
 // The saved settings turned into what every dictionary request carries: the
-// dictionaries switched on, in the user's order, and the keys typed on this
-// device (they stay here, like the AI keys, and are not synced).
+// dictionaries switched on, in the user's order, and the keys (kept with the
+// account like the AI keys, services/keySync).
 //
 // Lookups happen in many places (the reader, the card editor, bulk add,
 // extraction), so the app hands the current settings over once
