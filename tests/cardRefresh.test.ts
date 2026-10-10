@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyProposal, buildCardRefreshPrompt, parseCardRefresh, parseCollocations, proposalChanges, refreshErrorText,
-  refreshSources, refreshWithAi, shownValue, withEditedContent, type CardProposal,
+  refreshSources, refreshWithAi, shownValue, withEditedContent, type CardContent, type CardProposal,
 } from '../services/cardRefresh';
 import { originText } from '../services/library';
 import type { Flashcard, Settings } from '../types';
@@ -113,7 +113,7 @@ test('only fields where the source says something new are shown, meaning first',
 });
 
 test('taking fields changes only those; taking the meaning makes the card the source\'s', () => {
-  const before = { front: 'bank', back: 'بانک', notes: 'old', origin: { by: 'dictionary' as const } };
+  const before: CardContent = { front: 'bank', back: 'بانک', notes: 'old', origin: { by: 'dictionary' } };
   const some = applyProposal(before, proposal, ['pronunciation', 'collocations']);
   assert.equal(some.back, 'بانک');
   assert.equal(some.notes, 'old');

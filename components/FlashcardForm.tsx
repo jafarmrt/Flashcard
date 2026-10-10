@@ -169,7 +169,8 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
       };
       setFormData(data);
       showLists(data);
-      if (initialDeckName) setDeckName(initialDeckName);
+      // A card whose deck is gone asks for one rather than moving to the default.
+      setDeckName(initialDeckName || '');
     } else {
       setFormData(EMPTY);
       showLists(EMPTY);

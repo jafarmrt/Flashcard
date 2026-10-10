@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useEffect, useMemo } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useRef } from 'react';
 import { useAppLogic, View, HealthStatus } from './hooks/useAppLogic';
 
 import { Flashcard, Deck } from './types';
@@ -95,6 +95,7 @@ const App: React.FC = () => {
     const knownTerms = useMemo(() => Array.from(knownTermSet(knownWords)), [knownWords]);
     const visibleDecks = decks.filter(d => !d.isDeleted);
     const cardSources = useMemo(() => refreshSources(settings), [settings]);
+    const backdropPress = useRef(false);
     const dueCards = visibleFlashcards.filter(c => isDue(c));
     const health = [
         { label: 'DB', status: dbStatus },
@@ -382,7 +383,10 @@ const App: React.FC = () => {
 
             {overlayEdit && (
                 <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 px-2 py-4 sm:p-8" role="dialog" aria-modal="true" aria-label="ویرایش کارت"
-                    onClick={e => { if (e.target === e.currentTarget) closeCardEditor(); }}>
+                    // Closes only on a click that starts and ends on the backdrop: a text
+                    // selection dragged out of the form must not throw the edits away.
+                    onPointerDown={e => { backdropPress.current = e.target === e.currentTarget; }}
+                    onClick={e => { if (backdropPress.current && e.target === e.currentTarget) closeCardEditor(); backdropPress.current = false; }}>
                     <FlashcardForm
                         card={overlayEdit.card}
                         decks={visibleDecks}
