@@ -57,7 +57,10 @@ export interface AiReply {
   used: AiRequestOptions; // the service that answered
 }
 
-type Send = (fields: Record<string, unknown>) => Promise<{ text?: string; candidates?: unknown }>;
+type Send = (fields: Record<string, unknown>) => Promise<{ text?: string; candidates?: unknown; model?: string; usage?: { input?: number; output?: number; cost?: number } }>;
+
+// Numbers the usage report adds up; anything else the server sent is dropped.
+const count = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined);
 const proxySend: Send = fields => callProxy('gemini-generate', fields);
 
 export async function aiGenerate(options: AiRequestOptions | undefined, body: AiRequestBody, task: AiTask, send: Send = proxySend): Promise<AiReply> {
@@ -66,12 +69,20 @@ export async function aiGenerate(options: AiRequestOptions | undefined, body: Ai
   for (const attempt of chain) {
     const service = providerName(attempt);
     try {
-      const response = await send({ ...providerFields(attempt), ...body });
-      logUsage({ service, task, ok: true });
+      const fields = providerFields(attempt);
+      const response = await send({ ...fields, ...body });
+      const usage = response?.usage;
+      const tokensIn = count(usage?.input);
+      const tokensOut = count(usage?.output);
+      const cost = count(usage?.cost);
+      logUsage({
+        service, task, ok: true, model: (typeof response?.model === 'string' && response.model) || fields.model,
+        ...(tokensIn !== undefined ? { tokensIn } : {}), ...(tokensOut !== undefined ? { tokensOut } : {}), ...(cost !== undefined ? { cost } : {}),
+      });
       return { text: response?.text || '', candidates: response?.candidates, used: attempt };
     } catch (error) {
       const message = (error as Error)?.message || 'request failed';
-      logUsage({ service, task, ok: false, status: error instanceof ProxyError ? error.status : undefined, error: message });
+      logUsage({ service, task, ok: false, model: providerFields(attempt).model, status: error instanceof ProxyError ? error.status : undefined, error: message });
       // No connection at all: the next service is not reachable either.
       if (!(error instanceof ProxyError)) throw error;
       failures.push({ service, error });

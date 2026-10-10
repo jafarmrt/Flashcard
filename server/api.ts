@@ -8,6 +8,7 @@ import { cleanDictionaryRequest, DEFAULT_DICTIONARY_ORDER, DICTIONARY_IDS, Dicti
 import { applyChanges, changesSince, upgradeStore } from './syncStore.js';
 import { fetchPublicPage, PageFetchError } from './pageFetch.js';
 import { packChapter, unpackChapter } from './chapterText.js';
+import { geminiUsage, listGeminiModels, listOpenAiModels, openAiUsage } from './aiModels.js';
 import { cachedEnrich, fileLookupStore, LookupStore } from './lookupCache.js';
 import {
   PUBLIC_ACTIONS, USERNAME_PATTERN, MIN_PASSWORD_LENGTH, registrationAllowed,
@@ -337,9 +338,12 @@ async function handleGeminiGenerate(payload: any, res: ProxyResponse, apiKey: st
   }
 
   const responseData = await geminiResponse.json();
+  const usage = geminiUsage(responseData);
   const adaptedResponse = {
     text: responseData.candidates?.[0]?.content?.parts?.[0]?.text || '',
     candidates: responseData.candidates,
+    model: responseData.modelVersion || model || 'gemini-2.5-flash',
+    ...(usage ? { usage } : {}),
   };
 
   return res.status(200).json(adaptedResponse);
@@ -383,6 +387,8 @@ async function handleOpenAiGenerate(payload: any, res: ProxyResponse, apiKey: st
   if (config?.responseMimeType === 'application/json' || config?.responseSchema) {
     requestBody.response_format = { type: 'json_object' };
   }
+  // OpenRouter says what each answer cost when asked.
+  if (new URL(endpoint).hostname.endsWith('openrouter.ai')) requestBody.usage = { include: true };
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -406,7 +412,8 @@ async function handleOpenAiGenerate(payload: any, res: ProxyResponse, apiKey: st
 
   const responseData = await apiResponse.json();
   const text = responseData.choices?.[0]?.message?.content || '';
-  return res.status(200).json({ text, candidates: responseData.choices });
+  const usage = openAiUsage(responseData);
+  return res.status(200).json({ text, candidates: responseData.choices, model: responseData.model || requestBody.model, ...(usage ? { usage } : {}) });
 }
 
 // --- PROXY ENDPOINT ---
@@ -492,6 +499,30 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
           config: {}
         };
         return await handleGeminiGenerate(testPayload, res, apiKey);
+      }
+
+      case 'list-models': {
+        // The models of one service, asked with the key typed on the device
+        // (Gemini: or the server's key).
+        const isCustomOpenAi = payload.aiProvider === 'openai-compatible' || payload.aiBaseUrl;
+        try {
+          if (isCustomOpenAi) {
+            let baseUrl: string;
+            try {
+              baseUrl = cleanAiBaseUrl(payload.aiBaseUrl);
+            } catch (e) {
+              return res.status(400).json({ error: (e as Error).message });
+            }
+            return res.status(200).json({ models: await listOpenAiModels(baseUrl, payload.customApiKey || '') });
+          }
+          const apiKey = payload.customApiKey || process.env.GEMINI_API_KEY || process.env.API_KEY;
+          if (!apiKey) return res.status(400).json({ error: 'Gemini: no API key.' });
+          return res.status(200).json({ models: await listGeminiModels(apiKey) });
+        } catch (e) {
+          const status = Number((e as { status?: number }).status) || 502;
+          const host = isCustomOpenAi ? (() => { try { return new URL(cleanAiBaseUrl(payload.aiBaseUrl)).hostname; } catch { return 'AI'; } })() : 'Gemini';
+          return res.status(status >= 400 && status < 600 ? status : 502).json({ error: aiErrorMessage(host, status, (e as Error).message || 'the model list could not be read') });
+        }
       }
 
       case 'dictionary-lookup': {
