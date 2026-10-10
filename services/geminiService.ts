@@ -7,6 +7,7 @@ import { callProxy } from './apiService';
 import { aiGenerate, providerFields } from './aiClient';
 import { aiOrigin } from './aiSettings';
 import { ruleForName } from './grammarPatterns';
+import { EXTRAS_SCHEMA_PROPERTIES, extrasPromptLines, hasExtras, parseExtras } from './cardExtras';
 
 export { providerFields };
 
@@ -295,7 +296,9 @@ CRITICAL INSTRUCTIONS:
    - "sourceSentence": the EXACT sentence of the text where the item appears, copied verbatim.
    - "exampleSentenceTarget": 1-2 NEW example sentences (not the source sentence).
    - "collocations": 3-5 other common expressions that use this item, each with "phrase" and its Persian "meaning" (e.g. for "decision": "make a decision", "tough decision"). Empty for grammar.
-   - "notes": a brief Persian memory aid, root explanation or usage tip (for slang: how informal it is and where it is used).${grammar ? `
+   - "notes": a brief Persian memory aid, root explanation or usage tip (for slang: how informal it is and where it is used).
+   For every item except grammar, also:
+${extrasPromptLines('     -')}${grammar ? `
    - For grammar only: "grammarPattern" (the form, e.g. "had + past participle") and "practicePrompt" (a short Persian instruction asking the student to write their own English sentence with this structure).` : ''}
 
 Input Text:
@@ -305,6 +308,10 @@ ${text}
 
 Return a JSON object containing a "words" array.`;
 };
+
+// Extras that came back are marked as asked, so the batch fill skips them.
+const withAskedAt = (extras: ReturnType<typeof parseExtras>) =>
+  hasExtras(extras) ? { ...extras, extrasAt: new Date().toISOString() } : extras;
 
 const toStringArray = (v: unknown): string[] =>
   Array.isArray(v) ? v.map(String).filter(Boolean) : (v ? [String(v)] : []);
@@ -343,6 +350,7 @@ export const parseExtractedItems = (parsed: any): ExtractedWordCard[] => {
           .filter((c: { phrase: string }) => c.phrase.trim()),
         grammarPattern: w.grammarPattern || undefined,
         practicePrompt: w.practicePrompt || undefined,
+        ...(kind !== 'grammar' ? withAskedAt(parseExtras(w, w.front.trim())) : {}),
         ...(kind !== 'grammar' && parseLevel(w.level) ? { level: parseLevel(w.level) } : {}),
         ...(kind === 'grammar' && ruleForName(String(w.front), w.grammarPattern) ? { grammarId: ruleForName(String(w.front), w.grammarPattern)!.id } : {}),
         selected: true,
@@ -391,6 +399,7 @@ export const extractVocabularyFromText = async (
                     },
                   },
                   notes: { type: 'STRING', description: 'Persian mnemonic or tip' },
+                  ...EXTRAS_SCHEMA_PROPERTIES,
                   grammarPattern: { type: 'STRING', description: 'Grammar only: the form' },
                   practicePrompt: { type: 'STRING', description: 'Grammar only: Persian practice instruction' },
                 },

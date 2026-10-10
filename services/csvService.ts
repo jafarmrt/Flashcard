@@ -1,5 +1,6 @@
 import { Collocation, Flashcard, Deck, CardKind } from '../types';
 import { CARD_KINDS } from './cardKinds';
+import { familyText, synonymsText } from './cardExtras';
 
 // Columns of an export. Lists are joined with "; ", collocations as
 // "phrase = meaning". Older exports have only the first eight columns.
@@ -8,6 +9,7 @@ const HEADERS = [
   'definition', 'exampleSentenceTarget', 'notes',
   'kind', 'sourceSentence', 'collocations', 'grammarPattern', 'practicePrompt',
   'level', 'grammarId',
+  'synonyms', 'commonMistake', 'register', 'wordFamily', 'wordRoot',
 ] as const;
 
 const escapeCSV = (value: string | string[] | undefined): string => {
@@ -35,6 +37,11 @@ export const convertToCSV = (cards: Flashcard[], decks: Deck[]): string => {
       practicePrompt: card.practicePrompt,
       level: card.level,
       grammarId: card.grammarId,
+      synonyms: card.synonyms?.length ? synonymsText(card.synonyms, '; ') : undefined,
+      commonMistake: card.commonMistake,
+      register: card.register,
+      wordFamily: card.wordFamily?.length ? familyText(card.wordFamily, '; ') : undefined,
+      wordRoot: card.wordRoot,
     };
     return HEADERS.map(header => escapeCSV(rowData[header])).join(',');
   });
