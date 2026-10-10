@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AiProviderId, AiProviderSetting, CardKind, DictionaryEntrySetting, Settings } from '../types';
 import { dictionaryKey, dictionaryList, dictionaryNote } from '../services/dictSettings';
 import { DictionaryId, DictionaryKeyId, dictionaryInfo } from '../services/dictionaryCatalog';
@@ -8,6 +8,7 @@ import { AI_PROVIDERS, providerInfo, providerKey, providerList, providerOptions,
 import { testAiConnection } from '../services/geminiService';
 import { fa, Icon } from './common/ui';
 import { ModelPicker } from './ModelPicker';
+import { AI_VOICES, aiSpeech, DEFAULT_SPEECH_MODEL, speechModel, speechVoice } from '../services/aiSpeech';
 
 interface SettingsViewProps {
     settings: Settings;
@@ -361,6 +362,68 @@ const LEVELS: { value: NonNullable<Settings['userLevel']>; label: string }[] = [
     { value: 'TOEFL', label: 'TOEFL' },
 ];
 
+// Reading aloud: the device's voice, or an AI voice (Gemini; its key or the
+// server's). The voice can be heard before it is chosen.
+const ReadAloudSettings: React.FC<{ settings: Settings; onUpdateSettings: (s: Partial<Settings>) => void }> = ({ settings, onUpdateSettings }) => {
+    const [model, setModel] = useState(settings.aiSpeechModel || '');
+    const [test, setTest] = useState<{ busy?: boolean; error?: string; ok?: boolean }>({});
+    const player = useRef<{ audio: HTMLAudioElement; url?: string } | null>(null);
+    const listen = async () => {
+        setTest({ busy: true });
+        // Made and started inside the tap, so phones let it play once the
+        // audio arrives.
+        if (!player.current) {
+            const audio = new Audio();
+            audio.play().catch(() => undefined);
+            player.current = { audio };
+        }
+        const p = player.current;
+        try {
+            const blob = await aiSpeech('Reading every day is the easiest way to learn new words.', settings);
+            if (p.url) URL.revokeObjectURL(p.url);
+            p.url = URL.createObjectURL(blob);
+            p.audio.src = p.url;
+            setTest({ ok: true });
+            await p.audio.play().catch(() => undefined); // the voice was made even if this device would not play it
+        } catch (e) {
+            setTest({ error: (e as Error)?.message || 'failed' });
+        }
+    };
+    useEffect(() => () => { player.current?.audio.pause(); if (player.current?.url) URL.revokeObjectURL(player.current.url); }, []);
+    return (
+        <>
+            <Row title="صدای خواندن بلند" hint="صدای دستگاه رایگان و بی‌اینترنت است؛ صدای هوش مصنوعی (Gemini) طبیعی‌تر است و با کلید Gemini تو (یا کلید سرور) کار می‌کند. اگر جواب ندهد، صدای دستگاه ادامه می‌دهد.">
+                <Segmented label="صدای خواندن بلند" value={settings.readAloudVoice === 'ai' ? 'ai' : 'device'} onChange={v => onUpdateSettings({ readAloudVoice: v })}
+                    options={[{ value: 'device', label: 'صدای دستگاه' }, { value: 'ai', label: 'هوش مصنوعی' }]} />
+            </Row>
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-700 flex flex-col gap-3">
+                <h3 className="font-bold text-ink dark:text-white">صدای هوش مصنوعی</h3>
+                <div className="flex flex-wrap items-end gap-3">
+                    <label className="flex flex-col gap-1 text-sm">
+                        <span className="text-ink-muted dark:text-slate-400">گوینده</span>
+                        <select value={speechVoice(settings)} onChange={e => { onUpdateSettings({ aiSpeechVoice: e.target.value }); setTest({}); }}
+                            className="min-h-[40px] px-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm">
+                            {AI_VOICES.map(v => <option key={v.id} value={v.id}>{v.id} · {v.label}</option>)}
+                        </select>
+                    </label>
+                    <label className="flex flex-col gap-1 text-sm flex-1 min-w-[12rem]">
+                        <span className="text-ink-muted dark:text-slate-400">مدل</span>
+                        <input dir="ltr" value={model} placeholder={DEFAULT_SPEECH_MODEL} aria-label="مدل صدای هوش مصنوعی"
+                            onChange={e => setModel(e.target.value)}
+                            onBlur={() => { if (model.trim() !== (settings.aiSpeechModel || '')) { onUpdateSettings({ aiSpeechModel: model.trim() || undefined }); setTest({}); } }}
+                            className={input} />
+                    </label>
+                    <button type="button" onClick={listen} disabled={test.busy} className={`${button} inline-flex items-center gap-2 disabled:opacity-60`}>
+                        <Icon.Speaker size={16} />{test.busy ? 'در حال ساختن صدا…' : 'شنیدن نمونه'}
+                    </button>
+                </div>
+                {test.ok && <p className="text-sm text-emerald-700 dark:text-emerald-300">صدا کار می‌کند (<bdi dir="ltr" className="font-en">{speechModel(settings)}</bdi>).</p>}
+                {test.error && <p role="alert" className="text-sm text-red-700 dark:text-red-300">صدا ساخته نشد: <bdi dir="ltr" className="font-en">{test.error}</bdi></p>}
+            </div>
+        </>
+    );
+};
+
 const SettingsView: React.FC<SettingsViewProps> = ({
     settings, onUpdateSettings, onExportCSV, onImportCSV, onResetApp, onDeleteAllCards, onNavigateToChangelog, onNavigateToAchievements,
     onNavigateToProfile, onNavigateToUsage, currentUser, onLogout,
@@ -404,6 +467,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                 <Row title="پیش‌خوانی خودکار" hint="پیش از هر بخش کتاب، واژه‌های سخت آن یک بار نشان داده شود.">
                     <input type="checkbox" checked={!!settings.preReadAuto} onChange={e => onUpdateSettings({ preReadAuto: e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="پیش‌خوانی خودکار" />
                 </Row>
+                <ReadAloudSettings settings={settings} onUpdateSettings={onUpdateSettings} />
                 <Row title="نشان دادن ساختارهای دستوری" hint="واژه‌هایی که یک ساختار دستوری می‌سازند، هنگام خواندن با نقطه‌چین مشخص شوند.">
                     <input type="checkbox" checked={!settings.hideGrammar} onChange={e => onUpdateSettings({ hideGrammar: !e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="نشان دادن ساختارهای دستوری" />
                 </Row>

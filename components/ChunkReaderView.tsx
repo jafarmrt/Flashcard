@@ -5,7 +5,7 @@ import { ProxyError } from '../services/apiService';
 import { aiOrigin, aiRequestOptions } from '../services/aiSettings';
 import { extractFromLongText, ExtractionSource, isPermanentAiError } from '../services/extractionPipeline';
 import { lemmaCandidates, tokensOf } from '../services/lemma';
-import { enrichmentToCard, freeEnrich, FreeEnrichment, freeTranslate } from '../services/freeExtractionService';
+import { enrichmentToCard, freeEnrich, FreeEnrichment } from '../services/freeExtractionService';
 import { cardsInText, isChunkOpen } from '../services/library';
 import { isKnownTerm, knownMatch } from '../services/knownWords';
 import { masteryStage } from '../services/masteryService';
@@ -16,6 +16,9 @@ import { explainInSentence, ruleCard, ruleIdsWithCards } from '../services/gramm
 import { normalizeTerm } from '../services/vocabMerge';
 import { isBelowLevel } from '../services/wordLevel';
 import { isSpeechSupported, speakText, stopSpeech } from '../services/ttsService';
+import { piecesOf, type ReadAloudVoice } from '../services/readAloud';
+import { translateText, type Translation } from '../services/translate';
+import { useReadAloud } from '../hooks/useReadAloud';
 import { CHUNK_COMPLETE_XP, isChestSection } from '../services/xpRules';
 import { fa, Icon } from './common/ui';
 import { Range, ReaderText } from './reader/ReaderText';
@@ -84,6 +87,10 @@ const MAX_SECTION_BUTTONS = 12;
 const PRE_READ_WORDS = 8;
 // The longest pick that gets a meaning; a longer one is a sentence.
 const MAX_PHRASE_WORDS = 8;
+// Words an AI voice reads in one request (about 35 s of speech); the first
+// piece is shorter so reading starts sooner.
+const AI_PIECE_WORDS = 90;
+const AI_FIRST_PIECE_WORDS = 35;
 
 // A tap on one of these words inside a grammar structure opens the
 // structure; a tap on any other word of it looks the word up.
@@ -115,7 +122,8 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   const [preRead, setPreRead] = useState<{ state: 'loading' | 'shown' | 'closed'; uids: string[] } | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [reading, setReading] = useState(false);
+  // Persian translations of paragraphs the reader asked for, by paragraph.
+  const [translations, setTranslations] = useState<Record<number, { loading?: boolean; result?: Translation; open?: boolean }>>({});
   const abortRef = useRef<AbortController | null>(null);
   const pending = useRef(new Set<string>());
   // An item merged into another (two forms of one word) points to it.
@@ -128,6 +136,20 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   const level = settings.userLevel || 'B2';
   const aiOptions = useMemo(() => aiRequestOptions(settings), [settings]);
   const useAi = source === 'ai';
+
+  // Reading aloud, sentence by sentence with the device's voice, or a few
+  // sentences at a time with an AI voice; a pause goes on from where it was.
+  // A device without speech of its own can only use the AI voice.
+  const voice: ReadAloudVoice = settings.readAloudVoice === 'ai' || !isSpeechSupported() ? 'ai' : 'device';
+  const pieces = useMemo(() => (voice === 'ai' ? piecesOf(section, AI_PIECE_WORDS, AI_FIRST_PIECE_WORDS) : piecesOf(section)), [section, voice]);
+  const readAloud = useReadAloud({
+    pieces, textKey: chunk, voice, settings,
+    onAiFailed: error => {
+      console.warn('AI voice failed:', error);
+      if (alive.current) showToast(`صدای هوش مصنوعی جواب نداد؛ با صدای دستگاه ادامه می‌دهم.${error instanceof Error && error.message ? ` ${ltr(error.message)}` : ''}`);
+    },
+  });
+  const readingPiece = readAloud.status !== 'idle' ? pieces[readAloud.index] : undefined;
 
   const batcher = useRef<SenseBatcher | null>(null);
   const optionsRef = useRef(aiOptions);
@@ -250,7 +272,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     if (isPermanentAiError(error)) aiOff.current = true;
     if (aiWarned.current || !alive.current) return;
     aiWarned.current = true;
-    showToast(`هوش مصنوعی جواب نداد؛ ${what === 'sense' ? 'معنی دیکشنری ماند' : what === 'explain' ? 'توضیح عمومی برنامه ماند' : 'دوباره امتحان کن'}.${error instanceof Error && error.message ? ` ${ltr(error.message)}` : ''}`);
+    showToast(`هوش مصنوعی جواب نداد؛ ${what === 'sense' ? 'معنی دیکشنری ماند' : what === 'explain' ? 'توضیح عمومی برنامه ماند' : what === 'translate' ? 'ترجمهٔ رایگان به جایش آمد' : 'دوباره امتحان کن'}.${error instanceof Error && error.message ? ` ${ltr(error.message)}` : ''}`);
   };
 
   // The AI's meaning in this sentence over the dictionary's. When the AI
@@ -416,7 +438,9 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     const range = selection;
     setBusy('translate');
     try {
-      const translation = await freeTranslate(sentencesOf(range));
+      const result = await translateText(sentencesOf(range), useAi && !aiOff.current, aiOptions);
+      if (result.aiError && result.text) aiFailed(new Error(result.aiError), 'translate');
+      const translation = result.text;
       if (!translation) showToast('ترجمه نیامد. کمی بعد دوباره امتحان کن.');
       else setSentenceResult(r => ({ ...(r?.range.from === range.from && r.range.to === range.to ? r : {}), range, translation }));
     } catch (error) {
@@ -550,10 +574,70 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     onComplete();
   };
 
-  const toggleReading = () => {
-    if (reading) { stopSpeech(); setReading(false); return; }
-    setReading(true);
-    speakText(chunk.replace(/\n+/g, ' '), { rate: 0.95, onEnd: () => setReading(false), onError: () => setReading(false) });
+  // Keeps the piece being read in view.
+  useEffect(() => {
+    if (!readAloud.active || !readingPiece) return;
+    const el = document.querySelector(`[data-wi="${readingPiece.from}"]`);
+    if (!el) return;
+    const box = el.getBoundingClientRect();
+    if (box.top < 80 || box.bottom > window.innerHeight - 80) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readAloud.index, readAloud.active]);
+
+  const translateParagraph = async (pi: number) => {
+    const now = translations[pi];
+    if (now?.loading) return;
+    if (now?.result) { setTranslations(t => ({ ...t, [pi]: { ...now, open: !now.open } })); return; }
+    const p = section.paragraphs[pi];
+    if (!p) return;
+    setTranslations(t => ({ ...t, [pi]: { loading: true } }));
+    try {
+      const result = await translateText(chunk.slice(p.start, p.end), useAi && !aiOff.current, aiOptions);
+      if (!alive.current) return;
+      if (result.aiError && result.text) aiFailed(new Error(result.aiError), 'translate');
+      if (!result.text) {
+        showToast('ترجمه نیامد. کمی بعد دوباره امتحان کن.');
+        setTranslations(t => { const { [pi]: _gone, ...rest } = t; return rest; });
+        return;
+      }
+      setTranslations(t => ({ ...t, [pi]: { result, open: true } }));
+    } catch (error) {
+      console.error('Translation failed:', error);
+      if (!alive.current) return;
+      showToast('ترجمه ناموفق بود. اتصال را بررسی کن.');
+      setTranslations(t => { const { [pi]: _gone, ...rest } = t; return rest; });
+    }
+  };
+
+  const paragraphFooter = (pi: number) => {
+    const t = translations[pi];
+    const firstPiece = pieces.findIndex(p => p.paragraph === pi);
+    const readingHere = !!readingPiece && readingPiece.paragraph === pi;
+    return (
+      <div dir="rtl" lang="fa" className="font-fa mt-1 flex flex-col gap-2">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+          {firstPiece >= 0 && !readingHere && (
+            <button type="button" onClick={() => readAloud.play(firstPiece)}
+              className="inline-flex items-center gap-1 min-h-[32px] text-ink-muted dark:text-slate-400 hover:text-brand-600 dark:hover:text-brand-300">
+              <Icon.Speaker size={14} />از اینجا بخوان
+            </button>
+          )}
+          <button type="button" onClick={() => translateParagraph(pi)} disabled={t?.loading} aria-expanded={!!t?.open}
+            className="inline-flex items-center gap-1 min-h-[32px] text-ink-muted dark:text-slate-400 hover:text-brand-600 dark:hover:text-brand-300 disabled:opacity-60">
+            <Icon.Translate size={14} />
+            {t?.loading ? 'در حال ترجمه…' : t?.open ? 'بستن ترجمه' : t?.result ? 'نشان دادن ترجمه' : 'ترجمهٔ این پاراگراف'}
+          </button>
+        </div>
+        {t?.result && t.open && (
+          <div className="rounded-xl bg-slate-50 dark:bg-slate-900/50 px-4 py-3 flex flex-col gap-1 select-text">
+            <p className="text-[15px] md:text-base leading-8 text-ink dark:text-slate-100 whitespace-pre-line">{t.result.text}</p>
+            <span className="text-[11px] text-ink-muted dark:text-slate-400">
+              {t.result.by === 'ai' ? <>ترجمهٔ هوش مصنوعی ({ltr(t.result.service || 'AI')})</> : 'ترجمهٔ رایگان (MyMemory)؛ ممکن است دقیق نباشد.'}
+            </span>
+          </div>
+        )}
+      </div>
+    );
   };
 
   // The open item stands out; other listed items are marked until they
@@ -565,7 +649,8 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     if (uid !== undefined && uid === detail?.uid) return `bg-brand-200 ring-2 ring-brand-500 dark:bg-brand-800${grammar}`;
     if (uid !== undefined && pendingUids.has(uid)) return `bg-amber-100 dark:bg-amber-900/50${grammar}`;
     const m = masteryAt[i];
-    return `${m ? MASTERY[m].underline : ''}${grammar}`;
+    const read = readingPiece && i >= readingPiece.from && i <= readingPiece.to ? ' bg-yellow-100 dark:bg-yellow-900/40' : '';
+    return `${m ? MASTERY[m].underline : ''}${grammar}${read}`;
   };
 
   // Where an item is in the text, to widen it into a phrase or a sentence.
@@ -698,10 +783,30 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
           )}
           <div className="flex flex-wrap justify-between items-center gap-2 text-xs text-ink-muted dark:text-slate-400">
             <span>روی واژه بزن تا معنی‌اش بیاید؛ برای عبارت یا جمله، روی چند واژه بکش (در موبایل: اول انگشت را نگه دار).</span>
-            {isSpeechSupported() && (
-              <button type="button" onClick={toggleReading} className="inline-flex items-center gap-1.5 min-h-[36px] px-3 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600">
-                <Icon.Speaker size={16} />{reading ? 'توقف' : 'خواندن بلند'}
+          </div>
+          <div role="group" aria-label="خواندن بلند" className="flex flex-wrap items-center gap-2 text-sm -mt-1">
+            <button type="button" onClick={readAloud.toggle}
+              className={`inline-flex items-center gap-1.5 min-h-[40px] px-4 rounded-xl font-bold text-white ${readAloud.active ? 'bg-amber-600 hover:bg-amber-700' : 'bg-brand-500 hover:bg-brand-600'}`}>
+              {readAloud.active ? <Icon.Pause size={16} /> : <Icon.Speaker size={16} />}
+              {readAloud.status === 'loading' ? 'آماده کردن صدا…' : readAloud.status === 'playing' ? 'مکث' : readAloud.status === 'paused' ? 'ادامهٔ خواندن' : 'خواندن بلند'}
+            </button>
+            {readAloud.status !== 'idle' && (
+              <button type="button" onClick={readAloud.stop} aria-label="توقف و برگشت به اول"
+                className="inline-flex items-center gap-1.5 min-h-[40px] px-3 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600">
+                <Icon.Stop size={14} />از اول
               </button>
+            )}
+            <div role="group" aria-label="صدای خواندن" className="flex p-1 rounded-xl bg-slate-100 dark:bg-slate-700">
+              {(['device', 'ai'] as ReadAloudVoice[]).map(v => (
+                <button key={v} type="button" aria-pressed={voice === v} onClick={() => onUpdateSettings({ readAloudVoice: v })}
+                  disabled={v === 'device' && !isSpeechSupported()}
+                  className={`min-h-[32px] px-3 rounded-lg text-xs disabled:opacity-40 ${voice === v ? 'bg-white dark:bg-slate-600 shadow-sm font-bold text-brand-700 dark:text-white' : 'text-ink-muted dark:text-slate-300'}`}>
+                  {v === 'device' ? 'صدای دستگاه' : 'صدای هوش مصنوعی'}
+                </button>
+              ))}
+            </div>
+            {readAloud.status !== 'idle' && readAloud.voice !== voice && (
+              <span className="text-xs text-amber-800 dark:text-amber-200">فعلاً با صدای دستگاه</span>
             )}
           </div>
           {(masteryShown.size > 0 || grammarFound.bySentence.some(ids => ids.length > 0)) && (
@@ -718,7 +823,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
               )}
             </p>
           )}
-          <ReaderText section={section} selection={selection} classFor={classFor} onTap={tapWord} onSelect={pick} />
+          <ReaderText section={section} selection={selection} classFor={classFor} onTap={tapWord} onSelect={pick} paragraphFooter={paragraphFooter} />
         </article>
 
         <aside className="flex-[1_1_20rem] max-w-full lg:max-w-md flex flex-col gap-4 lg:sticky lg:top-6">
@@ -799,7 +904,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
                 {detail.pronunciation && <span className="text-ink-muted dark:text-slate-400">{detail.pronunciation}</span>}
                 {detail.level && <span className="font-en text-xs rounded-full bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-100 px-2 py-0.5" title="سطح واژه">{detail.level}</span>}
                 {isSpeechSupported() && detail.kind !== 'grammar' && (
-                  <button type="button" onClick={() => speakText(detail.front, { rate: 0.9 })} aria-label="پخش تلفظ" className="text-brand-500 dark:text-brand-300"><Icon.Speaker size={18} /></button>
+                  <button type="button" onClick={() => { readAloud.pause(); speakText(detail.front, { rate: 0.9 }); }} aria-label="پخش تلفظ" className="text-brand-500 dark:text-brand-300"><Icon.Speaker size={18} /></button>
                 )}
                 <span className="flex-1" />
                 <button type="button" onClick={() => setSelectedUid(null)} aria-label="بستن" className="xl:hidden w-9 h-9 -m-1.5 rounded-xl flex items-center justify-center text-ink-muted hover:bg-slate-100 dark:hover:bg-slate-700"><Icon.Close size={18} /></button>

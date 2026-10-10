@@ -10,7 +10,7 @@ import type { AiRequestOptions } from './geminiService';
 import { logUsage } from './usageLog';
 
 // What a request was for, on the usage page.
-export type AiTask = 'extract' | 'sense' | 'grammar' | 'practice' | 'check' | 'details' | 'quiz' | 'pronunciation' | 'other';
+export type AiTask = 'extract' | 'sense' | 'grammar' | 'practice' | 'check' | 'details' | 'quiz' | 'pronunciation' | 'translate' | 'speech' | 'other';
 
 // A wrong key, a missing key or an unknown model fails the same way every
 // time: no point asking that service again in the same run.

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useDeferredValue } from 'react';
 import { extractKinds, KIND_LABEL } from '../services/cardKinds';
 import { AiProviderId, Deck, Settings, ExtractedWordCard } from '../types';
 import { testAiConnection } from '../services/geminiService';
@@ -6,7 +6,10 @@ import { ModelPicker } from './ModelPicker';
 import { aiRequestOptions, providerKey, providerList, providerProblem, withPrimaryProvider } from '../services/aiSettings';
 import { extractFromLongText, ExtractionProgress, ExtractionSource } from '../services/extractionPipeline';
 import { DEFAULT_CHUNK_WORDS, splitIntoChunks, wordCount as countWords } from '../services/textChunker';
-import { speakText, stopSpeech, pauseSpeech, resumeSpeech, isSpeechSupported, getAvailableVoices } from '../services/ttsService';
+import { speakText, stopSpeech, isSpeechSupported, getAvailableVoices } from '../services/ttsService';
+import { readerSection } from '../services/readerText';
+import { piecesOf, type ReadAloudVoice } from '../services/readAloud';
+import { useReadAloud } from '../hooks/useReadAloud';
 import { fa, Icon } from './common/ui';
 
 interface AiTextExtractorViewProps {
@@ -162,8 +165,6 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
   const [step, setStep] = useState<'input' | 'review'>('input');
 
   // TTS State
-  const [isReading, setIsReading] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
   const [readingSpeed, setReadingSpeed] = useState<number>(1.0);
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [selectedVoiceURI, setSelectedVoiceURI] = useState<string>('');
@@ -207,46 +208,36 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
     };
   }, []);
 
+  // Reading aloud piece by piece (hooks/useReadAloud): a pause goes on from
+  // where it stopped, with the device's voice or an AI voice.
+  const voice: ReadAloudVoice = settings.readAloudVoice === 'ai' || !isSpeechSupported() ? 'ai' : 'device';
+  const spokenText = useDeferredValue(inputText);
+  const pieces = useMemo(() => {
+    const section = readerSection(spokenText);
+    const cut = voice === 'ai' ? piecesOf(section, 90, 35) : piecesOf(section);
+    // A text without English words (Persian, numbers) is read as it is.
+    const whole = spokenText.replace(/\s+/g, ' ').trim().slice(0, 600);
+    return cut.length || !whole ? cut : [{ text: whole, from: 0, to: 0, paragraph: 0 }];
+  }, [spokenText, voice]);
+  const readAloud = useReadAloud({
+    pieces, textKey: spokenText, voice, settings, rate: readingSpeed, aiRate: readingSpeed, voiceURI: selectedVoiceURI,
+    onAiFailed: error => showToast(`صدای هوش مصنوعی جواب نداد؛ با صدای دستگاه ادامه می‌دهم.${error instanceof Error && error.message ? ` \u2068${error.message}\u2069` : ''}`),
+  });
+  const isReading = readAloud.status !== 'idle';
+  const isPaused = readAloud.status === 'paused';
+
   const handleToggleReadAloud = () => {
     if (!inputText.trim()) {
       showToast('اول متنی بنویس یا بچسبان تا خوانده شود.');
       return;
     }
-
-    if (isReading) {
-      if (isPaused) {
-        resumeSpeech();
-        setIsPaused(false);
-      } else {
-        pauseSpeech();
-        setIsPaused(true);
-      }
-    } else {
-      setIsReading(true);
-      setIsPaused(false);
-      speakText(inputText, {
-        rate: readingSpeed,
-        voiceURI: selectedVoiceURI,
-        onEnd: () => {
-          setIsReading(false);
-          setIsPaused(false);
-        },
-        onError: () => {
-          setIsReading(false);
-          setIsPaused(false);
-          showToast('پخش صدا متوقف شد.');
-        },
-      });
-    }
+    readAloud.toggle();
   };
 
-  const handleStopReading = () => {
-    stopSpeech();
-    setIsReading(false);
-    setIsPaused(false);
-  };
+  const handleStopReading = () => readAloud.stop();
 
   const handlePlayCardSnippet = (textToPlay: string, cardKey: string) => {
+    readAloud.pause();
     stopSpeech();
     setPlayingCardAudioId(cardKey);
     speakText(textToPlay, {
@@ -457,7 +448,7 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
                 {isReading && (
                   <span role="status" className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-brand-50 dark:bg-brand-900/40 text-xs font-bold text-brand-700 dark:text-brand-200">
                     <span className={`w-2 h-2 rounded-full bg-brand-500 ${isPaused ? '' : 'animate-ping'}`}></span>
-                    <span>{isPaused ? 'مکث شده' : 'در حال خواندن…'}</span>
+                    <span>{isPaused ? 'مکث شده' : readAloud.status === 'loading' ? 'آماده کردن صدا…' : 'در حال خواندن…'}</span>
                   </span>
                 )}
 
@@ -467,7 +458,6 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
                   className={`inline-flex items-center gap-1.5 min-h-[36px] px-3.5 rounded-xl text-sm font-bold text-white transition-colors ${
                     isReading && !isPaused ? 'bg-amber-600 hover:bg-amber-700' : 'bg-brand-500 hover:bg-brand-600'
                   }`}
-                  title="متن با صدای مرورگر خوانده می‌شود"
                 >
                   {isReading && !isPaused ? <PauseIcon /> : <Icon.Speaker size={16} />}
                   <span>{isReading && !isPaused ? 'مکث' : isPaused ? 'ادامهٔ خواندن' : 'بلند بخوان'}</span>
@@ -489,6 +479,15 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
 
             {/* Audio Options Subbar (Speed & Voice) */}
             <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-ink-muted dark:text-slate-400 bg-slate-50 dark:bg-slate-900/40 p-2.5 rounded-2xl">
+              <div role="group" aria-label="صدای خواندن" className="flex p-0.5 rounded-lg bg-white dark:bg-slate-800">
+                {(['device', 'ai'] as ReadAloudVoice[]).map(v => (
+                  <button key={v} type="button" aria-pressed={voice === v} onClick={() => onUpdateSettings({ readAloudVoice: v })}
+                    disabled={v === 'device' && !isSpeechSupported()}
+                    className={`min-h-[28px] px-2.5 rounded-md disabled:opacity-40 ${voice === v ? 'bg-brand-500 text-white font-bold' : 'text-ink dark:text-slate-300'}`}>
+                    {v === 'device' ? 'صدای دستگاه' : 'صدای هوش مصنوعی'}
+                  </button>
+                ))}
+              </div>
               <div className="flex items-center gap-2">
                 <span className="font-bold text-ink dark:text-slate-300">سرعت صدا</span>
                 <div role="group" aria-label="سرعت صدا" className="flex items-center gap-1">
@@ -510,7 +509,7 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
                 </div>
               </div>
 
-              {voices.length > 0 && (
+              {voices.length > 0 && voice === 'device' && (
                 <label className="flex items-center gap-2 min-w-0 max-w-full">
                   <span className="font-bold text-ink dark:text-slate-300 shrink-0">صدای گوینده</span>
                   <select

@@ -183,6 +183,9 @@ export interface Settings {
     dailyReviewGoal?: number; // reviews per day for the daily goal
     preReadAuto?: boolean; // the reader shows a section's hard words before it
     hideGrammar?: boolean; // the reader does not underline grammar structures
+    readAloudVoice?: 'device' | 'ai'; // reading aloud with the device's voice (default) or an AI voice
+    aiSpeechVoice?: string; // the AI voice (a Gemini voice name)
+    aiSpeechModel?: string; // the Gemini text-to-speech model
     updatedAt?: string; // when settings last changed; the newest wins across devices
 }
 
