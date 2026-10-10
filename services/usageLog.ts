@@ -1,8 +1,10 @@
 // File: /services/usageLog.ts
 // Every request to an AI service or a free dictionary is noted on this
 // device for 30 days, for the usage page: how many went to each service, how
-// many failed and why, and roughly how much of the free daily translation
-// quota is spent. Nothing here leaves the device.
+// many failed and why, the tokens each AI model used, and roughly how much
+// of the free daily translation quota is spent. Rows are kept about a year,
+// so the token report can go back twelve months. Nothing here leaves the
+// device.
 
 import type { Flashcard } from '../types';
 import { db, type UsageRow } from './localDBService';
@@ -10,7 +12,9 @@ import { addDays, dayString } from './streakService';
 
 export type { UsageRow };
 
-export const USAGE_KEEP_DAYS = 30;
+export const USAGE_KEEP_DAYS = 400;
+// The window of the request counts and cards on the usage page.
+export const RECENT_DAYS = 30;
 
 // MyMemory's free quota, in characters a day; an email on the server
 // (MYMEMORY_EMAIL) raises it about ten times.
@@ -88,4 +92,86 @@ export const cardsByMaker = (cards: Flashcard[], fromDay: string): { maker: stri
     map.set(maker, (map.get(maker) || 0) + 1);
   }
   return [...map.entries()].map(([maker, count]) => ({ maker, count })).sort((a, b) => b.count - a.count);
+};
+
+// --- Tokens ---
+
+export type UsagePeriod = 'day' | 'week' | 'month';
+
+export interface TokenTotals {
+  requests: number; // answered requests
+  failed: number;
+  tokensIn: number;
+  tokensOut: number;
+  cost: number; // dollars, only what services reported
+  priced: number; // answers whose cost the service reported
+  untracked: number; // answers with no token count (older versions, a service that does not say)
+}
+
+const emptyTotals = (): TokenTotals => ({ requests: 0, failed: 0, tokensIn: 0, tokensOut: 0, cost: 0, priced: 0, untracked: 0 });
+
+export const isAiRow = (row: UsageRow): boolean => row.service !== DICTIONARY_SERVICE && row.service !== TRANSLATION_SERVICE;
+
+const add = (t: TokenTotals, row: UsageRow) => {
+  if (!row.ok) { t.failed++; return; }
+  t.requests++;
+  if (row.tokensIn === undefined && row.tokensOut === undefined) t.untracked++;
+  t.tokensIn += row.tokensIn || 0;
+  t.tokensOut += row.tokensOut || 0;
+  if (row.cost !== undefined) { t.cost += row.cost; t.priced++; }
+};
+
+const persianMonth = new Intl.DateTimeFormat('en-u-ca-persian-nu-latn', { year: 'numeric', month: 'numeric', timeZone: 'UTC' });
+
+// The period a day belongs to: the day itself, the week from its Saturday
+// (the Iranian week), or its month on the Persian calendar ("1405-07").
+export const periodOf = (day: string, period: UsagePeriod): string => {
+  if (period === 'day') return day;
+  const date = new Date(`${day}T12:00:00Z`);
+  if (period === 'week') return addDays(day, -((date.getUTCDay() + 1) % 7));
+  const parts = persianMonth.formatToParts(date);
+  const year = parts.find(p => p.type === 'year')?.value || '';
+  const month = parts.find(p => p.type === 'month')?.value || '';
+  return `${year}-${month.padStart(2, '0')}`;
+};
+
+// The last `count` periods up to today, newest first, each with its AI
+// requests and tokens. A period with nothing in it is still listed.
+export const tokensByPeriod = (rows: UsageRow[], period: UsagePeriod, today: string, count: number): ({ key: string; from: string } & TokenTotals)[] => {
+  const periods: ({ key: string; from: string } & TokenTotals)[] = [];
+  const index = new Map<string, number>();
+  // Walks back day by day, so the oldest period's first day is found too.
+  for (let day = today, steps = 0; steps < USAGE_KEEP_DAYS + 31; day = addDays(day, -1), steps++) {
+    const key = periodOf(day, period);
+    if (index.has(key)) { periods[index.get(key)!].from = day; continue; }
+    if (periods.length === count) break;
+    index.set(key, periods.length);
+    periods.push({ key, from: day, ...emptyTotals() });
+  }
+  for (const row of rows) {
+    if (!isAiRow(row)) continue;
+    const i = index.get(periodOf(row.day, period));
+    if (i !== undefined && row.day <= today) add(periods[i], row);
+  }
+  return periods;
+};
+
+export interface ModelTotals extends TokenTotals {
+  service: string;
+  model: string;
+}
+
+// AI requests and tokens per service and model from `fromDay` on, the most
+// tokens first.
+export const tokensByModel = (rows: UsageRow[], fromDay = ''): ModelTotals[] => {
+  const map = new Map<string, ModelTotals>();
+  for (const row of rows) {
+    if (!isAiRow(row) || row.day < fromDay) continue;
+    const model = row.model || '';
+    const key = `${row.service}\u0000${model}`;
+    const t = map.get(key) || { service: row.service, model, ...emptyTotals() };
+    add(t, row);
+    map.set(key, t);
+  }
+  return [...map.values()].sort((a, b) => b.tokensIn + b.tokensOut - (a.tokensIn + a.tokensOut) || b.requests - a.requests || a.service.localeCompare(b.service));
 };

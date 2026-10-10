@@ -27,6 +27,10 @@ export interface UsageRow {
   status?: number;
   error?: string;
   chars?: number; // characters sent for translation (the free daily quota counts them)
+  model?: string; // the AI model asked
+  tokensIn?: number; // tokens the AI read (the prompt)
+  tokensOut?: number; // tokens it wrote, thinking included
+  cost?: number; // dollars, when the service says (OpenRouter)
 }
 
 export class LinguaCardsDB extends Dexie {

@@ -3,10 +3,11 @@ import type { Flashcard } from '../types';
 import { callProxy } from '../services/apiService';
 import { addDays, dayString } from '../services/streakService';
 import {
-    cardsByMaker, DICTIONARY_SERVICE, MYMEMORY_DAILY_CHARS, MYMEMORY_DAILY_CHARS_WITH_EMAIL, readUsage, recentErrors,
-    totalsByService, translationCharsOn, TRANSLATION_SERVICE, usageByDay, USAGE_KEEP_DAYS, type UsageRow,
+    cardsByMaker, DICTIONARY_SERVICE, MYMEMORY_DAILY_CHARS, MYMEMORY_DAILY_CHARS_WITH_EMAIL, readUsage, RECENT_DAYS, recentErrors,
+    tokensByModel, tokensByPeriod, totalsByService, translationCharsOn, TRANSLATION_SERVICE, usageByDay, type UsagePeriod, type UsageRow,
 } from '../services/usageLog';
 import { fa, Icon } from './common/ui';
+import { dollars } from '../services/aiModels';
 
 interface UsageViewProps {
     cards: Flashcard[];
@@ -67,17 +68,41 @@ const Panel: React.FC<{ title: string; hint?: string; children: React.ReactNode 
     </section>
 );
 
+const PERIODS: { value: UsagePeriod; label: string; count: number }[] = [
+    { value: 'day', label: 'روزانه', count: 14 },
+    { value: 'week', label: 'هفتگی', count: 12 },
+    { value: 'month', label: 'ماهانه', count: 12 },
+];
+const MONTHS = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
+
+// "امروز", "این هفته", "هفتهٔ ۲۷ شهریور", "مهر ۱۴۰۵".
+const periodLabel = (key: string, period: UsagePeriod, today: string, newest: boolean) => {
+    if (period === 'day') return dayLabel(key, today);
+    if (period === 'week') {
+        if (newest) return 'این هفته';
+        try {
+            return `هفتهٔ ${new Date(`${key}T12:00:00Z`).toLocaleDateString('fa-IR', { day: 'numeric', month: 'short', timeZone: 'UTC' })}`;
+        } catch {
+            return key;
+        }
+    }
+    const [year, month] = key.split('-').map(Number);
+    return `${MONTHS[month - 1] || month} ${fa(year).replace(/٬/g, '')}`;
+};
+
 const Empty: React.FC<{ children: React.ReactNode }> = ({ children }) => (
     <p className="text-sm text-ink-muted dark:text-slate-400">{children}</p>
 );
 
 // What each service was asked on this device in the last 30 days, which
-// failed and why, the cards each made, and how much data the app keeps.
+// failed and why, the tokens each AI model used by day, week and month, the
+// cards each made, and how much data the app keeps.
 export const UsageView: React.FC<UsageViewProps> = ({ cards, onBack }) => {
     const [rows, setRows] = useState<UsageRow[] | null>(null);
     const [server, setServer] = useState<ServerStorage | null>(null);
     const [serverError, setServerError] = useState('');
     const [device, setDevice] = useState<{ usage?: number; quota?: number } | null>(null);
+    const [period, setPeriod] = useState<UsagePeriod>('day');
 
     useEffect(() => {
         let alive = true;
@@ -89,18 +114,31 @@ export const UsageView: React.FC<UsageViewProps> = ({ cards, onBack }) => {
     }, []);
 
     const today = dayString(new Date());
-    const monthStart = addDays(today, -(USAGE_KEEP_DAYS - 1));
+    const monthStart = addDays(today, -(RECENT_DAYS - 1));
     const data = useMemo(() => {
         const all = rows || [];
         return {
             today: totalsByService(all, today),
             month: totalsByService(all, monthStart),
             days: usageByDay(all, today, 7),
-            errors: recentErrors(all, 10),
+            errors: recentErrors(all.filter(r => r.day >= monthStart), 10),
             translated: translationCharsOn(all, today),
             makers: cardsByMaker(cards, monthStart),
         };
     }, [rows, cards, today, monthStart]);
+
+    const tokens = useMemo(() => {
+        const shape = PERIODS.find(p => p.value === period) || PERIODS[0];
+        const periods = tokensByPeriod(rows || [], period, today, shape.count);
+        const from = periods[periods.length - 1]?.from || today;
+        return {
+            periods,
+            models: tokensByModel(rows || [], from),
+            top: Math.max(1, ...periods.map(p => p.tokensIn + p.tokensOut)),
+            untracked: periods.reduce((n, p) => n + p.untracked, 0),
+            priced: periods.some(p => p.priced > 0),
+        };
+    }, [rows, period, today]);
 
     const quota = server?.translationEmail ? MYMEMORY_DAILY_CHARS_WITH_EMAIL : MYMEMORY_DAILY_CHARS;
     const left = Math.max(0, quota - data.translated);
@@ -114,7 +152,7 @@ export const UsageView: React.FC<UsageViewProps> = ({ cards, onBack }) => {
                 </button>
                 <div>
                     <h1 className="text-2xl font-extrabold text-ink dark:text-white">گزارش مصرف</h1>
-                    <p className="text-sm text-ink-muted dark:text-slate-400">درخواست‌های این دستگاه در {fa(USAGE_KEEP_DAYS)} روز گذشته</p>
+                    <p className="text-sm text-ink-muted dark:text-slate-400">درخواست‌های این دستگاه در {fa(RECENT_DAYS)} روز گذشته</p>
                 </div>
             </header>
 
@@ -127,7 +165,7 @@ export const UsageView: React.FC<UsageViewProps> = ({ cards, onBack }) => {
                                     <tr className="text-ink-muted dark:text-slate-400 text-right">
                                         <th className="font-medium py-1">سرویس</th>
                                         <th className="font-medium py-1">امروز</th>
-                                        <th className="font-medium py-1">{fa(USAGE_KEEP_DAYS)} روز</th>
+                                        <th className="font-medium py-1">{fa(RECENT_DAYS)} روز</th>
                                         <th className="font-medium py-1">ناموفق</th>
                                     </tr>
                                 </thead>
@@ -169,7 +207,80 @@ export const UsageView: React.FC<UsageViewProps> = ({ cards, onBack }) => {
                         </ul>
                     </Panel>
 
-                    <Panel title="کارت‌هایی که هر سرویس ساخت" hint={`کارت‌های ${fa(USAGE_KEEP_DAYS)} روز گذشته`}>
+                    <Panel title="توکن مصرفی هوش مصنوعی" hint="ورودی: متنی که برای مدل فرستاده شد. خروجی: جوابی که نوشت، همراه با فکر کردنش.">
+                        <div role="group" aria-label="بازهٔ گزارش" className="inline-flex flex-wrap gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-700">
+                            {PERIODS.map(p => (
+                                <button key={p.value} type="button" aria-pressed={period === p.value} onClick={() => setPeriod(p.value)}
+                                    className={`min-h-[36px] px-3 rounded-lg text-sm ${period === p.value ? 'bg-white dark:bg-slate-600 shadow-sm font-bold text-brand-700 dark:text-white' : 'text-ink-muted dark:text-slate-300'}`}>
+                                    {p.label}
+                                </button>
+                            ))}
+                        </div>
+                        <ul className="mt-3 flex flex-col gap-2.5">
+                            {tokens.periods.map((p, i) => (
+                                <li key={p.key} className="text-sm">
+                                    <div className="flex items-center gap-3">
+                                        <span className="w-28 shrink-0 text-ink-muted dark:text-slate-400">{periodLabel(p.key, period, today, i === 0)}</span>
+                                        <span className="flex-1 h-3 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden flex" aria-hidden="true">
+                                            <span className="h-full bg-brand-500" style={{ width: `${(p.tokensIn / tokens.top) * 100}%` }} />
+                                            <span className="h-full bg-amber-400" style={{ width: `${(p.tokensOut / tokens.top) * 100}%` }} />
+                                        </span>
+                                        <span className="w-24 shrink-0 font-bold text-ink dark:text-slate-100">{fa(p.tokensIn + p.tokensOut)}</span>
+                                    </div>
+                                    {(p.requests > 0 || p.failed > 0) && (
+                                        <p className="mt-0.5 sm:ps-[7.75rem] text-xs text-ink-muted dark:text-slate-400">
+                                            ورودی {fa(p.tokensIn)} · خروجی {fa(p.tokensOut)} · {fa(p.requests)} درخواست
+                                            {p.failed ? <span className="text-red-600 dark:text-red-300"> · {fa(p.failed)} ناموفق</span> : null}
+                                            {p.priced ? <> · <bdi className="font-en">{dollars(p.cost)}</bdi></> : null}
+                                        </p>
+                                    )}
+                                </li>
+                            ))}
+                        </ul>
+                        <p className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-muted dark:text-slate-400">
+                            <span><span className="inline-block w-2.5 h-2.5 rounded-full bg-brand-500 align-middle" /> ورودی</span>
+                            <span><span className="inline-block w-2.5 h-2.5 rounded-full bg-amber-400 align-middle" /> خروجی</span>
+                            {tokens.priced && <span>هزینه فقط برای سرویس‌هایی مثل OpenRouter است که خودشان آن را می‌گویند.</span>}
+                        </p>
+
+                        <h3 className="mt-5 font-bold text-ink dark:text-white">به تفکیک مدل در همین بازه</h3>
+                        {tokens.models.length === 0 ? <div className="mt-1"><Empty>در این بازه از هوش مصنوعی استفاده نشده.</Empty></div> : (
+                            <div className="mt-2 overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead>
+                                        <tr className="text-ink-muted dark:text-slate-400 text-right">
+                                            <th className="font-medium py-1 px-1.5 whitespace-nowrap">سرویس و مدل</th>
+                                            <th className="font-medium py-1 px-1.5 whitespace-nowrap">درخواست</th>
+                                            <th className="font-medium py-1 px-1.5 whitespace-nowrap">ورودی</th>
+                                            <th className="font-medium py-1 px-1.5 whitespace-nowrap">خروجی</th>
+                                            {tokens.priced && <th className="font-medium py-1 px-1.5 whitespace-nowrap">هزینه</th>}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {tokens.models.map(m => (
+                                            <tr key={`${m.service}:${m.model}`} className="border-t border-slate-100 dark:border-slate-700 text-ink dark:text-slate-100">
+                                                <td className="py-2 px-1.5 min-w-[9rem]">
+                                                    <span className="font-bold">{serviceName(m.service)}</span>
+                                                    {m.model && <span dir="ltr" className="block font-en text-xs text-ink-muted dark:text-slate-400 break-all text-right">{m.model}</span>}
+                                                </td>
+                                                <td className="py-2 px-1.5 whitespace-nowrap">{fa(m.requests)}{m.failed ? <span className="block text-xs text-red-600 dark:text-red-300">+{fa(m.failed)} ناموفق</span> : null}</td>
+                                                <td className="py-2 px-1.5 whitespace-nowrap">{fa(m.tokensIn)}</td>
+                                                <td className="py-2 px-1.5 whitespace-nowrap">{fa(m.tokensOut)}</td>
+                                                {tokens.priced && <td className="py-2 px-1.5 whitespace-nowrap font-en">{m.priced ? dollars(m.cost) : '–'}</td>}
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                        {tokens.untracked > 0 && (
+                            <p className="mt-2 text-xs text-ink-muted dark:text-slate-400">
+                                {fa(tokens.untracked)} درخواست عدد توکن ندارد: یا قبل از این نسخه بوده، یا سرویس عددی نگفته.
+                            </p>
+                        )}
+                    </Panel>
+
+                    <Panel title="کارت‌هایی که هر سرویس ساخت" hint={`کارت‌های ${fa(RECENT_DAYS)} روز گذشته`}>
                         {data.makers.length === 0 ? <Empty>در این مدت کارتی ساخته نشده.</Empty> : (
                             <ul className="flex flex-wrap gap-2">
                                 {data.makers.map(m => (

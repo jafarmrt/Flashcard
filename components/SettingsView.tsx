@@ -7,6 +7,7 @@ import { CARD_KINDS, extractKinds, KIND_EXAMPLE, KIND_LABEL } from '../services/
 import { AI_PROVIDERS, providerInfo, providerKey, providerList, providerOptions, providerProblem } from '../services/aiSettings';
 import { testAiConnection } from '../services/geminiService';
 import { fa, Icon } from './common/ui';
+import { ModelPicker } from './ModelPicker';
 
 interface SettingsViewProps {
     settings: Settings;
@@ -95,6 +96,21 @@ const AiProviders: React.FC<{ settings: Settings; onUpdateSettings: (s: Partial<
         setDrafts(prev => { const copy = { ...prev }; delete copy[entry.id]; return copy; });
     };
 
+    // A model tapped in the list is saved at once, with what is typed above.
+    const pickModel = (entry: AiProviderSetting, model: string) => {
+        const d = draftOf(entry);
+        const keys = keysNow();
+        if (d.key.trim()) keys[entry.id] = d.key.trim(); else delete keys[entry.id];
+        save(list.map(e => (e.id === entry.id ? { ...e, model, baseUrl: d.baseUrl.trim() || undefined } : e)), keys);
+        setDrafts(prev => { const copy = { ...prev }; delete copy[entry.id]; return copy; });
+        setTests(t => { const copy = { ...t }; delete copy[entry.id]; return copy; });
+    };
+    // The service as it would be asked with what is typed now.
+    const draftOptions = (entry: AiProviderSetting) => {
+        const d = draftOf(entry);
+        return providerOptions({ ...settings, aiKeys: { ...keysNow(), [entry.id]: d.key.trim() || undefined } }, { ...entry, model: d.model.trim() || entry.model, baseUrl: d.baseUrl.trim() || entry.baseUrl });
+    };
+
     const enabledCount = list.filter(e => e.enabled).length;
     const move = (index: number, by: -1 | 1) => {
         const next = [...list];
@@ -106,8 +122,7 @@ const AiProviders: React.FC<{ settings: Settings; onUpdateSettings: (s: Partial<
 
     const test = async (entry: AiProviderSetting) => {
         commit(entry);
-        const d = draftOf(entry);
-        const options = providerOptions({ ...settings, aiKeys: { ...keysNow(), [entry.id]: d.key.trim() || undefined } }, { ...entry, model: d.model.trim() || entry.model, baseUrl: d.baseUrl.trim() || entry.baseUrl });
+        const options = draftOptions(entry);
         setTests(t => ({ ...t, [entry.id]: { busy: true } }));
         const result = await testAiConnection(options);
         setTests(t => ({ ...t, [entry.id]: { ok: result.ok, message: result.ok ? 'وصل شد و جواب داد.' : result.message } }));
@@ -161,6 +176,9 @@ const AiProviders: React.FC<{ settings: Settings; onUpdateSettings: (s: Partial<
                                         <input type="text" dir="ltr" value={d.model} onChange={e => setDraft(entry.id, { model: e.target.value })} onBlur={() => commit(entry)}
                                             placeholder={info.defaultModel || 'model-name'} className={input} />
                                     </label>
+                                    <div className="sm:col-span-2 flex flex-col">
+                                        <ModelPicker key={`${entry.id}:${d.key.trim()}:${d.baseUrl.trim()}`} options={draftOptions(entry)} value={d.model.trim() || info.defaultModel} onPick={model => pickModel(entry, model)} />
+                                    </div>
                                     {(entry.id === 'custom' || entry.id === 'ollama') && (
                                         <label className="flex flex-col gap-1 text-sm sm:col-span-2">
                                             <span className="text-ink-muted dark:text-slate-400">نشانی سرویس (سازگار با OpenAI)</span>

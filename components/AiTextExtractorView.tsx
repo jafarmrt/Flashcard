@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { extractKinds, KIND_LABEL } from '../services/cardKinds';
 import { AiProviderId, Deck, Settings, ExtractedWordCard } from '../types';
 import { testAiConnection } from '../services/geminiService';
+import { ModelPicker } from './ModelPicker';
 import { aiRequestOptions, providerKey, providerList, providerProblem, withPrimaryProvider } from '../services/aiSettings';
 import { extractFromLongText, ExtractionProgress, ExtractionSource } from '../services/extractionPipeline';
 import { DEFAULT_CHUNK_WORDS, splitIntoChunks, wordCount as countWords } from '../services/textChunker';
@@ -50,7 +51,6 @@ export interface ProviderPreset {
   provider: 'gemini' | 'openai-compatible';
   baseUrl: string;
   defaultModel: string;
-  models: string[];
   keyPlaceholder: string;
   keyHelp: string;
 }
@@ -63,7 +63,6 @@ export const AI_PRESETS: ProviderPreset[] = [
     provider: 'gemini',
     baseUrl: '',
     defaultModel: 'gemini-2.5-flash',
-    models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'],
     keyPlaceholder: 'AIzaSy…',
     keyHelp: 'اگر خالی بماند، کلید سرور به کار می‌رود.',
   },
@@ -74,7 +73,6 @@ export const AI_PRESETS: ProviderPreset[] = [
     provider: 'openai-compatible',
     baseUrl: 'https://api.groq.com/openai/v1',
     defaultModel: 'llama-3.3-70b-versatile',
-    models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
     keyPlaceholder: 'gsk_…',
     keyHelp: 'کلید رایگان را از console.groq.com بگیر.',
   },
@@ -85,13 +83,6 @@ export const AI_PRESETS: ProviderPreset[] = [
     provider: 'openai-compatible',
     baseUrl: 'https://openrouter.ai/api/v1',
     defaultModel: 'deepseek/deepseek-chat',
-    models: [
-      'deepseek/deepseek-chat',
-      'deepseek/deepseek-r1',
-      'meta-llama/llama-3.3-70b-instruct',
-      'qwen/qwen-2.5-72b-instruct',
-      'mistralai/mistral-large-2411',
-    ],
     keyPlaceholder: 'sk-or-v1-…',
     keyHelp: 'کلید را از openrouter.ai بگیر.',
   },
@@ -102,7 +93,6 @@ export const AI_PRESETS: ProviderPreset[] = [
     provider: 'openai-compatible',
     baseUrl: 'https://api.deepseek.com/v1',
     defaultModel: 'deepseek-chat',
-    models: ['deepseek-chat', 'deepseek-reasoner'],
     keyPlaceholder: 'sk-…',
     keyHelp: 'کلید را از platform.deepseek.com بگیر.',
   },
@@ -113,7 +103,6 @@ export const AI_PRESETS: ProviderPreset[] = [
     provider: 'openai-compatible',
     baseUrl: 'http://localhost:11434/v1',
     defaultModel: 'llama3.3',
-    models: ['llama3.3', 'llama3.1', 'mistral', 'qwen2.5:7b', 'deepseek-r1:8b'],
     keyPlaceholder: '',
     keyHelp: 'با Ollama روی رایانهٔ خودت اجرا می‌شود؛ کلید لازم نیست.',
   },
@@ -124,7 +113,6 @@ export const AI_PRESETS: ProviderPreset[] = [
     provider: 'openai-compatible',
     baseUrl: '',
     defaultModel: 'custom-model',
-    models: [],
     keyPlaceholder: 'Bearer API key',
     keyHelp: 'با هر سرویس سازگار با OpenAI کار می‌کند؛ مثل vLLM، LM Studio، Together یا خود OpenAI.',
   },
@@ -1035,40 +1023,15 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
               {/* Model Choice / Input */}
               <div>
                 <label htmlFor="ai-model" className={fieldLabel}>مدل</label>
-                {activePreset.models.length > 0 ? (
-                  <div className="flex flex-col gap-2">
-                    <select
-                      id="ai-model"
-                      dir="ltr"
-                      value={customModelInput}
-                      onChange={e => setCustomModelInput(e.target.value)}
-                      className={`${field} font-en`}
-                    >
-                      {activePreset.models.map(m => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </select>
-                    <input
-                      type="text"
-                      dir="ltr"
-                      placeholder="یا نام مدل دیگری بنویس"
-                      aria-label="نام مدل دیگر"
-                      value={customModelInput}
-                      onChange={e => setCustomModelInput(e.target.value)}
-                      className={`${field} font-en text-xs`}
-                    />
-                  </div>
-                ) : (
-                  <input
-                    id="ai-model"
-                    type="text"
-                    dir="ltr"
-                    placeholder="llama-3.3-70b-versatile"
-                    value={customModelInput}
-                    onChange={e => setCustomModelInput(e.target.value)}
-                    className={`${field} font-en text-xs`}
-                  />
-                )}
+                <input
+                  id="ai-model"
+                  type="text"
+                  dir="ltr"
+                  placeholder={activePreset.defaultModel || 'model-name'}
+                  value={customModelInput}
+                  onChange={e => setCustomModelInput(e.target.value)}
+                  className={`${field} font-en text-xs`}
+                />
               </div>
 
               {/* API Key */}
@@ -1090,6 +1053,17 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
                   {activePreset.keyHelp}
                 </p>
               </div>
+
+              <ModelPicker
+                key={`${activePreset.id}:${customKeyInput.trim()}:${customBaseUrl}`}
+                options={{
+                  aiProvider: activePreset.provider,
+                  aiBaseUrl: activePreset.provider === 'openai-compatible' ? customBaseUrl : undefined,
+                  customApiKey: customKeyInput.trim() || undefined,
+                }}
+                value={customModelInput.trim() || activePreset.defaultModel}
+                onPick={setCustomModelInput}
+              />
 
               {/* Test Connection Button & Result */}
               <div className="flex flex-col gap-2">
