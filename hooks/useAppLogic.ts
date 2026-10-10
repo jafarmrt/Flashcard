@@ -192,6 +192,13 @@ export const useAppLogic = () => {
   const lastSyncError = useRef('');
 
   const signIn = (username: string) => {
+    // Keys left here by another account (its session ran out) are not this one's.
+    const lastUser = localStorage.getItem(LAST_USER_KEY);
+    if (lastUser && lastUser.toLowerCase() !== username.toLowerCase()) {
+        const cleared = withoutKeys(readSavedSettings());
+        localStorage.setItem('appSettings', JSON.stringify(cleared));
+        setSettings(prev => ({ ...withoutKeys(prev), ...cleared } as Settings));
+    }
     signedInUser.current = username;
     setCurrentUser({ username });
     localStorage.setItem(LAST_USER_KEY, username);
@@ -1504,6 +1511,15 @@ export const useAppLogic = () => {
 
   const handleLogout = async () => {
     if(confirm("Are you sure you want to log out?")) {
+        // A key typed here that the server does not have yet goes up first.
+        if (readSavedSettings().keysChanged?.length) {
+            try {
+                await syncKeys();
+            } catch (e) {
+                console.warn('Syncing the keys before signing out failed:', e);
+            }
+            if (readSavedSettings().keysChanged?.length && !confirm('کلیدی که این‌جا وارد کرده‌ای هنوز به سرور نرسیده و با خروج از این مرورگر پاک می‌شود. باز هم خارج می‌شوی؟')) return;
+        }
         await callProxy('auth-logout', {}).catch(e => console.error('Logout request failed:', e));
         localStorage.removeItem(LAST_USER_KEY);
         // The keys stay with the account, not in this browser.

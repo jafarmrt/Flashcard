@@ -87,8 +87,8 @@ export const applyServerKeys = (settings: Partial<Settings>, sent: SentKeys, ser
   for (const id of KEY_IDS) {
     const local = values[id] || '';
     if (changedHere.has(id)) {
-      // Sent as changed and not typed again since: the server has it now.
-      if (sent[id]?.changed && sent[id]!.v === local) { changedHere.delete(id); changed = true; }
+      // Sent as changed, not typed again since, and the server has it now.
+      if (sent[id]?.changed && sent[id]!.v === local && (server[id]?.v ?? '') === local) { changedHere.delete(id); changed = true; }
       continue;
     }
     const entry = server[id];

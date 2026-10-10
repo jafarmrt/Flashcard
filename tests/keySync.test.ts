@@ -85,6 +85,10 @@ test('a device takes the account\'s keys, but keeps one typed while the request 
   assert.deepEqual(after.keysChanged, ['dict:mw-collegiate'], 'still to be sent');
   assert.equal(applyServerKeys(after, {}, { 'ai:openrouter': { v: 'or', at: 30 } }), null, 'nothing new');
   assert.equal(applyServerKeys(after, {}, undefined), null);
+  // A key the server refused (too long) stays marked as changed here.
+  const long: Partial<Settings> = { aiKeys: { groq: 'x'.repeat(600) }, keysChanged: ['ai:groq'] };
+  const refused = applyServerKeys(long, { 'ai:groq': { v: 'x'.repeat(600), changed: true } }, { 'ai:groq': { v: 'old', at: 1 } });
+  assert.equal(refused, null);
 });
 
 test('keys never ride in the synced settings, and leave the browser on sign-out', () => {
@@ -147,6 +151,9 @@ test('a key typed on the laptop reaches the phone, encrypted on the server', asy
   assert.deepEqual(Object.keys(fresh.body.keys), ['ai:openrouter']);
   const saved = JSON.parse(fs.readFileSync(path.join(dir, '.data_store.json'), 'utf-8'));
   assert.equal(Object.keys(saved).filter(k => k.startsWith('keys:jafar:unreadable:')).length, 1);
+  await call({ action: 'keys-sync', keys: {} }, 'jafar');
+  const later = JSON.parse(fs.readFileSync(path.join(dir, '.data_store.json'), 'utf-8'));
+  assert.equal(Object.keys(later).filter(k => k.startsWith('keys:jafar:unreadable:')).length, 1, 'set aside once, not on every sync');
 
   // A session for an account that does not exist gets nothing.
   assert.equal((await call({ action: 'keys-sync', keys: {} }, 'someone')).status, 401);

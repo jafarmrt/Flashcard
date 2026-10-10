@@ -714,6 +714,7 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
           if (!(await getUser(signedInUser!))) return null;
           const record = await getKey(accountKeysKey(signedInUser!));
           let stored = openKeys(record, signedInUser!, secret);
+          const unreadable = !stored;
           if (!stored) {
             // Sealed with another secret: kept aside, never overwritten.
             console.warn(`The saved keys of ${signedInUser} do not open with this server's secret; they are kept aside and the devices send theirs again.`);
@@ -721,7 +722,7 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
             stored = {};
           }
           const { merged, changed } = mergeKeyEntries(stored, incoming);
-          if (changed) await setKey(accountKeysKey(signedInUser!), sealKeys(merged, signedInUser!, secret));
+          if (changed || unreadable) await setKey(accountKeysKey(signedInUser!), sealKeys(merged, signedInUser!, secret));
           return merged;
         });
         if (!keys) return res.status(401).json({ error: 'Please sign in again.', code: 'AUTH_REQUIRED' });
