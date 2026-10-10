@@ -981,8 +981,28 @@ export const useAppLogic = () => {
     }
   };
   
+  // Removes every card and deck from the account: each is marked deleted, so
+  // the next sync takes the deletion to the server and to every device.
+  const handleDeleteAllCards = async () => {
+    const cardCount = await db.flashcards.filter(c => !c.isDeleted).count();
+    if (!confirm(`همهٔ ${cardCount.toLocaleString('fa-IR')} کارت و همهٔ دسته‌ها از این حساب، روی سرور و همهٔ دستگاه‌ها پاک می‌شوند و برنمی‌گردند. کتاب‌ها و پیشرفت می‌مانند. ادامه می‌دهید؟`)) return;
+    try {
+      const now = new Date().toISOString();
+      await (db as any).transaction('rw', db.flashcards, db.decks, async () => {
+        await db.flashcards.filter(c => !c.isDeleted).modify({ isDeleted: true, updatedAt: now });
+        await db.decks.filter(d => !d.isDeleted && d.id !== 'default').modify({ isDeleted: true, updatedAt: now });
+      });
+      await fetchData();
+      showToast('همهٔ کارت‌ها پاک شد.');
+      await handleSync();
+    } catch (error) {
+      console.error('Failed to delete all cards:', error);
+      showToast(`پاک کردن کارت‌ها نشد: ${describeError(error)}`);
+    }
+  };
+
   const handleResetApp = async () => {
-      if(confirm("Are you sure you want to reset the application? All local decks and cards for this account will be permanently deleted. This action cannot be undone.")) {
+      if(confirm('همهٔ داده‌های همین مرورگر پاک می‌شود. آنچه روی سرور است در همگام‌سازی بعدی برمی‌گردد. ادامه می‌دهید؟')) {
           await (db as any).delete();
           localStorage.removeItem('appSettings');
           window.location.reload();
@@ -1591,7 +1611,7 @@ export const useAppLogic = () => {
       // Handlers
       setView, showToast, handleAddCard, handleEditCard, handleDeleteCard, handleSaveCard,
       handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV,
-      handleResetApp, handleStudyDeck, handleStartStudySession, setIsStudySetupModalOpen,
+      handleResetApp, handleDeleteAllCards, handleStudyDeck, handleStartStudySession, setIsStudySetupModalOpen,
       handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
       updateSettings, handleCheckAchievements, handleGoalUpdate, handleCompleteCardDetails,
       handleAutoFixCards, handleStopAutoFix, handleCloseAutoFixReport, handleSaveExtractedCards,

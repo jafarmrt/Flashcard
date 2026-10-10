@@ -10,6 +10,7 @@ interface SettingsViewProps {
     onExportCSV: () => void;
     onImportCSV: (csvText: string) => void;
     onResetApp: () => void;
+    onDeleteAllCards: () => void;
     onNavigateToChangelog: () => void;
     onNavigateToAchievements: () => void;
     onNavigateToProfile: () => void;
@@ -194,7 +195,7 @@ const LEVELS: { value: NonNullable<Settings['userLevel']>; label: string }[] = [
 ];
 
 const SettingsView: React.FC<SettingsViewProps> = ({
-    settings, onUpdateSettings, onExportCSV, onImportCSV, onResetApp, onNavigateToChangelog, onNavigateToAchievements,
+    settings, onUpdateSettings, onExportCSV, onImportCSV, onResetApp, onDeleteAllCards, onNavigateToChangelog, onNavigateToAchievements,
     onNavigateToProfile, onNavigateToUsage, currentUser, onLogout,
 }) => {
     const importFileRef = useRef<HTMLInputElement>(null);
@@ -307,6 +308,9 @@ const SettingsView: React.FC<SettingsViewProps> = ({
             </Card>
 
             <Card title="منطقهٔ خطر" tone="danger">
+                <Row title="پاک کردن همهٔ کارت‌ها" hint="همهٔ کارت‌ها و دسته‌های این حساب از سرور و همهٔ دستگاه‌ها پاک می‌شود و برنمی‌گردد. کتاب‌ها، سطح و امتیاز می‌مانند.">
+                    <button type="button" onClick={onDeleteAllCards} className="min-h-[40px] px-4 rounded-xl text-sm font-bold bg-red-600 hover:bg-red-700 text-white">پاک کردن همه</button>
+                </Row>
                 <Row title="پاک کردن داده‌های این دستگاه" hint="همهٔ کارت‌ها و تنظیمات همین مرورگر پاک می‌شود و برنمی‌گردد. نسخهٔ روی سرور می‌ماند.">
                     <button type="button" onClick={onResetApp} className="min-h-[40px] px-4 rounded-xl text-sm font-bold bg-red-600 hover:bg-red-700 text-white">پاک کردن</button>
                 </Row>
