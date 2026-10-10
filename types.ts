@@ -153,7 +153,7 @@ export interface Settings {
     aiModel?: string;
     aiProviders?: AiProviderSetting[]; // the order they are tried in; replaces aiProvider/aiBaseUrl/aiModel
     aiKeys?: Partial<Record<AiProviderId, string>>; // kept with the account, encrypted (services/keySync); replaces customApiKey
-    keyStamps?: Partial<Record<import('./services/keySync').KeyId, number>>; // when each key was last changed on this device
+    keysChanged?: import('./services/keySync').KeyId[]; // keys typed or removed here that the server does not have yet
     userLevel?: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2' | 'IELTS' | 'TOEFL';
     extractionSource?: 'ai' | 'free';
     dailyReviewGoal?: number; // reviews per day for the daily goal

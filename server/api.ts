@@ -11,7 +11,7 @@ import { packChapter, unpackChapter } from './chapterText.js';
 import { geminiUsage, listGeminiModels, listOpenAiModels, openAiUsage } from './aiModels.js';
 import { cachedEnrich, fileLookupStore, LookupStore } from './lookupCache.js';
 import { openKeys, sealKeys } from './keyVault.js';
-import { cleanKeyEntries, mergeKeyEntries } from '../services/keySync.js';
+import { cleanSentKeys, mergeKeyEntries } from '../services/keySync.js';
 import {
   PUBLIC_ACTIONS, USERNAME_PATTERN, MIN_PASSWORD_LENGTH, registrationAllowed,
   hashPassword, verifyPassword, getSessionSecret, createSessionToken, sessionUser,
@@ -709,12 +709,19 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
       // has (with when each was typed) and gets the account's, newest first.
       // Kept encrypted under their own record (server/keyVault).
       case 'keys-sync': {
-        const incoming = cleanKeyEntries(payload.keys);
+        const incoming = cleanSentKeys(payload.keys);
         const keys = await withUserLock(signedInUser!, async () => {
           if (!(await getUser(signedInUser!))) return null;
-          const stored = openKeys(await getKey(accountKeysKey(signedInUser!)), secret);
+          const record = await getKey(accountKeysKey(signedInUser!));
+          let stored = openKeys(record, signedInUser!, secret);
+          if (!stored) {
+            // Sealed with another secret: kept aside, never overwritten.
+            console.warn(`The saved keys of ${signedInUser} do not open with this server's secret; they are kept aside and the devices send theirs again.`);
+            await setKey(`${accountKeysKey(signedInUser!)}:unreadable:${Date.now()}`, record);
+            stored = {};
+          }
           const { merged, changed } = mergeKeyEntries(stored, incoming);
-          if (changed) await setKey(accountKeysKey(signedInUser!), sealKeys(merged, secret));
+          if (changed) await setKey(accountKeysKey(signedInUser!), sealKeys(merged, signedInUser!, secret));
           return merged;
         });
         if (!keys) return res.status(401).json({ error: 'Please sign in again.', code: 'AUTH_REQUIRED' });

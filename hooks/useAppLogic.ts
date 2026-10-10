@@ -19,7 +19,7 @@ import {
 } from '../services/syncClient';
 import { isDue, isNewCard } from '../services/srsService';
 import { applyIncomingSettings, toSyncedSettings } from '../services/settingsSync';
-import { applyServerKeys, localKeyEntries, stampKeyChanges } from '../services/keySync';
+import { applyServerKeys, localKeyEntries, markKeyChanges, withoutKeys } from '../services/keySync';
 import { convertToCSV, downloadCSV, parseCollocations, parseCSV, parseKind, splitList } from '../services/csvService';
 import { freeEnrich, FreeEnrichment } from '../services/freeExtractionService';
 import { 
@@ -449,8 +449,9 @@ export const useAppLogic = () => {
   // Send this device's AI and dictionary keys and take the account's, so a
   // key typed on one device works on all of them.
   const syncKeys = async () => {
-    const response = await callProxy('keys-sync', { keys: localKeyEntries(readSavedSettings()) });
-    const change = applyServerKeys(readSavedSettings(), response?.keys);
+    const sent = localKeyEntries(readSavedSettings());
+    const response = await callProxy('keys-sync', { keys: sent });
+    const change = applyServerKeys(readSavedSettings(), sent, response?.keys);
     if (!change) return;
     const merged = { ...readSavedSettings(), ...change };
     localStorage.setItem('appSettings', JSON.stringify(merged));
@@ -522,7 +523,14 @@ export const useAppLogic = () => {
     try {
         let state: SyncState = usableSyncState((await db.meta.get('sync'))?.value, user);
         if (options.pullOnly) state = markAllSynced(freshSyncState(user), await readLocal());
-        await syncKeys();
+        // A key sync that fails does not hold up the cards; it is tried
+        // again with the next sync.
+        try {
+            await syncKeys();
+        } catch (error) {
+            if (isNetworkError(error)) throw error;
+            console.warn('Syncing the keys failed:', error);
+        }
         await uploadChapterTexts();
 
         let needPull = true;
@@ -714,9 +722,10 @@ export const useAppLogic = () => {
       }
       setSettings(prev => {
           const updated: Settings = { ...prev, ...newSettings };
-          // A key typed or removed here is stamped, so it wins on the other devices.
-          const keyStamps = stampKeyChanges(prev, updated);
-          if (keyStamps) updated.keyStamps = keyStamps;
+          // A key typed or removed here goes to the server, and from there
+          // to the other devices, with the next sync.
+          const keysChanged = markKeyChanges(prev, updated);
+          if (keysChanged) updated.keysChanged = keysChanged;
           localStorage.setItem('appSettings', JSON.stringify(updated));
           return updated;
       })
@@ -1497,6 +1506,8 @@ export const useAppLogic = () => {
     if(confirm("Are you sure you want to log out?")) {
         await callProxy('auth-logout', {}).catch(e => console.error('Logout request failed:', e));
         localStorage.removeItem(LAST_USER_KEY);
+        // The keys stay with the account, not in this browser.
+        localStorage.setItem('appSettings', JSON.stringify(withoutKeys(readSavedSettings())));
         window.location.reload();
     }
   };

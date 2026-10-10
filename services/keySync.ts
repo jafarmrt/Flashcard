@@ -2,9 +2,13 @@
 // The AI and dictionary keys follow the account: a key typed on one device
 // works on every device signed in to the same account. They do not travel
 // with the other settings (services/settingsSync); the server keeps them
-// encrypted under their own record (server/keyVault), and each key carries
-// the time it was last changed, so the newest typing of each key wins and a
-// key removed on one device is removed everywhere.
+// encrypted under their own record (server/keyVault).
+//
+// A key typed or removed on a device is marked as changed there until the
+// server has it. The server takes changes in the order they reach it (so a
+// device with a wrong clock cannot undo a newer key), and every device takes
+// the server's copy of each key it has not changed itself. A removed key is
+// kept on the server as an empty value, so the removal reaches every device.
 
 import type { AiProviderId, Settings } from '../types';
 import type { DictionaryKeyId } from './dictionaryCatalog';
@@ -12,11 +16,6 @@ import { AI_PROVIDERS, providerKey } from './aiSettings';
 
 // "ai:groq", "dict:mw-learners"…
 export type KeyId = `ai:${AiProviderId}` | `dict:${DictionaryKeyId}`;
-
-// A key's value ('' once removed) and when it was typed (ms since 1970; 0 for
-// a key typed before keys were kept with the account).
-export interface KeyEntry { v: string; at: number }
-export type KeyEntries = Partial<Record<KeyId, KeyEntry>>;
 
 const DICT_KEY_IDS: DictionaryKeyId[] = ['mw-learners', 'mw-collegiate', 'mymemory'];
 
@@ -26,6 +25,16 @@ export const KEY_IDS: KeyId[] = [
 ];
 
 export const MAX_KEY_LENGTH = 500;
+
+// What a device sends for a key: its value ('' when removed) and whether it
+// was changed here since the server last had it.
+export interface SentKey { v: string; changed?: boolean }
+export type SentKeys = Partial<Record<KeyId, SentKey>>;
+
+// What the server keeps for a key: its value ('' once removed) and when the
+// server took it.
+export interface StoredKey { v: string; at: number }
+export type StoredKeys = Partial<Record<KeyId, StoredKey>>;
 
 // The keys as they are on this device now.
 export const localKeyValues = (settings: Partial<Settings>): Partial<Record<KeyId, string>> => {
@@ -41,50 +50,49 @@ export const localKeyValues = (settings: Partial<Settings>): Partial<Record<KeyI
   return values;
 };
 
-// What this device sends: every key it has, and every key it removed (as
-// '') since it last heard from the server.
-export const localKeyEntries = (settings: Partial<Settings>): KeyEntries => {
+// What this device sends: every key it has, and every key it removed since
+// the server last heard from it.
+export const localKeyEntries = (settings: Partial<Settings>): SentKeys => {
   const values = localKeyValues(settings);
-  const stamps = settings.keyStamps || {};
-  const entries: KeyEntries = {};
+  const changed = new Set(settings.keysChanged || []);
+  const entries: SentKeys = {};
   for (const id of KEY_IDS) {
     const v = values[id] || '';
-    const at = Number(stamps[id]) || 0;
-    if (v || at) entries[id] = { v, at };
+    if (v || changed.has(id)) entries[id] = changed.has(id) ? { v, changed: true } : { v };
   }
   return entries;
 };
 
-// The change times after a settings change: a key that is different now is
-// stamped with the current time.
-export const stampKeyChanges = (before: Partial<Settings>, after: Partial<Settings>, now = Date.now()): Settings['keyStamps'] | undefined => {
+// The keys changed here after a settings change, or undefined when no key
+// changed.
+export const markKeyChanges = (before: Partial<Settings>, after: Partial<Settings>): KeyId[] | undefined => {
   const old = localKeyValues(before);
   const next = localKeyValues(after);
   const changed = KEY_IDS.filter(id => (old[id] || '') !== (next[id] || ''));
   if (changed.length === 0) return undefined;
-  const stamps = { ...(after.keyStamps || before.keyStamps || {}) };
-  for (const id of changed) stamps[id] = now;
-  return stamps;
+  return Array.from(new Set([...(after.keysChanged || before.keysChanged || []), ...changed]));
 };
 
-// The settings change that takes the server's keys, or null when this device
-// already has them. A key changed here after the server's (typed while the
-// request was out) is kept and goes up with the next sync.
-export const applyServerKeys = (settings: Partial<Settings>, server: KeyEntries | null | undefined): Partial<Settings> | null => {
+// The settings change after the server answered `sent` with its keys, or null
+// when nothing changes here. A key changed here while the request was out
+// stays as typed and goes with the next sync.
+export const applyServerKeys = (settings: Partial<Settings>, sent: SentKeys, server: StoredKeys | null | undefined): Partial<Settings> | null => {
   if (!server || typeof server !== 'object') return null;
   const values = localKeyValues(settings);
-  const stamps = { ...(settings.keyStamps || {}) };
+  const changedHere = new Set(settings.keysChanged || []);
   const aiKeys: Partial<Record<AiProviderId, string>> = {};
   for (const p of AI_PROVIDERS) if (values[`ai:${p.id}`]) aiKeys[p.id] = values[`ai:${p.id}`];
   const dictKeys: Partial<Record<DictionaryKeyId, string>> = { ...(settings.dictKeys || {}) };
   let changed = false;
   for (const id of KEY_IDS) {
+    const local = values[id] || '';
+    if (changedHere.has(id)) {
+      // Sent as changed and not typed again since: the server has it now.
+      if (sent[id]?.changed && sent[id]!.v === local) { changedHere.delete(id); changed = true; }
+      continue;
+    }
     const entry = server[id];
-    if (!entry || typeof entry.v !== 'string' || !Number.isFinite(entry.at)) continue;
-    const localAt = Number(stamps[id]) || 0;
-    if (entry.at < localAt) continue;
-    if (entry.at !== localAt) { stamps[id] = entry.at; changed = true; }
-    if ((values[id] || '') === entry.v) continue;
+    if (!entry || typeof entry.v !== 'string' || entry.v === local) continue;
     changed = true;
     const [kind, name] = id.split(':') as ['ai' | 'dict', string];
     const target = (kind === 'ai' ? aiKeys : dictKeys) as Record<string, string>;
@@ -93,39 +101,60 @@ export const applyServerKeys = (settings: Partial<Settings>, server: KeyEntries 
   if (!changed) return null;
   // The key from before the list of services now lives in aiKeys, so a key
   // removed on another device does not come back from it.
-  return { aiKeys, dictKeys, keyStamps: stamps, ...(settings.customApiKey !== undefined ? { customApiKey: undefined } : {}) };
+  return { aiKeys, dictKeys, keysChanged: Array.from(changedHere), ...(settings.customApiKey !== undefined ? { customApiKey: undefined } : {}) };
 };
 
-// Keys as they arrived from a device: only known ids, string values of a
-// sane length, and times no later than a day from now.
-export const cleanKeyEntries = (value: unknown, now = Date.now()): KeyEntries => {
+// Keys as they arrived from a device: only known ids, and string values of a
+// sane length.
+export const cleanSentKeys = (value: unknown): SentKeys => {
   const raw = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
-  const entries: KeyEntries = {};
+  const entries: SentKeys = {};
   for (const id of KEY_IDS) {
     const e = raw[id] as Record<string, unknown> | undefined;
     if (!e || typeof e !== 'object' || typeof e.v !== 'string') continue;
     const v = e.v.trim();
     if (v.length > MAX_KEY_LENGTH) continue;
-    const at = typeof e.at === 'number' && Number.isFinite(e.at) && e.at > 0 ? Math.min(e.at, now + 86_400_000) : 0;
-    entries[id] = { v, at };
+    entries[id] = e.changed === true ? { v, changed: true } : { v };
   }
   return entries;
 };
 
-// The server's keys after a device's: the later typing of each key wins; the
-// server's copy wins a tie, so two devices with an old unstamped key agree on
-// the one that reached the server first.
-export const mergeKeyEntries = (stored: KeyEntries, incoming: KeyEntries): { merged: KeyEntries; changed: boolean } => {
-  const merged: KeyEntries = { ...stored };
+// The server's record as it was read back: only known ids and well-formed keys.
+export const cleanStoredKeys = (value: unknown): StoredKeys => {
+  const raw = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+  const entries: StoredKeys = {};
+  for (const id of KEY_IDS) {
+    const e = raw[id] as Record<string, unknown> | undefined;
+    if (e && typeof e === 'object' && typeof e.v === 'string' && typeof e.at === 'number') entries[id] = { v: e.v, at: e.at };
+  }
+  return entries;
+};
+
+// The server's keys after a device's: a key changed on the device replaces
+// the server's; one it did not change only fills a gap (a key typed before
+// keys were kept with the account), so the first device to send it wins.
+export const mergeKeyEntries = (stored: StoredKeys, incoming: SentKeys, now = Date.now()): { merged: StoredKeys; changed: boolean } => {
+  const merged: StoredKeys = { ...stored };
   let changed = false;
   for (const id of KEY_IDS) {
     const next = incoming[id];
     if (!next) continue;
     const have = merged[id];
-    if (have && have.at >= next.at) continue;
+    if (have && (!next.changed || have.v === next.v)) continue;
     if (!have && !next.v) continue; // nothing to remove
-    merged[id] = next;
+    merged[id] = { v: next.v, at: Math.max(now, (have?.at || 0) + 1) };
     changed = true;
   }
   return { merged, changed };
+};
+
+// Settings without any key, for a device that signs out: the next account
+// signed in here must not get this one's keys.
+export const withoutKeys = (settings: Partial<Settings>): Partial<Settings> => {
+  const copy = { ...settings };
+  delete copy.aiKeys;
+  delete copy.dictKeys;
+  delete copy.customApiKey;
+  delete copy.keysChanged;
+  return copy;
 };
