@@ -36,7 +36,7 @@ const MAKER_NAME: Record<string, string> = {
 const TASK_NAME: Record<string, string> = {
     extract: 'ساخت کارت از متن', sense: 'معنی در جمله', grammar: 'ساختار جمله', practice: 'تمرین جمله‌سازی',
     check: 'چک معنی', details: 'تکمیل کارت', quiz: 'آزمون', pronunciation: 'تلفظ', other: 'دیگر',
-    lookup: 'جست‌وجوی واژه', translate: 'ترجمهٔ جمله',
+    lookup: 'جست‌وجوی واژه', translate: 'ترجمه', speech: 'خواندن بلند با صدای هوش مصنوعی',
 };
 
 // English names stay left to right inside the Persian text.

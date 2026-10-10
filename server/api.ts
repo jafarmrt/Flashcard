@@ -12,6 +12,7 @@ import { geminiUsage, listGeminiModels, listOpenAiModels, openAiUsage } from './
 import { cachedEnrich, fileLookupStore, LookupStore } from './lookupCache.js';
 import { openKeys, sealKeys } from './keyVault.js';
 import { cleanSentKeys, mergeKeyEntries } from '../services/keySync.js';
+import { cleanSpeechName, DEFAULT_SPEECH_MODEL, DEFAULT_SPEECH_VOICE, generateSpeech, MAX_SPEECH_CHARS, SpeechError } from './speech.js';
 import {
   PUBLIC_ACTIONS, USERNAME_PATTERN, MIN_PASSWORD_LENGTH, registrationAllowed,
   hashPassword, verifyPassword, getSessionSecret, createSessionToken, sessionUser,
@@ -478,6 +479,23 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         const apiKey = payload.customApiKey || process.env.GEMINI_API_KEY || process.env.API_KEY;
         if (!apiKey) return res.status(400).json({ error: 'Gemini: no API key. Set GEMINI_API_KEY on the server or enter a key in the AI settings.' });
         return await handleGeminiGenerate(payload, res, apiKey);
+      }
+
+      case 'ai-speech': {
+        // Reading aloud with an AI voice: one short piece of text at a time.
+        const text = typeof payload.text === 'string' ? payload.text.replace(/\s+/g, ' ').trim() : '';
+        if (!text) return res.status(400).json({ error: 'text is required.' });
+        if (text.length > MAX_SPEECH_CHARS) return res.status(400).json({ error: `At most ${MAX_SPEECH_CHARS} characters at a time.` });
+        const apiKey = payload.customApiKey || process.env.GEMINI_API_KEY || process.env.API_KEY;
+        if (!apiKey) return res.status(400).json({ error: 'Gemini voice: no API key. Enter a Gemini key in the AI settings.' });
+        const model = cleanSpeechName(payload.model, DEFAULT_SPEECH_MODEL);
+        try {
+          const audio = await generateSpeech(apiKey, text, model, cleanSpeechName(payload.voice, DEFAULT_SPEECH_VOICE));
+          return res.status(200).json({ ...audio, model });
+        } catch (e) {
+          if (e instanceof SpeechError) return res.status(e.status >= 400 && e.status < 600 ? e.status : 502).json({ error: e.message });
+          throw e;
+        }
       }
 
       case 'test-ai-key': {
