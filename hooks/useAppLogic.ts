@@ -61,6 +61,15 @@ const savedReviewGoal = (): number => {
 // The account last signed in on this browser, so the app opens offline.
 const LAST_USER_KEY = 'lc_last_user';
 
+// A short, readable reason for an error, e.g. "VersionError: ..." from the
+// browser database or the server's own message.
+const describeError = (e: unknown): string => {
+  const err = e as { name?: string; message?: string; inner?: { name?: string; message?: string } };
+  const inner = err?.inner?.message ? ` (${err.inner.name || 'Error'}: ${err.inner.message})` : '';
+  const text = `${err?.name && err.name !== 'Error' ? `${err.name}: ` : ''}${err?.message || String(e)}${inner}`;
+  return text.length > 200 ? `${text.slice(0, 200)}…` : text;
+};
+
 const readSavedSettings = (): Partial<Settings> => {
   try {
     return JSON.parse(localStorage.getItem('appSettings') || '{}');
@@ -178,6 +187,8 @@ export const useAppLogic = () => {
   const [studySessionId, setStudySessionId] = useState(0);
   // Where a study session goes back to when it ends.
   const sessionReturn = useRef<View>('TODAY');
+
+  const lastSyncError = useRef('');
 
   const signIn = (username: string) => {
     signedInUser.current = username;
@@ -554,10 +565,16 @@ export const useAppLogic = () => {
         }
         rememberSynced(await fetchData());
         lastSyncAt.current = Date.now();
+        lastSyncError.current = '';
         setSyncStatus('synced');
     } catch (error) {
         console.error('Sync failed:', error);
-        setSyncStatus(isNetworkError(error) ? 'offline' : 'error');
+        const offline = isNetworkError(error);
+        setSyncStatus(offline ? 'offline' : 'error');
+        // Say why, once per distinct reason, so a failure is never silent.
+        const reason = describeError(error);
+        if (!offline && reason !== lastSyncError.current) showToast(`همگام‌سازی ناموفق: ${reason}`);
+        lastSyncError.current = offline ? '' : reason;
     } finally {
         syncInFlight.current = false;
         if (syncAgain.current) {
@@ -624,7 +641,11 @@ export const useAppLogic = () => {
         try { await callProxy('ping-mw', {}); setMwDictApiStatus('ok'); } catch (e) { setMwDictApiStatus('error'); }
     }
     checkApis();
-    (db as any).open().then(() => setDbStatus('ok')).catch(() => setDbStatus('error'));
+    (db as any).open().then(() => setDbStatus('ok')).catch((e: Error) => {
+        console.error('Local database could not open:', e);
+        setDbStatus('error');
+        showToast(`پایگاه دادهٔ مرورگر باز نشد: ${describeError(e)}`);
+    });
     return () => {
         window.removeEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
         document.removeEventListener('visibilitychange', syncWhenBack);

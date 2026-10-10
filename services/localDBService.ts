@@ -158,8 +158,11 @@ export class LinguaCardsDB extends Dexie {
         // Add createdAt to existing cards using their ID (which is a timestamp) as a fallback.
         return tx.table('flashcards').toCollection().modify((card: any) => {
             if (!card.createdAt) {
-                const timestamp = parseInt(card.id.split('-')[0], 10);
-                card.createdAt = new Date(timestamp).toISOString();
+                // Old ids start with a timestamp; anything else gets today,
+                // since an invalid date would throw and stop the database opening.
+                const timestamp = parseInt(String(card.id).split('-')[0], 10);
+                const made = new Date(timestamp);
+                card.createdAt = (Number.isNaN(made.getTime()) ? new Date() : made).toISOString();
             }
         });
     });
@@ -246,6 +249,15 @@ export class LinguaCardsDB extends Dexie {
 }
 
 export const db = new LinguaCardsDB();
+
+// Last resort when this browser's database will not open: delete it and start
+// again. Whatever is on the server comes back at the next sync; anything never
+// synced is lost, so the caller asks first.
+export const resetLocalDatabase = async (): Promise<void> => {
+  db.close();
+  await Dexie.delete('LinguaCardsDB');
+  window.location.reload();
+};
 
 // Pre-populate with a default deck and user profile if none exist
 (db as any).on('populate', async () => {

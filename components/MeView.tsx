@@ -1,4 +1,5 @@
 import React from 'react';
+import { DbRepair } from './layout/DbRepair';
 import type { View, HealthStatus, SyncStatus } from '../hooks/useAppLogic';
 import { UserProfile, UserAchievement } from '../types';
 import { calculateLevel } from '../services/gamificationService';
@@ -75,6 +76,7 @@ export const MeView: React.FC<MeViewProps> = ({ userProfile, username, streak, e
           </span>
         ))}
       </p>
+      {health.some(h => h.label === 'DB' && h.status === 'error') && <DbRepair />}
     </div>
   );
 };

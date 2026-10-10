@@ -1,4 +1,5 @@
 import React from 'react';
+import { DbRepair } from './DbRepair';
 import type { View, HealthStatus, SyncStatus } from '../../hooks/useAppLogic';
 import { calculateLevel } from '../../services/gamificationService';
 import { UserProfile } from '../../types';
@@ -94,6 +95,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ view, dueCount, userProfile, u
           </span>
         ))}
       </div>
+      {health.some(h => h.label === 'DB' && h.status === 'error') && <DbRepair />}
     </aside>
   );
 };
