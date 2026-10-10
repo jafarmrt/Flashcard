@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { extractKinds, KIND_LABEL } from '../services/cardKinds';
 import { AiProviderId, Deck, Settings, ExtractedWordCard } from '../types';
 import { testAiConnection } from '../services/geminiService';
 import { aiRequestOptions, providerKey, providerList, providerProblem, withPrimaryProvider } from '../services/aiSettings';
@@ -18,12 +19,18 @@ interface AiTextExtractorViewProps {
   knownTerms?: string[]; // the "I know it" list: never suggested
 }
 
-const KIND_LABELS: Record<string, { label: string; className: string }> = {
-  word: { label: 'واژه', className: 'bg-brand-100 text-brand-700 dark:bg-brand-900/50 dark:text-brand-200' },
-  phrase: { label: 'عبارت', className: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200' },
-  idiom: { label: 'اصطلاح', className: 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200' },
-  grammar: { label: 'ساختار دستوری', className: 'bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-200' },
+const KIND_TONE: Record<string, string> = {
+  word: 'bg-brand-100 text-brand-700 dark:bg-brand-900/50 dark:text-brand-200',
+  phrase: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200',
+  collocation: 'bg-teal-100 text-teal-800 dark:bg-teal-900/50 dark:text-teal-200',
+  idiom: 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200',
+  expression: 'bg-orange-100 text-orange-800 dark:bg-orange-900/50 dark:text-orange-200',
+  slang: 'bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/50 dark:text-fuchsia-200',
+  grammar: 'bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-200',
 };
+const KIND_LABELS: Record<string, { label: string; className: string }> = Object.fromEntries(
+  Object.entries(KIND_TONE).map(([kind, className]) => [kind, { label: KIND_LABEL[kind as keyof typeof KIND_LABEL], className }]),
+);
 
 const CEFR_LEVELS = [
   { id: 'A1', label: 'مبتدی' },
@@ -342,6 +349,7 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
         existingFronts,
         knownTerms,
         includeGrammar: source === 'ai' && includeGrammar,
+        kinds: extractKinds(settings),
         aiOptions: aiRequestOptions(settings),
         signal: controller.signal,
         onProgress: setProgress,

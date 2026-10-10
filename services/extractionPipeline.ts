@@ -3,7 +3,7 @@
 // free dictionaries when AI is off or fails) -> one merged list without repeats,
 // with terms that already have a card flagged.
 
-import { ExtractedWordCard } from '../types';
+import { CardKind, ExtractedWordCard } from '../types';
 import { AiRequestOptions, extractVocabularyFromText } from './geminiService';
 import { isPermanentAiError } from './aiClient';
 import { aiOrigin, dictionaryOrigin } from './aiSettings';
@@ -35,6 +35,7 @@ export interface LongTextExtractionParams {
   knownRuleIds?: Iterable<string>; // structures that already have a card, when the caller knows
   knownTerms?: string[]; // the "I know it" list: never suggested, in any form
   includeGrammar?: boolean;
+  kinds?: CardKind[]; // what the AI looks for (services/cardKinds); all when unset
   aiOptions?: AiRequestOptions;
   chunkWords?: number;
   signal?: AbortSignal;
@@ -60,11 +61,13 @@ export { isPermanentAiError };
 
 export const extractFromLongText = async (params: LongTextExtractionParams): Promise<LongTextExtractionResult> => {
   const {
-    text, level, perSection, source, existingFronts, knownRuleIds, knownTerms = [], includeGrammar = true, aiOptions, signal, onProgress,
+    text, level, perSection, source, existingFronts, knownRuleIds, knownTerms = [], kinds, aiOptions, signal, onProgress,
     chunkWords = DEFAULT_CHUNK_WORDS,
     extractAi = extractVocabularyFromText,
     extractFree = extractWithFreeDictionaries,
   } = params;
+  // Grammar switched off in the settings is off here too.
+  const includeGrammar = (params.includeGrammar ?? true) && (!kinds || kinds.includes('grammar'));
 
   const sections = splitIntoChunks(text, chunkWords);
   const collected: ExtractedWordCard[] = [];
@@ -94,7 +97,7 @@ export const extractFromLongText = async (params: LongTextExtractionParams): Pro
     try {
       if (source === 'ai' && !aiDisabled) {
         try {
-          found = await extractAi({ text: section, level, count: perSection, exclude, includeGrammar, options: aiOptions });
+          found = await extractAi({ text: section, level, count: perSection, exclude, includeGrammar, kinds, options: aiOptions });
           byAi = true;
         } catch (error) {
           if (signal?.aborted) break;

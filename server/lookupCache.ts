@@ -17,12 +17,13 @@ export interface LookupStore {
   set(key: string, value: FreeEnrichment, keepMs: number): Promise<void>;
 }
 
-export const lookupCacheKey = (term: string) => `lookup:v1:${lookupKey(term)}`;
+// The dictionaries asked are part of the key: other dictionaries, another answer.
+export const lookupCacheKey = (term: string, signature = '') => `lookup:v2:${signature}:${lookupKey(term)}`;
 
 // The cache never fails a lookup: when it cannot be read or written, the
 // dictionaries answer as if it were not there.
-export async function cachedEnrich(term: string, store: LookupStore | null, load: () => Promise<FreeEnrichment>): Promise<FreeEnrichment> {
-  const key = lookupCacheKey(term);
+export async function cachedEnrich(term: string, store: LookupStore | null, load: () => Promise<FreeEnrichment>, signature = ''): Promise<FreeEnrichment> {
+  const key = lookupCacheKey(term, signature);
   if (store) {
     try {
       const hit = await store.get(key);

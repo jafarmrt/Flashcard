@@ -14,7 +14,7 @@ const card = (over: Partial<Flashcard> = {}): Flashcard => ({
   dueDate: T0.toISOString(), createdAt: T0.toISOString(), updatedAt: T0.toISOString(), ...over,
 } as Flashcard);
 
-const settings = (over: Partial<Settings> = {}): Settings => ({ defaultApiSource: 'free', ...over } as Settings);
+const settings = (over: Partial<Settings> = {}): Settings => ({ theme: 'light', ...over } as Settings);
 
 // --- Which services a card can be asked of ---
 
@@ -24,7 +24,7 @@ test('every AI service set up on the device is offered on its own, then the dict
     aiKeys: { groq: 'gk', deepseek: 'dk' },
   }));
   // OpenRouter is on but has no key: it cannot answer. DeepSeek is off but has a key: the user can still ask it.
-  assert.deepEqual(sources.map(s => s.id), ['ai:groq', 'ai:gemini', 'ai:deepseek', 'dict:free', 'dict:mw']);
+  assert.deepEqual(sources.map(s => s.id), ['ai:groq', 'ai:gemini', 'ai:deepseek', 'dict:all', 'dict:free-dictionary', 'dict:wiktionary', 'dict:mw-learners', 'dict:mw-collegiate', 'dict:datamuse']);
   const groq = sources[0];
   assert.equal(groq.options?.customApiKey, 'gk');
   assert.equal(groq.options?.fallbacks, undefined);
@@ -92,9 +92,9 @@ test('only the chosen service is asked, and the answer says which one it was', a
 });
 
 test('errors are told in words the user can act on', () => {
-  const mw = { id: 'dict:mw', kind: 'dictionary' as const, name: 'Merriam-Webster' };
-  assert.match(refreshErrorText(new Error('Merriam-Webster API key not configured in .env (MW_API_KEY).'), mw), /کلید Merriam-Webster/);
-  assert.match(refreshErrorText(new Error('not found'), { id: 'dict:free', kind: 'dictionary', name: 'دیکشنری' }), /پیدا نکرد/);
+  const mw = { id: 'dict:mw-collegiate', kind: 'dictionary' as const, name: 'Merriam-Webster Collegiate' };
+  assert.match(refreshErrorText(new Error('Merriam-Webster Collegiate needs an API key.'), mw), /کلید می‌خواهد/);
+  assert.match(refreshErrorText(new Error('not found'), { id: 'dict:all', kind: 'dictionary', name: 'دیکشنری' }), /پیدا نکرد/);
   assert.match(refreshErrorText(new Error('429 quota'), { id: 'ai:groq', kind: 'ai', name: 'Groq' }), /سهمیهٔ Groq/);
 });
 

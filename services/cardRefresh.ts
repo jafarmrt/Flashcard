@@ -8,7 +8,9 @@ import type { AiRequestOptions } from './geminiService';
 import { parseJsonFromAiResponse } from './geminiService';
 import { aiGenerate } from './aiClient';
 import { aiOrigin, dictionaryOrigin, providerInfo, providerKey, providerList, providerOptions, providerProblem } from './aiSettings';
-import { fetchFromMerriamWebster } from './dictionaryService';
+import { lookupDictionary } from './dictionaryService';
+import { dictionaryList } from './dictSettings';
+import { DictionaryId, dictionaryInfo, DICTIONARY_IDS } from './dictionaryCatalog';
 import { freeEnrich } from './freeExtractionService';
 import { CEFR, levelOfFrequency } from './wordLevel';
 
@@ -40,14 +42,15 @@ export type CardContent = Pick<Flashcard, 'front' | 'back'> & Partial<Pick<Flash
 export type CardProposal = Partial<Pick<Flashcard, RefreshField>> & { origin: CardOrigin };
 
 export interface RefreshSource {
-  id: string; // "ai:groq", "dict:free", "dict:mw"
+  id: string; // "ai:groq", "dict:all", "dict:wiktionary"
   kind: 'ai' | 'dictionary';
   name: string;
   options?: AiRequestOptions; // AI only: this one service, no fallbacks
 }
 
 // The services the user can ask for one card: every AI service set up on
-// this device (switched on, or with its own key), then the dictionaries.
+// this device (switched on, or with its own key), then all the dictionaries
+// in order with a free translation, then each dictionary switched on.
 // Gemini with the server's key stays available unless the user switched it off.
 export const refreshSources = (settings: Partial<Settings>): RefreshSource[] => {
   const ai: RefreshSource[] = providerList(settings)
@@ -62,8 +65,8 @@ export const refreshSources = (settings: Partial<Settings>): RefreshSource[] => 
   }
   return [
     ...ai,
-    { id: 'dict:free', kind: 'dictionary', name: 'دیکشنری رایگان و ترجمهٔ رایگان' },
-    { id: 'dict:mw', kind: 'dictionary', name: 'Merriam-Webster' },
+    { id: 'dict:all', kind: 'dictionary', name: 'دیکشنری‌ها به ترتیب تنظیمات، با ترجمهٔ رایگان' },
+    ...dictionaryList(settings).filter(d => d.enabled).map((d): RefreshSource => ({ id: `dict:${d.id}`, kind: 'dictionary', name: dictionaryInfo(d.id).name })),
   ];
 };
 
@@ -138,8 +141,8 @@ export const refreshWithAi = async (card: CardContent, options: AiRequestOptions
 
 // --- Dictionaries ---
 
-export const refreshWithDictionary = async (card: CardContent, which: 'free' | 'mw', now: Date = new Date()): Promise<CardProposal> => {
-  if (which === 'free') {
+export const refreshWithDictionary = async (card: CardContent, which: 'all' | DictionaryId, now: Date = new Date()): Promise<CardProposal> => {
+  if (which === 'all') {
     const e = await freeEnrich(card.front);
     if (!e || (!e.found && !e.translation)) throw new Error('not found');
     const level = levelOfFrequency(e.frequency);
@@ -152,29 +155,34 @@ export const refreshWithDictionary = async (card: CardContent, which: 'free' | '
       ...(e.collocations.length ? { collocations: e.collocations.slice(0, 6) } : {}),
       ...(e.audioUrl ? { audioSrc: e.audioUrl } : {}),
       ...(level ? { level } : {}),
-      origin: dictionaryOrigin(now),
+      origin: { ...dictionaryOrigin(now), ...(e.source ? { provider: e.source } : {}) },
     };
   }
-  const d = await fetchFromMerriamWebster(card.front);
+  const d = await lookupDictionary(card.front, { source: which });
   return {
     ...(d.pronunciation && d.pronunciation !== '//' ? { pronunciation: d.pronunciation } : {}),
     ...(d.partOfSpeech ? { partOfSpeech: d.partOfSpeech } : {}),
     ...(d.definitions.length ? { definition: d.definitions.slice(0, 3) } : {}),
     ...(d.exampleSentences.length ? { exampleSentenceTarget: d.exampleSentences.slice(0, 3) } : {}),
     ...(d.audioUrl ? { audioSrc: d.audioUrl } : {}),
-    origin: { by: 'dictionary', provider: 'Merriam-Webster', at: now.toISOString() },
+    origin: { by: 'dictionary', provider: d.source || dictionaryInfo(which).name, at: now.toISOString() },
   };
+};
+
+const dictionaryOf = (source: RefreshSource): 'all' | DictionaryId => {
+  const id = source.id.replace(/^dict:/, '');
+  return DICTIONARY_IDS.includes(id as DictionaryId) ? (id as DictionaryId) : 'all';
 };
 
 export const refreshCard = (card: CardContent, source: RefreshSource): Promise<CardProposal> =>
   source.kind === 'ai'
     ? refreshWithAi(card, source.options || {})
-    : refreshWithDictionary(card, source.id === 'dict:mw' ? 'mw' : 'free');
+    : refreshWithDictionary(card, dictionaryOf(source));
 
 // What went wrong, in words the user can act on.
 export const refreshErrorText = (error: unknown, source: RefreshSource): string => {
   const message = String((error as Error)?.message || '');
-  if (source.id === 'dict:mw' && /MW_API_KEY|not configured/i.test(message)) return 'کلید Merriam-Webster روی سرور تنظیم نشده است.';
+  if (source.kind === 'dictionary' && /needs an API key/i.test(message)) return `«${source.name}» کلید می‌خواهد. کلیدش را در تنظیمات، بخش دیکشنری‌ها، وارد کن.`;
   if (source.kind === 'dictionary' && /not found|404/i.test(message)) return `«${source.name}» این واژه را پیدا نکرد.`;
   if (/429|quota|rate/i.test(message)) return `سهمیهٔ ${source.name} فعلاً تمام شده. سرویس دیگری را امتحان کن.`;
   if (/401|403|key/i.test(message)) return `کلید ${source.name} درست نیست. در تنظیمات نگاهش کن.`;

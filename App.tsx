@@ -294,7 +294,6 @@ const App: React.FC = () => {
                     onSave={handleBulkSaveCards}
                     onCancel={() => setView('DECKS')}
                     showToast={showToast}
-                    defaultApiSource={settings.defaultApiSource}
                     concurrency={settings.bulkAddConcurrency || 3}
                     aiTimeout={settings.bulkAddAiTimeout || 15}
                     dictTimeout={settings.bulkAddDictTimeout || 2.5}

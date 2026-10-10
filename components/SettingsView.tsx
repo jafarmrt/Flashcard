@@ -1,5 +1,9 @@
 import React, { useRef, useState } from 'react';
-import { AiProviderId, AiProviderSetting, Settings } from '../types';
+import { AiProviderId, AiProviderSetting, CardKind, DictionaryEntrySetting, Settings } from '../types';
+import { dictionaryKey, dictionaryList, dictionaryNote } from '../services/dictSettings';
+import { DictionaryId, DictionaryKeyId, dictionaryInfo } from '../services/dictionaryCatalog';
+import { testDictionary } from '../services/dictionaryService';
+import { CARD_KINDS, extractKinds, KIND_EXAMPLE, KIND_LABEL } from '../services/cardKinds';
 import { AI_PROVIDERS, providerInfo, providerKey, providerList, providerOptions, providerProblem } from '../services/aiSettings';
 import { testAiConnection } from '../services/geminiService';
 import { fa, Icon } from './common/ui';
@@ -183,6 +187,151 @@ const AiProviders: React.FC<{ settings: Settings; onUpdateSettings: (s: Partial<
     );
 };
 
+type DictDraft = Partial<Record<DictionaryKeyId, string>>;
+
+// The dictionaries, in the order they are tried: the first that knows a term
+// gives its meaning, pronunciation and examples. Keys stay on this device.
+const Dictionaries: React.FC<{ settings: Settings; onUpdateSettings: (s: Partial<Settings>) => void }> = ({ settings, onUpdateSettings }) => {
+    const list = dictionaryList(settings);
+    const [open, setOpen] = useState<string | null>(null);
+    const [drafts, setDrafts] = useState<DictDraft>({});
+    const [tests, setTests] = useState<Record<string, { busy?: boolean; ok?: boolean; message?: string }>>({});
+
+    const keyOf = (id: DictionaryKeyId) => drafts[id] ?? dictionaryKey(settings, id) ?? '';
+    const keysWith = (id?: DictionaryKeyId, value?: string) => {
+        const keys: DictDraft = { ...(settings.dictKeys || {}) };
+        if (id) { if (value?.trim()) keys[id] = value.trim(); else delete keys[id]; }
+        return keys;
+    };
+    const commit = (id: DictionaryKeyId) => {
+        if (drafts[id] === undefined) return;
+        onUpdateSettings({ dictKeys: keysWith(id, drafts[id]) });
+        setDrafts(prev => { const copy = { ...prev }; delete copy[id]; return copy; });
+    };
+    const save = (next: DictionaryEntrySetting[]) => onUpdateSettings({ dictionaries: next });
+    const move = (index: number, by: -1 | 1) => {
+        const next = [...list];
+        const [item] = next.splice(index, 1);
+        next.splice(index + by, 0, item);
+        save(next);
+    };
+    const toggle = (entry: DictionaryEntrySetting) => save(list.map(e => (e.id === entry.id ? { ...e, enabled: !e.enabled } : e)));
+    const enabledCount = list.filter(e => e.enabled).length;
+
+    const test = async (id: DictionaryId | 'mymemory') => {
+        const keyId = id === 'mymemory' || dictionaryInfo(id as DictionaryId).needsKey ? (id as DictionaryKeyId) : undefined;
+        if (keyId) commit(keyId);
+        setTests(t => ({ ...t, [id]: { busy: true } }));
+        const keys = keyId ? keysWith(keyId, keyOf(keyId)) : settings.dictKeys || {};
+        const result = await testDictionary(id, { keys });
+        setTests(t => ({ ...t, [id]: { ok: result.ok, message: result.ok ? `جواب داد: ${result.message}` : result.message } }));
+    };
+
+    const testLine = (id: string) => {
+        const t = tests[id];
+        return t?.message ? <p className={`text-sm ${t.ok ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}><bdi dir="auto">{t.message}</bdi></p> : null;
+    };
+
+    let order = 0;
+    return (
+        <div className="px-5 pb-5 flex flex-col gap-3">
+            <p className="text-sm text-ink-muted dark:text-slate-400">
+                برای پر کردن کارت و نگاه کردن واژه، از بالا به پایین پرسیده می‌شوند و اولین دیکشنری‌ای که واژه را بشناسد جواب می‌دهد. Wiktionary فعل‌های عبارتی، ایدیوم‌ها و اسلنگ را هم دارد. کلیدها فقط روی همین دستگاه می‌مانند.
+            </p>
+            <ol className="flex flex-col gap-2">
+                {list.map((entry, i) => {
+                    const info = dictionaryInfo(entry.id);
+                    const note = entry.enabled ? dictionaryNote(settings, entry) : null;
+                    if (entry.enabled) order++;
+                    const isOpen = open === entry.id;
+                    const t = tests[entry.id];
+                    return (
+                        <li key={entry.id} className={`rounded-2xl ring-1 ${entry.enabled ? 'ring-brand-200 dark:ring-brand-800' : 'ring-slate-200 dark:ring-slate-700'}`}>
+                            <div className="flex items-center gap-2 p-2.5">
+                                <span className={`w-8 h-8 rounded-xl flex items-center justify-center text-sm font-extrabold shrink-0 ${entry.enabled ? 'bg-brand-500 text-white' : 'bg-slate-100 text-slate-400 dark:bg-slate-700'}`}>
+                                    {entry.enabled ? fa(order) : '–'}
+                                </span>
+                                <label className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+                                    <input type="checkbox" checked={entry.enabled} onChange={() => toggle(entry)} disabled={entry.enabled && enabledCount === 1}
+                                        className="w-[18px] h-[18px] accent-brand-500" aria-label={`استفاده از ${info.name}`} />
+                                    <span className="min-w-0">
+                                        <span className="block font-bold text-ink dark:text-white truncate"><bdi>{info.name}</bdi></span>
+                                        <span className="block text-xs text-ink-muted dark:text-slate-400">{info.hint}</span>
+                                    </span>
+                                </label>
+                                <button type="button" onClick={() => move(i, -1)} disabled={i === 0} aria-label={`${info.name} بالاتر`} className="w-9 h-9 rounded-xl flex items-center justify-center hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-30 shrink-0"><Icon.Back size={16} className="-rotate-90" /></button>
+                                <button type="button" onClick={() => move(i, 1)} disabled={i === list.length - 1} aria-label={`${info.name} پایین‌تر`} className="w-9 h-9 rounded-xl flex items-center justify-center hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-30 shrink-0"><Icon.Back size={16} className="rotate-90" /></button>
+                                <button type="button" onClick={() => setOpen(isOpen ? null : entry.id)} aria-expanded={isOpen} className="min-h-[36px] px-3 rounded-xl text-sm text-brand-600 dark:text-brand-300 hover:bg-brand-50 dark:hover:bg-slate-700 shrink-0">
+                                    {isOpen ? 'بستن' : info.needsKey ? 'کلید' : 'آزمایش'}
+                                </button>
+                            </div>
+                            {note && <p className="px-3 pb-2 -mt-1 text-xs text-amber-800 dark:text-amber-200">{note}</p>}
+                            {isOpen && (
+                                <div className="px-3 pb-3 flex flex-col gap-3">
+                                    {info.needsKey && (
+                                        <label className="flex flex-col gap-1 text-sm">
+                                            <span className="text-ink-muted dark:text-slate-400">کلید API</span>
+                                            <input type="password" dir="ltr" autoComplete="off" value={keyOf(entry.id as DictionaryKeyId)}
+                                                onChange={e => setDrafts(d => ({ ...d, [entry.id]: e.target.value }))} onBlur={() => commit(entry.id as DictionaryKeyId)}
+                                                placeholder="خالی: کلید سرور، اگر باشد" className={input} />
+                                            {info.keyUrl && <a href={info.keyUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-brand-600 dark:text-brand-300 hover:underline">گرفتن کلید رایگان (هنگام ثبت‌نام همین دیکشنری را انتخاب کن)</a>}
+                                        </label>
+                                    )}
+                                    <div className="flex flex-wrap items-center gap-3">
+                                        <button type="button" onClick={() => test(entry.id)} disabled={t?.busy} className={button}>{t?.busy ? 'در حال آزمایش…' : 'آزمایش'}</button>
+                                        {testLine(entry.id)}
+                                    </div>
+                                </div>
+                            )}
+                        </li>
+                    );
+                })}
+            </ol>
+            <div className="rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 p-3 flex flex-col gap-2">
+                <div>
+                    <h3 className="font-bold text-ink dark:text-white">ترجمهٔ رایگان فارسی (MyMemory)</h3>
+                    <p className="text-xs text-ink-muted dark:text-slate-400">وقتی هوش مصنوعی در دسترس نیست معنی فارسی از اینجا می‌آید. با یک ایمیل، سهمیهٔ روزانه ده برابر می‌شود؛ ثبت‌نام لازم نیست.</p>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                    <input type="email" dir="ltr" autoComplete="email" value={keyOf('mymemory')} aria-label="ایمیل برای MyMemory"
+                        onChange={e => setDrafts(d => ({ ...d, mymemory: e.target.value }))} onBlur={() => commit('mymemory')}
+                        placeholder="you@example.com" className={input} />
+                    <button type="button" onClick={() => test('mymemory')} disabled={tests.mymemory?.busy} className={`${button} shrink-0`}>{tests.mymemory?.busy ? 'در حال آزمایش…' : 'آزمایش'}</button>
+                </div>
+                {testLine('mymemory')}
+            </div>
+        </div>
+    );
+};
+
+// What extraction looks for in a text. A single word is always looked for.
+const ExtractKinds: React.FC<{ settings: Settings; onUpdateSettings: (s: Partial<Settings>) => void }> = ({ settings, onUpdateSettings }) => {
+    const on = extractKinds(settings);
+    const toggle = (kind: CardKind) => {
+        const next = on.includes(kind) ? on.filter(k => k !== kind) : [...on, kind];
+        onUpdateSettings({ extractKinds: CARD_KINDS.filter(k => next.includes(k)) });
+    };
+    return (
+        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-700">
+            <h3 className="font-bold text-ink dark:text-white">هوش مصنوعی در متن دنبال چه بگردد</h3>
+            <p className="text-sm text-ink-muted dark:text-slate-400 mt-0.5">برای هرکدام کارت جدا ساخته می‌شود. این کار را فقط هوش مصنوعی می‌تواند بکند؛ بدون آن، دیکشنری‌های رایگان واژه‌های سخت و چند فعل عبارتی را پیدا می‌کنند.</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+                {CARD_KINDS.map(kind => {
+                    const active = on.includes(kind);
+                    const fixed = kind === 'word';
+                    return (
+                        <button key={kind} type="button" aria-pressed={active} disabled={fixed} onClick={() => toggle(kind)}
+                            title={KIND_EXAMPLE[kind]}
+                            className={`min-h-[36px] px-3 rounded-xl text-sm border ${active ? 'bg-brand-50 border-brand-300 text-brand-800 font-bold dark:bg-brand-900/40 dark:border-brand-700 dark:text-brand-100' : 'border-slate-200 text-ink-muted dark:border-slate-600 dark:text-slate-300'} ${fixed ? 'opacity-80 cursor-default' : ''}`}>
+                            {KIND_LABEL[kind]} <span dir="ltr" className="font-en text-xs opacity-70">{KIND_EXAMPLE[kind]}</span>
+                        </button>
+                    );
+                })}
+            </div>
+        </div>
+    );
+};
+
 const LEVELS: { value: NonNullable<Settings['userLevel']>; label: string }[] = [
     { value: 'A1', label: 'A1، مبتدی' },
     { value: 'A2', label: 'A2، پایه' },
@@ -233,15 +382,12 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                     <Segmented label="هدف روزانه" value={settings.dailyReviewGoal || 20} onChange={goal => onUpdateSettings({ dailyReviewGoal: goal })}
                         options={[10, 20, 30, 50].map(n => ({ value: n, label: fa(n) }))} />
                 </Row>
+                <ExtractKinds settings={settings} onUpdateSettings={onUpdateSettings} />
                 <Row title="پیش‌خوانی خودکار" hint="پیش از هر بخش کتاب، واژه‌های سخت آن یک بار نشان داده شود.">
                     <input type="checkbox" checked={!!settings.preReadAuto} onChange={e => onUpdateSettings({ preReadAuto: e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="پیش‌خوانی خودکار" />
                 </Row>
                 <Row title="نشان دادن ساختارهای دستوری" hint="واژه‌هایی که یک ساختار دستوری می‌سازند، هنگام خواندن با نقطه‌چین مشخص شوند.">
                     <input type="checkbox" checked={!settings.hideGrammar} onChange={e => onUpdateSettings({ hideGrammar: !e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="نشان دادن ساختارهای دستوری" />
-                </Row>
-                <Row title="دیکشنری کامل کردن کارت" hint="وقتی جزئیات یک کارت (تلفظ، تعریف، مثال) پر می‌شود.">
-                    <Segmented label="دیکشنری" value={settings.defaultApiSource} onChange={source => onUpdateSettings({ defaultApiSource: source })}
-                        options={[{ value: 'free', label: 'رایگان' }, { value: 'mw', label: 'Merriam-Webster' }]} />
                 </Row>
             </Card>
 
@@ -252,6 +398,10 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                         <Icon.Chart size={18} />گزارش مصرف سرویس‌ها و خطاها
                     </button>
                 </div>
+            </Card>
+
+            <Card title="دیکشنری‌ها و ترجمهٔ رایگان">
+                <Dictionaries settings={settings} onUpdateSettings={onUpdateSettings} />
             </Card>
 
             <Card title="ظاهر">
@@ -274,7 +424,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                         <span className="w-14 text-center font-bold">{fa(settings.bulkAddAiTimeout || 15)} ثانیه</span>
                     </div>
                 </Row>
-                <Row title="صبر برای دیکشنری" hint="پیش از رفتن سراغ دیکشنری پشتیبان.">
+                <Row title="صبر برای هر دیکشنری" hint="پیش از رفتن سراغ دیکشنری بعدی در فهرست.">
                     <div className="flex items-center gap-3">
                         <input type="range" min="3" max="20" step="1" value={settings.bulkAddDictTimeout || 5} onChange={e => onUpdateSettings({ bulkAddDictTimeout: parseInt(e.target.value, 10) })} className="w-32 accent-brand-500" aria-label="صبر برای دیکشنری" />
                         <span className="w-14 text-center font-bold">{fa(settings.bulkAddDictTimeout || 5)} ثانیه</span>

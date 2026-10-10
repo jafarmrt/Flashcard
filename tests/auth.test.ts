@@ -52,7 +52,7 @@ test('the session cookie is HttpOnly and SameSite=Strict, and is read back from 
 });
 
 test('only ping and auth actions are public', () => {
-  for (const action of ['sync-load', 'sync-merge', 'gemini-generate', 'fetch-audio', 'dictionary-free']) {
+  for (const action of ['sync-load', 'sync-merge', 'gemini-generate', 'fetch-audio', 'dictionary-lookup', 'test-dictionary']) {
     assert.equal(PUBLIC_ACTIONS.has(action), false, action);
   }
   assert.ok(PUBLIC_ACTIONS.has('auth-login'));

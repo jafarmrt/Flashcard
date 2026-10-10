@@ -24,12 +24,7 @@ import { freeEnrich, FreeEnrichment } from '../services/freeExtractionService';
 import { 
   generatePersianDetails, parseLevel,
 } from '../services/geminiService';
-import {
-  fetchFromFreeDictionary,
-  fetchFromMerriamWebster,
-  fetchAudioData,
-  DictionaryResult
-} from '../services/dictionaryService';
+import { applyDictionarySettings } from '../services/dictSettings';
 import { AutoFixStats } from '../components/AutoFixReportModal';
 import { fa } from '../components/common/ui';
 
@@ -80,7 +75,6 @@ const readSavedSettings = (): Partial<Settings> => {
 
 const defaultSettings: Settings = {
     theme: 'system',
-    defaultApiSource: 'free',
     bulkAddConcurrency: 3,
     bulkAddAiTimeout: 15,
     bulkAddDictTimeout: 5,
@@ -170,6 +164,9 @@ export const useAppLogic = () => {
   const [freeDictApiStatus, setFreeDictApiStatus] = useState<HealthStatus>('checking');
   const [mwDictApiStatus, setMwDictApiStatus] = useState<HealthStatus>('checking');
   const [settings, setSettings] = useState<Settings>(defaultSettings);
+  // Every dictionary lookup, wherever it starts, uses the current choice.
+  // Set during render (cheap, and in place before any effect or tap uses it).
+  applyDictionarySettings(settings);
   
   // Gamification State
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
@@ -1501,22 +1498,22 @@ export const useAppLogic = () => {
     }
 
     try {
-        const fetcher = settings.defaultApiSource === 'free' ? fetchFromFreeDictionary : fetchFromMerriamWebster;
-        const details: DictionaryResult = await fetcher(cardToComplete.front).catch(() => ({
-             pronunciation: '', partOfSpeech: '', definitions: [], exampleSentences: [], audioUrl: undefined
-        }));
-        
+        // The user's dictionaries in order, with common expressions and a free
+        // translation (no AI needed).
+        const needsCollocations = cardToComplete.kind !== 'grammar' && !(cardToComplete.collocations && cardToComplete.collocations.length > 0);
+        const enrichment: FreeEnrichment | null = cardToComplete.kind === 'grammar' ? null : await freeEnrich(cardToComplete.front).catch(() => null);
+        const details = {
+            pronunciation: enrichment?.pronunciation || '',
+            partOfSpeech: enrichment?.partOfSpeech || '',
+            definitions: enrichment?.definitions || [],
+            exampleSentences: enrichment?.examples || [],
+            audioUrl: enrichment?.audioUrl,
+        };
+
         let audioUrl: string | undefined = cardToComplete.audioSrc;
         if (details.audioUrl && !audioUrl) {
            audioUrl = details.audioUrl;
            updates.audio = true;
-        }
-        
-        // Common expressions and a free translation come from free dictionaries (no AI needed).
-        let enrichment: FreeEnrichment | null = null;
-        const needsCollocations = cardToComplete.kind !== 'grammar' && !(cardToComplete.collocations && cardToComplete.collocations.length > 0);
-        if (needsCollocations || !cardToComplete.back) {
-            enrichment = await freeEnrich(cardToComplete.front).catch(() => null);
         }
 
         let persianDetails = { back: cardToComplete.back, notes: cardToComplete.notes };

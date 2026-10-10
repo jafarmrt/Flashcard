@@ -2,7 +2,7 @@ import type { Settings } from '../types';
 
 // Settings travel with the account so every device shows the same daily goal,
 // theme and AI choices. Secrets never leave the browser they were typed into.
-const DEVICE_ONLY: (keyof Settings)[] = ['customApiKey', 'aiKeys'];
+const DEVICE_ONLY: (keyof Settings)[] = ['customApiKey', 'aiKeys', 'dictKeys'];
 
 export function toSyncedSettings(settings: Partial<Settings> | null | undefined): Partial<Settings> | undefined {
   if (!settings || typeof settings !== 'object') return undefined;

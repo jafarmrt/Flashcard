@@ -23,7 +23,7 @@ const card = (over: Partial<Flashcard> = {}): Flashcard => ({
   dueDate: T0.toISOString(), createdAt: T0.toISOString(), updatedAt: T0.toISOString(), ...over,
 } as Flashcard);
 
-const settings = (over: Partial<Settings> = {}): Settings => ({ defaultApiSource: 'free', ...over } as Settings);
+const settings = (over: Partial<Settings> = {}): Settings => ({ theme: 'light', ...over } as Settings);
 
 // --- The chain of AI services ---
 

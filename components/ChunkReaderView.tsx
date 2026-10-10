@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { extractKinds, KIND_LABEL } from '../services/cardKinds';
 import { Chapter, ChapterText, ExtractedWordCard, Flashcard, Settings, Source } from '../types';
 import { ProxyError } from '../services/apiService';
 import { aiOrigin, aiRequestOptions } from '../services/aiSettings';
@@ -54,7 +55,6 @@ type Item = ExtractedWordCard & {
   inContext?: boolean; // the meaning was chosen for this sentence
 };
 
-const KIND_LABEL: Record<string, string> = { word: 'واژه', phrase: 'عبارت', idiom: 'اصطلاح', grammar: 'دستوری' };
 
 // English inside a Persian message, kept apart so it neither reorders the
 // sentence nor turns the whole message left-to-right.
@@ -268,7 +268,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
       definition: s.definition ? [s.definition, ...(changed ? [] : (it.definition || []).filter(d => d !== s.definition))].slice(0, 2) : changed ? [] : it.definition,
       partOfSpeech: s.partOfSpeech || it.partOfSpeech,
       pronunciation: changed ? s.pronunciation || '' : it.pronunciation || s.pronunciation,
-      kind: it.kind === 'word' && s.kind ? s.kind : it.kind === 'phrase' && s.kind === 'idiom' ? 'idiom' : it.kind,
+      kind: it.kind !== 'grammar' && s.kind ? s.kind : it.kind,
       notes: s.notes || (changed ? '' : it.notes),
       collocations: changed ? [] : it.collocations,
       exampleSentenceTarget: changed ? [] : it.exampleSentenceTarget,
@@ -470,6 +470,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
         knownRuleIds: [...rulesInDeck, ...items.map(it => it.grammarId).filter((id): id is string => !!id)],
         knownTerms,
         includeGrammar,
+        kinds: extractKinds(settings),
         aiOptions,
         signal: controller.signal,
       });

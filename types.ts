@@ -59,9 +59,10 @@ export interface UserAchievement {
 }
 
 
-// What a card teaches: a single word, a multi-word phrase (phrasal verb,
-// collocation), an idiom, or a grammar structure.
-export type CardKind = 'word' | 'phrase' | 'idiom' | 'grammar';
+// What a card teaches: a single word, a phrasal verb or other multi-word
+// phrase, a collocation ("make a decision"), an idiom ("spill the beans"), a
+// fixed expression ("no wonder"), slang, or a grammar structure.
+export type CardKind = 'word' | 'phrase' | 'collocation' | 'idiom' | 'expression' | 'slang' | 'grammar';
 
 // Another common expression the term appears in, e.g. "make a decision".
 export interface Collocation {
@@ -132,9 +133,17 @@ export interface AiProviderSetting {
   baseUrl?: string; // 'custom' (and a non-default Ollama address)
 }
 
+// A dictionary in the order they are tried (services/dictionaryCatalog).
+export interface DictionaryEntrySetting {
+  id: import('./services/dictionaryCatalog').DictionaryId;
+  enabled: boolean;
+}
+
 export interface Settings {
     theme: 'light' | 'dark' | 'system';
-    defaultApiSource: 'free' | 'mw';
+    dictionaries?: DictionaryEntrySetting[]; // the order they are tried in
+    dictKeys?: Partial<Record<import('./services/dictionaryCatalog').DictionaryKeyId, string>>; // never leaves this device
+    extractKinds?: CardKind[]; // what extraction looks for in a text; all when unset
     bulkAddConcurrency?: number;
     bulkAddAiTimeout?: number;
     bulkAddDictTimeout?: number;
