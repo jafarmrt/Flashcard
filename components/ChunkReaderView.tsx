@@ -268,7 +268,8 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
       definition: s.definition ? [s.definition, ...(changed ? [] : (it.definition || []).filter(d => d !== s.definition))].slice(0, 2) : changed ? [] : it.definition,
       partOfSpeech: s.partOfSpeech || it.partOfSpeech,
       pronunciation: changed ? s.pronunciation || '' : it.pronunciation || s.pronunciation,
-      kind: it.kind !== 'grammar' && s.kind ? s.kind : it.kind,
+      // The AI's kind, except that a phrase it calls a "word" stays a phrase.
+      kind: it.kind === 'grammar' || !s.kind || (s.kind === 'word' && tokensOf(front).length > 1) ? it.kind : s.kind,
       notes: s.notes || (changed ? '' : it.notes),
       collocations: changed ? [] : it.collocations,
       exampleSentenceTarget: changed ? [] : it.exampleSentenceTarget,

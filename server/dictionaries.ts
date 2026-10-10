@@ -30,8 +30,12 @@ export interface DictionaryEntry {
 export interface LookupContext {
   keys: DictionaryRequest['keys'];
   fetchImpl: FetchLike;
-  timeoutMs: number;
+  timeoutMs: number; // for each request
+  deadline: number; // Date.now() after which no dictionary is asked
 }
+
+// The whole lookup stays well inside a serverless function's time limit.
+export const LOOKUP_BUDGET_MS = 20_000;
 
 // A keyed dictionary without a key (typed on the device or set on the server).
 export class MissingKeyError extends Error {
@@ -49,27 +53,54 @@ const stripHtml = (s: string) => String(s || '')
   .replace(/\s+/g, ' ')
   .trim();
 
-const getJson = async (ctx: LookupContext, url: string, headers: Record<string, string> = {}): Promise<any | null> => {
+// A dictionary that did not answer (down, timed out, busy, or the lookup ran
+// out of time): the chain moves to the next dictionary instead of asking
+// this one for every other form of the word.
+export class UnreachableError extends Error {
+  constructor(message = 'The dictionary did not answer.') {
+    super(message);
+    this.name = 'UnreachableError';
+  }
+}
+
+// A key the dictionary would not take (wrong, or not subscribed).
+export class RefusedKeyError extends Error {
+  constructor(detail: string) {
+    super(`The dictionary refused the key (${detail}).`);
+    this.name = 'RefusedKeyError';
+  }
+}
+
+// null: the dictionary answered and does not know the term.
+const getJson = async (ctx: LookupContext, url: string, { headers = {}, keyed = false }: { headers?: Record<string, string>; keyed?: boolean } = {}): Promise<any | null> => {
+  const left = ctx.deadline - Date.now();
+  if (left <= 0) throw new UnreachableError('The lookup ran out of time.');
+  let res: Awaited<ReturnType<FetchLike>>;
   try {
-    const res = await ctx.fetchImpl(url, { headers: { 'User-Agent': UA, Accept: 'application/json', ...headers }, signal: AbortSignal.timeout(ctx.timeoutMs) });
-    if (!res.ok) {
-      if (res.status === 401 || res.status === 403) throw new Error(`The dictionary refused the key (${res.status}).`);
-      return null;
-    }
+    res = await ctx.fetchImpl(url, { headers: { 'User-Agent': UA, Accept: 'application/json', ...headers }, signal: AbortSignal.timeout(Math.min(ctx.timeoutMs, left)) });
+  } catch {
+    throw new UnreachableError();
+  }
+  if (!res.ok) {
+    if (keyed && (res.status === 401 || res.status === 403)) throw new RefusedKeyError(String(res.status));
+    if (res.status === 404 || res.status === 400) return null;
+    throw new UnreachableError(`The dictionary answered ${res.status}.`);
+  }
+  try {
     // Merriam-Webster answers a wrong key with plain text, not JSON.
     if (typeof (res as { text?: unknown }).text === 'function') {
       const body: string = await (res as unknown as { text: () => Promise<string> }).text();
       try {
         return JSON.parse(body);
       } catch {
-        if (/invalid api key|not subscribed/i.test(body)) throw new Error('The dictionary refused the key (invalid key).');
+        if (keyed && /invalid api key|not subscribed/i.test(body)) throw new RefusedKeyError('invalid key');
         return null;
       }
     }
     return await res.json();
   } catch (e) {
-    if (/refused the key/.test((e as Error)?.message || '')) throw e;
-    return null; // unreachable, timed out, or not JSON
+    if (e instanceof RefusedKeyError) throw e;
+    return null; // not JSON
   }
 };
 
@@ -109,7 +140,7 @@ export function parseFreeDictionary(data: any[]): DictionaryEntry | null {
 }
 
 async function freeDictionary(term: string, ctx: LookupContext): Promise<DictionaryEntry | null> {
-  const data = await getJson(ctx, `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(norm(term))}`, { 'User-Agent': `Mozilla/5.0 (Windows NT 10.0; Win64; x64) ${UA}` });
+  const data = await getJson(ctx, `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(norm(term))}`, { headers: { 'User-Agent': `Mozilla/5.0 (Windows NT 10.0; Win64; x64) ${UA}` } });
   return Array.isArray(data) && data.length > 0 ? parseFreeDictionary(data) : null;
 }
 
@@ -240,7 +271,7 @@ export function parseMerriamWebster(data: any[], term: string, name: string): Di
         definitions: defs.slice(0, 4),
         examples: examples.filter(Boolean).slice(0, 3),
         source: name,
-        kindHint: dro.drp && !/phrasal verb/i.test(gram) ? 'idiom' : labelOf(defs, gram),
+        kindHint: labelOf(defs, gram),
       };
     }
   }
@@ -255,7 +286,7 @@ export const mwKey = (id: 'mw-learners' | 'mw-collegiate', keys: DictionaryReque
 async function merriamWebster(id: 'mw-learners' | 'mw-collegiate', term: string, ctx: LookupContext): Promise<DictionaryEntry | null> {
   const key = mwKey(id, ctx.keys);
   if (!key) throw new MissingKeyError(id);
-  const data = await getJson(ctx, `https://www.dictionaryapi.com/api/v3/references/${MW_REF[id]}/json/${encodeURIComponent(norm(term))}?key=${encodeURIComponent(key)}`);
+  const data = await getJson(ctx, `https://www.dictionaryapi.com/api/v3/references/${MW_REF[id]}/json/${encodeURIComponent(norm(term))}?key=${encodeURIComponent(key)}`, { keyed: true });
   return Array.isArray(data) ? parseMerriamWebster(data, term, dictionaryInfo(id).name) : null;
 }
 
@@ -332,24 +363,32 @@ export interface ChainOptions {
   request?: DictionaryRequest;
   fetchImpl?: FetchLike;
   timeoutMs?: number;
+  // Filled in by the chain: a dictionary did not answer or refused its key,
+  // so the result may not be what the same choice gives next time.
+  report?: { incomplete?: boolean };
 }
+
+const contextOf = ({ request, fetchImpl = defaultFetch, timeoutMs = DEFAULT_TIMEOUT_MS }: ChainOptions): LookupContext =>
+  ({ keys: request?.keys, fetchImpl, timeoutMs, deadline: Date.now() + LOOKUP_BUDGET_MS });
 
 // The word as written, then its base forms, in each dictionary in turn: a
 // dictionary is asked for every form before the next one is asked, so a
 // thinner one later in the list never answers for "carried" when an earlier
-// one knows "carry". A keyed dictionary without a key is skipped. When the
-// answer has no pronunciation, the later dictionaries are asked for it.
-export async function lookupChain(word: string, { request, fetchImpl = defaultFetch, timeoutMs = DEFAULT_TIMEOUT_MS }: ChainOptions = {}): Promise<DictionaryEntry | null> {
-  const order = request?.order ?? DEFAULT_DICTIONARY_ORDER;
-  const ctx: LookupContext = { keys: request?.keys, fetchImpl, timeoutMs };
+// one knows "carry". A keyed dictionary without a key, one that refuses its
+// key and one that does not answer are skipped. When the answer has no
+// pronunciation, the next dictionaries are asked for it.
+export async function lookupChain(word: string, options: ChainOptions = {}): Promise<DictionaryEntry | null> {
+  const order = options.request?.order ?? DEFAULT_DICTIONARY_ORDER;
+  const ctx = contextOf(options);
   const forms = lemmaCandidates(word);
   for (let i = 0; i < order.length; i++) {
     for (const form of forms) {
       let entry: DictionaryEntry | null = null;
       try {
         entry = await lookupOne(order[i], form, ctx);
-      } catch {
-        break; // no key, or a refused key: the next dictionary
+      } catch (e) {
+        if (!(e instanceof MissingKeyError) && options.report) options.report.incomplete = true;
+        break; // the next dictionary
       }
       if (!entry) continue;
       if (!entry.pronunciation && !entry.headword.includes(' ')) {
@@ -368,8 +407,8 @@ export async function lookupChain(word: string, { request, fetchImpl = defaultFe
 }
 
 // One dictionary only (the card editor's "fill again from…"), with base forms.
-export async function lookupSingle(id: DictionaryId, word: string, { request, fetchImpl = defaultFetch, timeoutMs = DEFAULT_TIMEOUT_MS }: ChainOptions = {}): Promise<DictionaryEntry | null> {
-  const ctx: LookupContext = { keys: request?.keys, fetchImpl, timeoutMs };
+export async function lookupSingle(id: DictionaryId, word: string, options: ChainOptions = {}): Promise<DictionaryEntry | null> {
+  const ctx = contextOf(options);
   for (const form of lemmaCandidates(word)) {
     const entry = await lookupOne(id, form, ctx);
     if (entry) return entry;

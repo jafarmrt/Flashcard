@@ -8,10 +8,12 @@
 export const LOOKUP_KEEP_MS = 90 * 24 * 60 * 60 * 1000;
 export const PARTIAL_LOOKUP_KEEP_MS = 24 * 60 * 60 * 1000;
 
-type Lookup = { found?: boolean; translation?: string; collocations?: unknown[] };
+type Lookup = { found?: boolean; translation?: string; collocations?: unknown[]; incomplete?: boolean };
 
+// A lookup where a dictionary did not answer or refused its key is not kept
+// either: the same choice of dictionaries may answer otherwise next time.
 export const lookupKeepMs = (value: Lookup | null | undefined): number => {
-  if (!value?.translation) return 0;
+  if (!value?.translation || value.incomplete) return 0;
   return value.found && (value.collocations?.length || 0) > 0 ? LOOKUP_KEEP_MS : PARTIAL_LOOKUP_KEEP_MS;
 };
 

@@ -140,7 +140,7 @@ async function setKey(key: string, value: unknown): Promise<void> {
 // How long each dictionary may take: the bulk-add setting, within limits.
 const lookupTimeout = (value: unknown): number | undefined => {
   const ms = Number(value);
-  return Number.isFinite(ms) && ms > 0 ? Math.min(Math.max(ms, 1000), 20_000) : undefined;
+  return Number.isFinite(ms) && ms > 0 ? Math.min(Math.max(ms, 1000), 8_000) : undefined;
 };
 
 // Which dictionaries can answer, so a cached lookup is only reused for the

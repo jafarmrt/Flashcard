@@ -21,14 +21,15 @@ export interface FreeEnrichment extends DictionaryEntry {
   translation: string;
   collocations: { phrase: string }[];
   frequency?: number | null; // per million words, for the word's level
+  incomplete?: boolean; // a dictionary did not answer or refused its key: not kept
 }
 
 // --- Dictionary -------------------------------------------------------------
 
 // The user's dictionaries in their order (server/dictionaries), the word as
 // written and then its base forms.
-export async function lookupDictionary(word: string, fetchImpl: FetchLike = defaultFetch, request?: DictionaryRequest, timeoutMs?: number): Promise<DictionaryEntry | null> {
-  return lookupChain(word, { request, fetchImpl, timeoutMs });
+export async function lookupDictionary(word: string, fetchImpl: FetchLike = defaultFetch, request?: DictionaryRequest, timeoutMs?: number, report?: { incomplete?: boolean }): Promise<DictionaryEntry | null> {
+  return lookupChain(word, { request, fetchImpl, timeoutMs, report });
 }
 
 // --- Frequency --------------------------------------------------------------
@@ -121,10 +122,11 @@ export async function freeTranslate(text: string, fetchImpl: FetchLike = default
 // `onlyIfFound`: stop after the dictionary when it does not know the term,
 // so checking a possible phrasal verb spends no translation quota.
 export async function freeEnrich(term: string, fetchImpl: FetchLike = defaultFetch, onlyIfFound = false, request?: DictionaryRequest, timeoutMs?: number): Promise<FreeEnrichment> {
-  const dictionary = await lookupDictionary(term, fetchImpl, request, timeoutMs);
+  const report: { incomplete?: boolean } = {};
+  const dictionary = await lookupDictionary(term, fetchImpl, request, timeoutMs, report);
   const headword = dictionary?.headword || term.trim().toLowerCase();
   if (!dictionary && onlyIfFound) {
-    return { found: false, headword, pronunciation: '', partOfSpeech: '', definitions: [], examples: [], translation: '', collocations: [] };
+    return { found: false, headword, pronunciation: '', partOfSpeech: '', definitions: [], examples: [], translation: '', collocations: [], ...(report.incomplete ? { incomplete: true } : {}) };
   }
   const single = /^[a-z][a-z'-]*$/.test(headword);
   const [translation, collocations, frequencies] = await Promise.all([
@@ -142,6 +144,7 @@ export async function freeEnrich(term: string, fetchImpl: FetchLike = defaultFet
     audioUrl: dictionary?.audioUrl,
     ...(dictionary?.source ? { source: dictionary.source } : {}),
     ...(dictionary?.kindHint ? { kindHint: dictionary.kindHint } : {}),
+    ...(report.incomplete ? { incomplete: true } : {}),
     translation,
     collocations,
     ...(single && typeof frequencies[headword] === 'number' ? { frequency: frequencies[headword] } : {}),

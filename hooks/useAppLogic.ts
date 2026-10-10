@@ -25,6 +25,7 @@ import {
   generatePersianDetails, parseLevel,
 } from '../services/geminiService';
 import { applyDictionarySettings } from '../services/dictSettings';
+import { DictionaryResult, lookupDictionary } from '../services/dictionaryService';
 import { AutoFixStats } from '../components/AutoFixReportModal';
 import { fa } from '../components/common/ui';
 
@@ -1498,17 +1499,20 @@ export const useAppLogic = () => {
     }
 
     try {
-        // The user's dictionaries in order, with common expressions and a free
-        // translation (no AI needed).
+        // The user's dictionaries in order. Common expressions and a free
+        // translation come too (no AI needed), but only when the card lacks
+        // them: each one spends the small daily translation quota.
         const needsCollocations = cardToComplete.kind !== 'grammar' && !(cardToComplete.collocations && cardToComplete.collocations.length > 0);
-        const enrichment: FreeEnrichment | null = cardToComplete.kind === 'grammar' ? null : await freeEnrich(cardToComplete.front).catch(() => null);
-        const details = {
-            pronunciation: enrichment?.pronunciation || '',
-            partOfSpeech: enrichment?.partOfSpeech || '',
-            definitions: enrichment?.definitions || [],
-            exampleSentences: enrichment?.examples || [],
-            audioUrl: enrichment?.audioUrl,
-        };
+        let enrichment: FreeEnrichment | null = null;
+        let details: DictionaryResult = { headword: cardToComplete.front, pronunciation: '', partOfSpeech: '', definitions: [], exampleSentences: [] };
+        if (cardToComplete.kind !== 'grammar') {
+            if (needsCollocations || !cardToComplete.back) {
+                enrichment = await freeEnrich(cardToComplete.front).catch(() => null);
+                if (enrichment) details = { ...details, pronunciation: enrichment.pronunciation, partOfSpeech: enrichment.partOfSpeech, definitions: enrichment.definitions, exampleSentences: enrichment.examples, audioUrl: enrichment.audioUrl };
+            } else {
+                details = await lookupDictionary(cardToComplete.front).catch(() => details);
+            }
+        }
 
         let audioUrl: string | undefined = cardToComplete.audioSrc;
         if (details.audioUrl && !audioUrl) {

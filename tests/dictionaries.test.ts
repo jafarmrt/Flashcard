@@ -57,7 +57,7 @@ test('a Merriam-Webster phrase is read from its run-on entry, never from the wor
     hwi: { hw: 'buck*et', prs: [{ ipa: 'ˈbʌkət', sound: { audio: 'bucket01' } }] },
     fl: 'noun',
     shortdef: ['a round open container'],
-    dros: [{ drp: 'kick the bucket', def: [{ sseq: [[['sense', { dt: [['text', '{bc}to die'], ['vis', [{ t: 'The old man finally {it}kicked the bucket{/it}.' }]]] }]]] }] }],
+    dros: [{ drp: 'kick the bucket', gram: 'idiom', def: [{ sseq: [[['sense', { dt: [['text', '{bc}to die'], ['vis', [{ t: 'The old man finally {it}kicked the bucket{/it}.' }]]] }]]] }] }],
   }];
   const e = parseMerriamWebster(data, 'kick the bucket', "Merriam-Webster Learner's")!;
   assert.deepEqual(e.definitions, ['to die']);
@@ -214,4 +214,43 @@ test('a tapped word that is part of an expression is answered with the whole exp
 test('a wrong Merriam-Webster key is reported as such, not as an unknown word', async () => {
   const f = async () => ({ ok: true, status: 200, json: async () => { throw new Error('not json'); }, text: async () => 'Invalid API key. Not subscribed for this reference.' });
   await assert.rejects(lookupSingle('mw-learners', 'hello', { request: { keys: { 'mw-learners': 'wrong' } }, fetchImpl: f as any }), /refused the key/);
+});
+
+test('a dictionary that does not answer is left for the next one, and the answer is marked incomplete', async () => {
+  const calls: string[] = [];
+  const f = async (url: string) => {
+    calls.push(url);
+    if (url.includes('dictionaryapi.dev')) throw new Error('timeout');
+    if (url.includes('sp=stopped&md=dp')) return { ok: true, status: 200, json: async () => [{ word: 'stopped', defs: ['v\tto halt'], defHeadword: 'stop' }] };
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const report: { incomplete?: boolean } = {};
+  const e = await lookupChain('stopped', { request: { order: ['free-dictionary', 'datamuse'] }, fetchImpl: f as any, report });
+  assert.equal(e?.headword, 'stop');
+  assert.equal(calls.filter(u => u.includes('dictionaryapi.dev')).length, 1, 'a dictionary that timed out is not asked for the other forms');
+  assert.equal(report.incomplete, true);
+});
+
+test('only a keyed dictionary reports a refused key', async () => {
+  const f = async () => ({ ok: false, status: 403, json: async () => ({}) });
+  await assert.rejects(lookupSingle('wiktionary', 'hello', { fetchImpl: f as any }), /did not answer|answered 403/);
+  await assert.rejects(lookupSingle('mw-collegiate', 'hello', { request: { keys: { 'mw-collegiate': 'k' } }, fetchImpl: f as any }), /refused the key/);
+});
+
+test('an AI item of a kind that was switched off is left out', async () => {
+  const { extractVocabularyFromText } = await import('../services/geminiService');
+  const words = [
+    { kind: 'word', front: 'reluctant', back: 'بی‌میل' },
+    { kind: 'slang', front: 'broke', back: 'بی‌پول' },
+    { kind: 'idiom', front: 'spill the beans', back: 'لو دادن' },
+    { kind: 'grammar', front: 'Past perfect', back: 'ماضی بعید' },
+  ];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ text: JSON.stringify({ words }) }) })) as any;
+  try {
+    const cards = await extractVocabularyFromText({ text: 'x', level: 'B2', kinds: ['word', 'idiom'], includeGrammar: false });
+    assert.deepEqual(cards.map(c => c.front), ['reluctant', 'spill the beans']);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

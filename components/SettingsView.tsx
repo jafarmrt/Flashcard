@@ -426,8 +426,8 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                 </Row>
                 <Row title="صبر برای هر دیکشنری" hint="پیش از رفتن سراغ دیکشنری بعدی در فهرست.">
                     <div className="flex items-center gap-3">
-                        <input type="range" min="3" max="20" step="1" value={settings.bulkAddDictTimeout || 5} onChange={e => onUpdateSettings({ bulkAddDictTimeout: parseInt(e.target.value, 10) })} className="w-32 accent-brand-500" aria-label="صبر برای دیکشنری" />
-                        <span className="w-14 text-center font-bold">{fa(settings.bulkAddDictTimeout || 5)} ثانیه</span>
+                        <input type="range" min="2" max="8" step="1" value={Math.min(settings.bulkAddDictTimeout || 5, 8)} onChange={e => onUpdateSettings({ bulkAddDictTimeout: parseInt(e.target.value, 10) })} className="w-32 accent-brand-500" aria-label="صبر برای دیکشنری" />
+                        <span className="w-14 text-center font-bold">{fa(Math.min(settings.bulkAddDictTimeout || 5, 8))} ثانیه</span>
                     </div>
                 </Row>
             </Card>

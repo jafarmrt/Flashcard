@@ -262,9 +262,14 @@ const KIND_GUIDE: Record<CardKind, string> = {
   grammar: '"grammar": a hard or notable grammar structure ("Had I known…" inversion, mixed conditional, cleft sentence, participle clause).',
 };
 
-export const buildExtractionPrompt = ({ text, level, count = 10, exclude = [], includeGrammar = true, kinds }: ExtractVocabularyParams): string => {
-  const wanted = (kinds && kinds.length ? KINDS.filter(k => k === 'word' || kinds.includes(k)) : [...KINDS])
+// The kinds asked for: the chosen ones (single words always), grammar only
+// when it is included.
+export const wantedKinds = ({ includeGrammar = true, kinds }: Pick<ExtractVocabularyParams, 'includeGrammar' | 'kinds'>): CardKind[] =>
+  (kinds && kinds.length ? KINDS.filter(k => k === 'word' || kinds.includes(k)) : [...KINDS])
     .filter(k => k !== 'grammar' || includeGrammar);
+
+export const buildExtractionPrompt = ({ text, level, count = 10, exclude = [], includeGrammar = true, kinds }: ExtractVocabularyParams): string => {
+  const wanted = wantedKinds({ includeGrammar, kinds });
   const grammar = wanted.includes('grammar');
   const multi = wanted.filter(k => k !== 'word' && k !== 'grammar');
   return `You are an expert linguistics tutor helping a Persian-speaking student learn English.
@@ -350,6 +355,7 @@ export const extractVocabularyFromText = async (
 ): Promise<ExtractedWordCard[]> => {
   const { options } = params;
   const prompt = buildExtractionPrompt(params);
+  const wanted = wantedKinds(params);
 
   try {
     const response = await aiGenerate(options, {
@@ -364,7 +370,7 @@ export const extractVocabularyFromText = async (
               items: {
                 type: 'OBJECT',
                 properties: {
-                  kind: { type: 'STRING', enum: [...KINDS], description: KINDS.join(', ') },
+                  kind: { type: 'STRING', enum: wanted, description: wanted.join(', ') },
                   front: { type: 'STRING', description: 'English target word, phrase or structure name' },
                   back: { type: 'STRING', description: 'Persian translation' },
                   pronunciation: { type: 'STRING', description: 'IPA pronunciation' },
@@ -398,7 +404,10 @@ export const extractVocabularyFromText = async (
     }, 'extract');
 
     const origin = aiOrigin(response.used);
-    return parseExtractedItems(parseJsonFromAiResponse(response.text)).map(card => ({ ...card, origin }));
+    // A model may still send a kind that was switched off: it is left out.
+    return parseExtractedItems(parseJsonFromAiResponse(response.text))
+      .filter(card => wanted.includes(card.kind || 'word'))
+      .map(card => ({ ...card, origin }));
   } catch (error) {
     console.error('Error extracting vocabulary from text with AI:', error);
     throw error;

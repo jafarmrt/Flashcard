@@ -25,6 +25,7 @@ export interface FreeEnrichment {
   frequency?: number | null; // per million words
   source?: string; // the dictionary that knew the term
   kindHint?: 'idiom' | 'slang'; // the dictionary labels the term so
+  incomplete?: boolean; // a dictionary did not answer: not kept
 }
 
 // Looked up once per word on this device (services/lookupCache). Each
