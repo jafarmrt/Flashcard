@@ -19,6 +19,7 @@ import {
 } from '../services/syncClient';
 import { isDue, isNewCard } from '../services/srsService';
 import { applyIncomingSettings, toSyncedSettings } from '../services/settingsSync';
+import { applyServerKeys, localKeyEntries, markKeyChanges, withoutKeys } from '../services/keySync';
 import { convertToCSV, downloadCSV, parseCollocations, parseCSV, parseKind, splitList } from '../services/csvService';
 import { freeEnrich, FreeEnrichment } from '../services/freeExtractionService';
 import { 
@@ -202,6 +203,13 @@ export const useAppLogic = () => {
   const lastSyncError = useRef('');
 
   const signIn = (username: string) => {
+    // Keys left here by another account (its session ran out) are not this one's.
+    const lastUser = localStorage.getItem(LAST_USER_KEY);
+    if (lastUser && lastUser.toLowerCase() !== username.toLowerCase()) {
+        const cleared = withoutKeys(readSavedSettings());
+        localStorage.setItem('appSettings', JSON.stringify(cleared));
+        setSettings(prev => ({ ...withoutKeys(prev), ...cleared } as Settings));
+    }
     signedInUser.current = username;
     setCurrentUser({ username });
     localStorage.setItem(LAST_USER_KEY, username);
@@ -448,12 +456,24 @@ export const useAppLogic = () => {
       await handleGoalUpdate('STREAK', newStreak);
   };
 
-  // Take settings changed on another device, keeping this device's AI key.
+  // Take settings changed on another device; the keys come apart (syncKeys).
   const adoptCloudSettings = (incoming?: Partial<Settings>) => {
     const merged = applyIncomingSettings(readSavedSettings(), incoming);
     if (!merged) return;
     localStorage.setItem('appSettings', JSON.stringify(merged));
     setSettings({ ...defaultSettings, ...merged } as Settings);
+  };
+
+  // Send this device's AI and dictionary keys and take the account's, so a
+  // key typed on one device works on all of them.
+  const syncKeys = async () => {
+    const sent = localKeyEntries(readSavedSettings());
+    const response = await callProxy('keys-sync', { keys: sent });
+    const change = applyServerKeys(readSavedSettings(), sent, response?.keys);
+    if (!change) return;
+    const merged = { ...readSavedSettings(), ...change };
+    localStorage.setItem('appSettings', JSON.stringify(merged));
+    setSettings(prev => ({ ...prev, ...change }));
   };
 
   const handleSync = async () => {
@@ -521,6 +541,14 @@ export const useAppLogic = () => {
     try {
         let state: SyncState = usableSyncState((await db.meta.get('sync'))?.value, user);
         if (options.pullOnly) state = markAllSynced(freshSyncState(user), await readLocal());
+        // A key sync that fails does not hold up the cards; it is tried
+        // again with the next sync.
+        try {
+            await syncKeys();
+        } catch (error) {
+            if (isNetworkError(error)) throw error;
+            console.warn('Syncing the keys failed:', error);
+        }
         await uploadChapterTexts();
 
         let needPull = true;
@@ -711,7 +739,11 @@ export const useAppLogic = () => {
           if (isLoggedIn) fetchData();
       }
       setSettings(prev => {
-          const updated = { ...prev, ...newSettings };
+          const updated: Settings = { ...prev, ...newSettings };
+          // A key typed or removed here goes to the server, and from there
+          // to the other devices, with the next sync.
+          const keysChanged = markKeyChanges(prev, updated);
+          if (keysChanged) updated.keysChanged = keysChanged;
           localStorage.setItem('appSettings', JSON.stringify(updated));
           return updated;
       })
@@ -1508,8 +1540,19 @@ export const useAppLogic = () => {
 
   const handleLogout = async () => {
     if(confirm("Are you sure you want to log out?")) {
+        // A key typed here that the server does not have yet goes up first.
+        if (readSavedSettings().keysChanged?.length) {
+            try {
+                await syncKeys();
+            } catch (e) {
+                console.warn('Syncing the keys before signing out failed:', e);
+            }
+            if (readSavedSettings().keysChanged?.length && !confirm('کلیدی که این‌جا وارد کرده‌ای هنوز به سرور نرسیده و با خروج از این مرورگر پاک می‌شود. باز هم خارج می‌شوی؟')) return;
+        }
         await callProxy('auth-logout', {}).catch(e => console.error('Logout request failed:', e));
         localStorage.removeItem(LAST_USER_KEY);
+        // The keys stay with the account, not in this browser.
+        localStorage.setItem('appSettings', JSON.stringify(withoutKeys(readSavedSettings())));
         window.location.reload();
     }
   };

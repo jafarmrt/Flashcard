@@ -10,6 +10,8 @@ import { fetchPublicPage, PageFetchError } from './pageFetch.js';
 import { packChapter, unpackChapter } from './chapterText.js';
 import { geminiUsage, listGeminiModels, listOpenAiModels, openAiUsage } from './aiModels.js';
 import { cachedEnrich, fileLookupStore, LookupStore } from './lookupCache.js';
+import { openKeys, sealKeys } from './keyVault.js';
+import { cleanSentKeys, mergeKeyEntries } from '../services/keySync.js';
 import {
   PUBLIC_ACTIONS, USERNAME_PATTERN, MIN_PASSWORD_LENGTH, registrationAllowed,
   hashPassword, verifyPassword, getSessionSecret, createSessionToken, sessionUser,
@@ -95,6 +97,7 @@ function persistStore(store: Map<string, any>) {
 }
 
 const getUserKey = (username: string) => `user:${username.toLowerCase()}`;
+const accountKeysKey = (username: string) => `keys:${username.toLowerCase()}`;
 const chapterKey = (username: string, chapterId: string) => `chapter:${username.toLowerCase()}:${chapterId}`;
 const CHAPTER_ID = /^[A-Za-z0-9_-]{1,100}$/;
 const MAX_CHAPTER_CHARS = 2_000_000; // under Vercel's 4.5 MB request limit
@@ -700,6 +703,31 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         });
         if (!result) return res.status(401).json({ error: 'Please sign in again.', code: 'AUTH_REQUIRED' });
         return res.status(200).json(result);
+      }
+
+      // The account's AI and dictionary keys: the device sends the ones it
+      // has (with when each was typed) and gets the account's, newest first.
+      // Kept encrypted under their own record (server/keyVault).
+      case 'keys-sync': {
+        const incoming = cleanSentKeys(payload.keys);
+        const keys = await withUserLock(signedInUser!, async () => {
+          if (!(await getUser(signedInUser!))) return null;
+          const record = await getKey(accountKeysKey(signedInUser!));
+          let stored = openKeys(record, signedInUser!, secret);
+          const unreadable = !stored;
+          if (!stored) {
+            // Sealed with another secret: kept aside, never overwritten.
+            console.warn(`The saved keys of ${signedInUser} do not open with this server's secret; they are kept aside and the devices send theirs again.`);
+            await setKey(`${accountKeysKey(signedInUser!)}:unreadable:${Date.now()}`, record);
+            stored = {};
+          }
+          const { merged, changed } = mergeKeyEntries(stored, incoming);
+          if (changed || unreadable) await setKey(accountKeysKey(signedInUser!), sealKeys(merged, signedInUser!, secret));
+          return merged;
+        });
+        if (!keys) return res.status(401).json({ error: 'Please sign in again.', code: 'AUTH_REQUIRED' });
+        res.setHeader('Cache-Control', 'no-store');
+        return res.status(200).json({ keys });
       }
 
       // A chapter's text is saved once under its own key, compressed; it
