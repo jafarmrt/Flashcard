@@ -12,7 +12,7 @@
 
 import type { AiProviderId, Settings } from '../types';
 import type { DictionaryKeyId } from './dictionaryCatalog';
-import { AI_PROVIDERS, providerKey } from './aiSettings';
+import { AI_PROVIDERS, providerKey } from './aiSettings.js';
 
 // "ai:groq", "dict:mw-learners"…
 export type KeyId = `ai:${AiProviderId}` | `dict:${DictionaryKeyId}`;
