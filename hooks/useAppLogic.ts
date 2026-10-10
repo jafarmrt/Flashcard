@@ -802,7 +802,12 @@ export const useAppLogic = () => {
 
   // Editing a card on top of the current screen (a review, a book's check
   // list), so leaving the form returns to exactly where the user was.
-  const openCardEditor = (card: Flashcard, onDone?: (saved: Flashcard | null) => void) => setOverlayEdit({ card, onDone });
+  // The form shows what the database holds now (a session's copy may be
+  // older than extras filled in the background), with the copy's schedule.
+  const openCardEditor = async (card: Flashcard, onDone?: (saved: Flashcard | null) => void) => {
+    const stored = await db.flashcards.get(card.id).catch(() => undefined);
+    setOverlayEdit({ card: stored ? withEditedContent(card, stored) : card, onDone });
+  };
   const closeCardEditor = () => {
     overlayEdit?.onDone?.(null);
     setOverlayEdit(null);
@@ -903,7 +908,10 @@ export const useAppLogic = () => {
   const handleSessionEnd = async (updatedCardsFromSession: Flashcard[], summary: SessionSummary = { xp: 0, reviews: 0 }, next: 'home' | 'more' = 'home') => {
     if (updatedCardsFromSession.length > 0) {
       const now = new Date().toISOString();
-      const cardsToUpdate = updatedCardsFromSession.map(c => ({ ...c, updatedAt: now }));
+      // The session's schedule over what the database holds now: content
+      // filled while the session ran (extras, an edit) stays.
+      const stored = (await db.flashcards.bulkGet(updatedCardsFromSession.map(c => c.id))) as (Flashcard | undefined)[];
+      const cardsToUpdate = updatedCardsFromSession.map((c, i) => ({ ...(stored[i] ? withEditedContent(c, stored[i]!) : c), updatedAt: now }));
       await db.flashcards.bulkPut(cardsToUpdate);
     }
     // XP is added once per session so an undone answer never counts.
@@ -1647,6 +1655,9 @@ export const useAppLogic = () => {
 
   const handleStopAutoFix = () => {
       cancelAutoFixRef.current = true;
+  };
+
+  const handleStopFillExtras = () => {
       cancelExtrasRef.current = true;
   };
 
@@ -1695,7 +1706,8 @@ export const useAppLogic = () => {
   // memory aid). The schedule in the database stays as it is.
   const handleSaveCardContent = async (card: Flashcard): Promise<Flashcard> => {
     const stored = (await db.flashcards.get(card.id)) || card;
-    const next: Flashcard = { ...withEditedContent(stored, card), updatedAt: new Date().toISOString() };
+    // Only what the aid changes: anything filled since the session began stays.
+    const next: Flashcard = { ...stored, notes: card.notes, exampleSentenceTarget: card.exampleSentenceTarget, leechHelpLapses: card.leechHelpLapses, updatedAt: new Date().toISOString() };
     await db.flashcards.put(next);
     setFlashcards(prev => prev.map(c => (c.id === next.id ? next : c)));
     return next;
@@ -1724,6 +1736,6 @@ export const useAppLogic = () => {
       handleDeleteSource, handleCompleteChunk, loadChapterText, handleSaveReaderCards,
       handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview: () => setSectionReview(null),
       handleCheckCards, handleStartSourceReview, handleReviewCards, handlePrestudyChapter,
-      handleFillExtras, handleSaveCardContent,
+      handleFillExtras, handleStopFillExtras, handleSaveCardContent,
   };
 };

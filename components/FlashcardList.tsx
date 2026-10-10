@@ -18,6 +18,7 @@ interface FlashcardListProps {
   places?: Map<string, CardPlace[]>; // where each card was met while reading
   onFillExtras?: (cards: Flashcard[]) => void; // synonyms, word family… for the cards that lack them
   extrasProgress?: { current: number, total: number } | null;
+  onStopFillExtras?: () => void;
 }
 
 const EditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>;
@@ -68,7 +69,7 @@ const CardSource: React.FC<{ places?: CardPlace[]; origin: string | null }> = ({
 
 const control = 'block w-full min-h-[44px] rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-ink dark:text-white focus:border-brand-500 focus:outline-none';
 
-const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onDelete, onBackToDecks, onCompleteCard, onAutoFixAll, onStopAutoFix, autoFixProgress, places, onFillExtras, extrasProgress }) => {
+const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onDelete, onBackToDecks, onCompleteCard, onAutoFixAll, onStopAutoFix, autoFixProgress, places, onFillExtras, extrasProgress, onStopFillExtras }) => {
   const [show, setShow] = useState<'all' | 'leech' | 'no-extras'>('all');
   const [sortKey, setSortKey] = useState<string>('front-asc');
   const [selectedDeckId, setSelectedDeckId] = useState<string>('all');
@@ -197,7 +198,7 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                     <StopIcon /> توقف ({fa(autoFixProgress.current)} از {fa(autoFixProgress.total)})
                  </button>
             ) : (
-                <button onClick={onAutoFixAll} title="جزئیات ناقص همهٔ کارت‌ها پر شود"
+                <button onClick={onAutoFixAll} disabled={!!extrasProgress} title="جزئیات ناقص همهٔ کارت‌ها پر شود"
                     className="inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 transition-colors shrink-0">
                     <MagicWandIcon /> تکمیل خودکار همه
                 </button>
@@ -212,7 +213,7 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                         : <>{fa(missingExtras.length)} کارت هنوز هم‌معنی، اشتباه رایج، سبک و خانوادهٔ واژه ندارد.</>}
                 </p>
                 {extrasProgress ? (
-                    <button type="button" onClick={onStopAutoFix} className="inline-flex items-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold text-white bg-red-600 hover:bg-red-700"><StopIcon /> توقف</button>
+                    <button type="button" onClick={onStopFillExtras} className="inline-flex items-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold text-white bg-red-600 hover:bg-red-700"><StopIcon /> توقف</button>
                 ) : (
                     <button type="button" onClick={() => onFillExtras(missingExtras)} disabled={!!autoFixProgress}
                         className="inline-flex items-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold text-brand-700 dark:text-brand-200 bg-brand-50 dark:bg-brand-900/40 hover:bg-brand-100 disabled:opacity-50">

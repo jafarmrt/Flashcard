@@ -109,7 +109,7 @@ const CardAnswer: React.FC<{ card: Flashcard; places?: CardPlace[] }> = ({ card,
       {card.commonMistake && (
         <div dir="rtl" role="note" className="flex items-start gap-2 rounded-2xl bg-amber-50 dark:bg-amber-900/30 text-amber-950 dark:text-amber-100 p-4 text-sm leading-7">
           <span aria-hidden="true" className="shrink-0 font-extrabold">!</span>
-          <p className="min-w-0"><span className="font-bold">اشتباه رایج: </span><bdi dir="auto">{card.commonMistake}</bdi></p>
+          <p className="min-w-0"><span className="font-bold">اشتباه رایج: </span>{card.commonMistake}</p>
         </div>
       )}
       <div className="grid gap-3 md:grid-cols-2">
@@ -161,7 +161,7 @@ const CardAnswer: React.FC<{ card: Flashcard; places?: CardPlace[] }> = ({ card,
                 ))}
               </ul>
             )}
-            {card.wordRoot && <p dir="rtl" className="text-sm text-slate-700 dark:text-slate-200"><bdi dir="auto">{card.wordRoot}</bdi></p>}
+            {card.wordRoot && <p dir="rtl" className="text-sm text-slate-700 dark:text-slate-200">{card.wordRoot}</p>}
           </Section>
         )}
         {definitions.length > 0 && (
@@ -208,8 +208,14 @@ const LeechPanel: React.FC<{ card: Flashcard; aiOptions?: AiRequestOptions; onDo
     }
   };
   const finish = async (keep: boolean) => {
+    const before = state;
     setState('saving');
-    await onDone(keep ? help : null);
+    try {
+      await onDone(keep ? help : null);
+    } catch {
+      setError('ذخیره نشد. دوباره امتحان کن.');
+      setState(before);
+    }
   };
   const button = 'min-h-[44px] px-4 rounded-xl text-sm font-bold';
   return (
@@ -220,8 +226,8 @@ const LeechPanel: React.FC<{ card: Flashcard; aiOptions?: AiRequestOptions; onDo
       </p>
       {state === 'shown' || (state === 'saving' && help) ? (
         <div className="flex flex-col gap-2 rounded-xl bg-white dark:bg-slate-800 p-3 text-sm leading-7">
-          {help!.why && <p className="text-ink-muted dark:text-slate-400"><bdi dir="auto">{help!.why}</bdi></p>}
-          {help!.mnemonic && <p className="font-medium text-ink dark:text-white"><bdi dir="auto">{help!.mnemonic}</bdi></p>}
+          {help!.why && <p className="text-ink-muted dark:text-slate-400">{help!.why}</p>}
+          {help!.mnemonic && <p className="font-medium text-ink dark:text-white">{help!.mnemonic}</p>}
           {help!.example && (
             <p dir="ltr" className="flex items-start gap-1 italic text-slate-700 dark:text-slate-200"><span className="flex-1">{help!.example}</span><SpeakButton text={help!.example} size={14} /></p>
           )}
@@ -354,9 +360,11 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
     const snapshot: Snapshot = { queue, index, updated, combo, xp, reviews, firstAnswers };
 
     const next = { ...calculateSrs(current, rating), updatedAt: new Date().toISOString() };
-    // Saved at once, so closing the app mid-session keeps every answer.
+    // Saved at once, so closing the app mid-session keeps every answer. The
+    // new schedule goes over the stored card, so content filled meanwhile stays.
     const logId = await db.transaction('rw', db.studyHistory, db.flashcards, async () => {
-      await db.flashcards.put(next);
+      const stored = await db.flashcards.get(card.id);
+      await db.flashcards.put(stored ? { ...withEditedContent(next, stored), updatedAt: next.updatedAt } : next);
       return await db.studyHistory.add({ uid: crypto.randomUUID(), cardId: card.id, date: dayString(new Date()), rating }) as number;
     });
     const gained = reviewXp(rating, combo);
@@ -390,7 +398,10 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
     if (!last || busy.current) return;
     await db.transaction('rw', db.studyHistory, db.flashcards, async () => {
       if (last.logId !== undefined) await db.studyHistory.delete(last.logId);
-      if (last.card) await db.flashcards.put({ ...last.card, updatedAt: new Date().toISOString() });
+      if (last.card) {
+        const stored = await db.flashcards.get(last.card.id);
+        await db.flashcards.put({ ...(stored ? withEditedContent(last.card, stored) : last.card), updatedAt: new Date().toISOString() });
+      }
     });
     setHistory(h => h.slice(0, -1));
     setQueue(last.queue);
@@ -443,11 +454,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
 
   const finishLeech = async (help: LeechHelp | null) => {
     if (!current || !onSaveCard) return;
-    try {
-      showSaved(await onSaveCard(applyLeechHelp(current, help)));
-    } catch (error) {
-      console.error('Saving the memory aid failed:', error);
-    }
+    showSaved(await onSaveCard(applyLeechHelp(current, help)));
   };
 
   const switchMode = (m: StudyMode) => { setMode(m); setRevealed(false); setAnswerState(null); setClozeResult(null); setSuggested(undefined); setTyped(''); };
