@@ -1,32 +1,38 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Flashcard, Deck } from '../types';
-import { 
-  AiRequestOptions,
-  generatePersianDetails, 
-  getPronunciationFeedback,
-  blobToBase64 
-} from '../services/geminiService';
+import { Flashcard, Deck, CefrLevel } from '../types';
 import {
-  fetchFromFreeDictionary,
-  fetchFromMerriamWebster,
-  fetchAudioData,
-  DictionaryResult
-} from '../services/dictionaryService';
+  AiRequestOptions,
+  getPronunciationFeedback,
+  blobToBase64
+} from '../services/geminiService';
+import { fetchAudioData } from '../services/dictionaryService';
+import {
+  applyProposal,
+  CardProposal,
+  FIELD_NAMES,
+  parseCollocations,
+  proposalChanges,
+  refreshCard,
+  refreshErrorText,
+  RefreshField,
+  RefreshSource,
+  shownValue,
+} from '../services/cardRefresh';
+import { originText } from '../services/library';
+import { CEFR } from '../services/wordLevel';
 
 
 // Fix: Omit `createdAt` and `isDeleted` as they are not managed by the form.
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'createdAt' | 'updatedAt' | 'isDeleted'>;
-type DictionarySource = 'free' | 'mw';
 
 interface FlashcardFormProps {
   card: Flashcard | null;
   decks: Deck[];
-  onSave: (card: FlashcardFormData, deckName: string) => void;
+  onSave: (card: FlashcardFormData, deckName: string) => void | Promise<void>;
   onCancel: () => void;
   initialDeckName?: string;
   showToast: (message: string) => void;
-  defaultApiSource: DictionarySource;
-  aiOptions?: AiRequestOptions;
+  sources: RefreshSource[]; // the AI services and dictionaries a card can be filled from
   audioOptions?: AiRequestOptions;
 }
 
@@ -47,22 +53,95 @@ const hint = 'text-xs text-ink-muted dark:text-slate-400 mt-0.5';
 const field = 'block w-full min-h-[44px] rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm text-ink dark:text-white placeholder-slate-400 focus:border-brand-500 focus:outline-none';
 
 
-const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCancel, initialDeckName, showToast, defaultApiSource, aiOptions, audioOptions }) => {
-  const [formData, setFormData] = useState<FlashcardFormData>({
-    front: '',
-    back: '',
-    pronunciation: '',
-    partOfSpeech: '',
-    definition: [],
-    exampleSentenceTarget: [],
-    notes: '',
-    audioSrc: undefined,
+// Lists typed one per line in the form.
+const lines = (value: string): string[] => value.split('\n').map(l => l.trim()).filter(Boolean);
+const asList = (v: string[] | string | undefined): string[] => (Array.isArray(v) ? v : v ? [String(v)] : []);
+
+const EMPTY: FlashcardFormData = {
+  front: '', back: '', pronunciation: '', partOfSpeech: '', definition: [], exampleSentenceTarget: [], notes: '', audioSrc: undefined,
+};
+
+// What a source would change, field by field, next to what the card says now.
+// The user ticks the fields to take; nothing changes before that.
+const ProposalPanel: React.FC<{
+  card: Partial<FlashcardFormData>;
+  proposal: CardProposal;
+  sourceName: string;
+  onApply: (fields: RefreshField[]) => void;
+  onDismiss: () => void;
+}> = ({ card, proposal, sourceName, onApply, onDismiss }) => {
+  const changes = proposalChanges(card, proposal);
+  const [picked, setPicked] = useState<Set<RefreshField>>(() => new Set(changes.map(c => c.field)));
+  const toggle = (field: RefreshField) => setPicked(prev => {
+    const next = new Set(prev);
+    if (next.has(field)) next.delete(field); else next.add(field);
+    return next;
   });
+  return (
+    <section aria-label={`پیشنهاد ${sourceName}`} className="rounded-2xl border-2 border-brand-200 dark:border-brand-700 bg-brand-50/60 dark:bg-slate-900/60 p-4 flex flex-col gap-3">
+      <p className="text-sm font-bold text-ink dark:text-white">
+        پیشنهاد <bdi dir="auto">{sourceName}</bdi>
+        {changes.length > 0 && <span className="font-normal text-ink-muted dark:text-slate-400"> · هر کدام را می‌خواهی تیک بزن</span>}
+      </p>
+      {changes.length === 0 ? (
+        <p className="text-sm text-ink-muted dark:text-slate-300">این منبع چیزی متفاوت با کارت فعلی نگفت.</p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {changes.map(c => {
+            const ltr = c.field !== 'back' && c.field !== 'notes' && c.field !== 'practicePrompt';
+            return (
+              <li key={c.field}>
+                <label className="flex items-start gap-3 rounded-xl bg-white dark:bg-slate-800 p-3 cursor-pointer">
+                  <input type="checkbox" checked={picked.has(c.field)} onChange={() => toggle(c.field)} className="mt-1 w-5 h-5 accent-brand-500 shrink-0" />
+                  <span className="flex-1 min-w-0 flex flex-col gap-1">
+                    <span className="text-xs font-bold text-ink-muted dark:text-slate-400">{FIELD_NAMES[c.field]}</span>
+                    {c.field === 'audioSrc' ? (
+                      <span className="text-sm text-ink dark:text-slate-100">{c.current ? 'صدای تازه به‌جای صدای فعلی' : 'صدای تلفظ اضافه شود'}</span>
+                    ) : (
+                      <>
+                        <span dir={ltr ? 'ltr' : 'rtl'} className={`text-sm whitespace-pre-line break-words text-ink dark:text-white ${ltr ? 'font-en text-left' : ''}`}>{c.proposed}</span>
+                        {c.current && (
+                          <span dir={ltr ? 'ltr' : 'rtl'} className={`text-xs whitespace-pre-line break-words text-ink-muted dark:text-slate-400 line-through decoration-slate-400/60 ${ltr ? 'font-en text-left' : ''}`}>{c.current}</span>
+                        )}
+                      </>
+                    )}
+                  </span>
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <div className="flex flex-wrap gap-2 justify-end">
+        <button type="button" onClick={onDismiss} className="min-h-[44px] px-4 rounded-xl text-sm font-bold text-ink dark:text-slate-200 border border-slate-200 dark:border-slate-600 hover:bg-white dark:hover:bg-slate-700">
+          {changes.length === 0 ? 'بستن' : 'هیچ‌کدام'}
+        </button>
+        {changes.length > 0 && (
+          <button type="button" disabled={picked.size === 0} onClick={() => onApply(changes.map(c => c.field).filter(f => picked.has(f)))}
+            className="min-h-[44px] px-5 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 disabled:opacity-40">
+            گذاشتن انتخاب‌ها در کارت
+          </button>
+        )}
+      </div>
+    </section>
+  );
+};
+
+const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCancel, initialDeckName, showToast, sources, audioOptions }) => {
+  const [formData, setFormData] = useState<FlashcardFormData>(EMPTY);
+  // Lists are edited as text, one item per line, and read back on save.
+  const [definitionText, setDefinitionText] = useState('');
+  const [examplesText, setExamplesText] = useState('');
+  const [collocationsText, setCollocationsText] = useState('');
   const [deckName, setDeckName] = useState('Default Deck');
-  
-  // Loading states
-  const [isFetchingDetails, setIsFetchingDetails] = useState(false);
-  const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // Another source's answer for this card
+  const [sourceId, setSourceId] = useState(sources[0]?.id || '');
+  const [asking, setAsking] = useState(false);
+  const [proposal, setProposal] = useState<{ value: CardProposal; sourceName: string } | null>(null);
+  const [askError, setAskError] = useState('');
+
   const [isFetchingAudio, setIsFetchingAudio] = useState(false);
 
   // Pronunciation feedback state
@@ -72,105 +151,94 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
+  const showLists = (data: Partial<FlashcardFormData>) => {
+    setDefinitionText(asList(data.definition).join('\n'));
+    setExamplesText(asList(data.exampleSentenceTarget).join('\n'));
+    setCollocationsText(shownValue('collocations', data.collocations || []));
+  };
+
   useEffect(() => {
     if (card) {
-      const { 
-          front, back, pronunciation, partOfSpeech, definition, 
-          exampleSentenceTarget, notes, audioSrc 
-      } = card;
-
-      // Fix: Ensure 'definition' and 'exampleSentenceTarget' are always arrays to handle legacy data.
-      const safeDefinition = Array.isArray(definition) ? definition : (definition ? [String(definition)] : []);
-      const safeExamples = Array.isArray(exampleSentenceTarget) ? exampleSentenceTarget : (exampleSentenceTarget ? [String(exampleSentenceTarget)] : []);
-
-      setFormData({ 
-          front, back, pronunciation, partOfSpeech, 
-          definition: safeDefinition, 
-          exampleSentenceTarget: safeExamples,
-          notes, audioSrc 
-      });
-
-      if (initialDeckName) {
-        setDeckName(initialDeckName);
-      }
+      const { id: _id, deckId: _deck, repetition: _r, easinessFactor: _e, interval: _i, dueDate: _d, createdAt: _c, updatedAt: _u, isDeleted: _x,
+        stability: _s, difficulty: _df, lastReviewed: _l, lapses: _lp, ...content } = card;
+      const data: FlashcardFormData = {
+        ...content,
+        // Older cards kept one string where there is now a list.
+        definition: asList(content.definition),
+        exampleSentenceTarget: asList(content.exampleSentenceTarget),
+      };
+      setFormData(data);
+      showLists(data);
+      if (initialDeckName) setDeckName(initialDeckName);
     } else {
-      // Reset for new card
-      setFormData({
-        front: '',
-        back: '',
-        pronunciation: '',
-        partOfSpeech: '',
-        definition: [],
-        exampleSentenceTarget: [],
-        notes: '',
-        audioSrc: undefined,
-      });
+      setFormData(EMPTY);
+      showLists(EMPTY);
       setDeckName('Default Deck');
     }
+    setProposal(null);
+    setAskError('');
   }, [card, initialDeckName]);
 
-  const handleTextChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  useEffect(() => {
+    if (!sources.some(s => s.id === sourceId)) setSourceId(sources[0]?.id || '');
+  }, [sources, sourceId]);
+
+  const handleTextChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    setFormData(prev => ({
+      ...prev,
+      [name]: value,
+      // A meaning typed by hand is the user's own.
+      ...(name === 'back' && value !== prev.back ? { origin: { by: 'manual' as const, at: new Date().toISOString() } } : {}),
+    }));
   };
 
-  const handleTextAreaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const { name, value } = e.target;
-    const valueAsArray = value.split('\n\n').filter(s => s.trim() !== '');
-    setFormData(prev => ({ ...prev, [name]: valueAsArray }));
-  };
+  // The form as it stands, with the lists read from their text boxes.
+  const current = (): FlashcardFormData => ({
+    ...formData,
+    definition: lines(definitionText),
+    exampleSentenceTarget: lines(examplesText),
+    collocations: parseCollocations(collocationsText),
+    level: formData.level || undefined,
+  });
 
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (formData.front && formData.back && deckName) {
-      onSave(formData, deckName);
-    }
-  };
-  
-  const handleFetchDetails = async () => {
-      if (!formData.front) return;
-      setIsFetchingDetails(true);
-      setFormData(prev => ({...prev, audioSrc: undefined}));
-      
-      try {
-          const fetcher = defaultApiSource === 'free' ? fetchFromFreeDictionary : fetchFromMerriamWebster;
-          const details: DictionaryResult = await fetcher(formData.front);
-                    
-          setFormData(prev => ({
-              ...prev,
-              pronunciation: details.pronunciation,
-              partOfSpeech: details.partOfSpeech,
-              definition: details.definitions,
-              exampleSentenceTarget: details.exampleSentences,
-              audioSrc: details.audioUrl,
-          }));
-          showToast(`جزئیات از ${defaultApiSource === 'free' ? 'دیکشنری رایگان' : 'Merriam-Webster'} آمد.`);
-
-      } catch (error) {
-          console.error("Failed to fetch details from dictionary API:", error);
-          showToast(`«${formData.front}» در دیکشنری پیدا نشد.`);
-      } finally {
-          setIsFetchingDetails(false);
-      }
-  };
-
-  const handleGenerateAiDetails = async () => {
-    if (!formData.front) return;
-    setIsGeneratingAI(true);
+    if (!formData.front.trim() || !formData.back.trim() || !deckName.trim() || saving) return;
+    setSaving(true);
     try {
-      const details = await generatePersianDetails(formData.front, aiOptions);
-      setFormData(prev => ({
-        ...prev,
-        back: details.back,
-        notes: details.notes
-      }));
-    } catch(error) {
-       console.error("Failed to generate AI details:", error);
-       showToast('هوش مصنوعی معنی را نساخت. دوباره امتحان کن.');
+      await onSave(current(), deckName);
     } finally {
-      setIsGeneratingAI(false);
+      setSaving(false);
     }
+  };
+
+  const source = sources.find(s => s.id === sourceId);
+  const grammar = formData.kind === 'grammar';
+
+  const handleAsk = async () => {
+    if (!source || !formData.front.trim()) return;
+    setAsking(true);
+    setAskError('');
+    setProposal(null);
+    try {
+      const value = await refreshCard(current(), source);
+      setProposal({ value, sourceName: source.name });
+    } catch (error) {
+      console.error('Filling the card from another source failed:', error);
+      setAskError(refreshErrorText(error, source));
+    } finally {
+      setAsking(false);
+    }
+  };
+
+  const handleApply = (fields: RefreshField[]) => {
+    if (!proposal) return;
+    const next = applyProposal(current(), proposal.value, fields);
+    setFormData(next);
+    showLists(next);
+    setProposal(null);
+    showToast('پیشنهاد در کارت گذاشته شد. برای ماندن، کارت را ذخیره کن.');
   };
 
   const handleToggleRecording = async () => {
@@ -227,13 +295,19 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
     }
   };
 
+  const madeBy = originText(formData.origin);
+
   return (
-    <div dir="rtl" className="font-fa max-w-3xl mx-auto w-full bg-white dark:bg-slate-800 p-5 sm:p-8 rounded-3xl">
-      <h1 className="text-2xl font-extrabold mb-6 text-ink dark:text-white">{card ? 'ویرایش کارت' : 'کارت تازه'}</h1>
+    <div dir="rtl" className="font-fa max-w-3xl mx-auto w-full bg-white dark:bg-slate-800 p-5 sm:p-8 rounded-3xl"
+      onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); onCancel(); } }}>
+      <div className="flex items-baseline justify-between gap-3 flex-wrap mb-6">
+        <h1 className="text-2xl font-extrabold text-ink dark:text-white">{card ? 'ویرایش کارت' : 'کارت تازه'}</h1>
+        {madeBy && <span className="text-xs text-ink-muted dark:text-slate-400">پرشده با: <bdi dir="auto">{madeBy}</bdi></span>}
+      </div>
       <form onSubmit={handleSubmit} className="flex flex-col gap-6">
         <div>
             <label htmlFor="front" className={label}>
-                واژه یا عبارت انگلیسی <span className="text-red-500">*</span>
+                {grammar ? 'نام ساختار' : 'واژه یا عبارت انگلیسی'} <span className="text-red-500">*</span>
             </label>
             <div className="relative mt-1">
                 <input
@@ -261,13 +335,36 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
              )}
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <button type="button" onClick={handleFetchDetails} disabled={isFetchingDetails || !formData.front} className="w-full min-h-[48px] px-4 rounded-xl text-sm font-bold text-ink dark:text-white bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 transition-colors disabled:opacity-50 disabled:cursor-wait">
-                {isFetchingDetails ? 'در حال گرفتن…' : 'گرفتن جزئیات از دیکشنری'}
+        <div className="rounded-2xl bg-slate-50 dark:bg-slate-900/50 p-4 flex flex-col gap-3">
+          <div>
+            <label htmlFor="refresh-source" className={label}>{card ? 'پرکردن دوباره از منبع دیگر' : 'پرکردن خودکار'}</label>
+            <p id="refresh-hint" className={hint}>
+              {formData.sourceSentence?.trim() && !grammar ? 'هوش مصنوعی معنی را در جملهٔ متن پیدا می‌کند. ' : ''}
+              اول جواب را کنار مقدار فعلی می‌بینی و خودت انتخاب می‌کنی.
+            </p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <select id="refresh-source" aria-describedby="refresh-hint" value={sourceId} onChange={e => { setSourceId(e.target.value); setAskError(''); }}
+              className={`${field} px-3 sm:flex-1`}>
+              <optgroup label="هوش مصنوعی">
+                {sources.filter(s => s.kind === 'ai').map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </optgroup>
+              {!grammar && (
+                <optgroup label="دیکشنری">
+                  {sources.filter(s => s.kind === 'dictionary').map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </optgroup>
+              )}
+            </select>
+            <button type="button" onClick={handleAsk} disabled={asking || !formData.front.trim() || !source || (grammar && source.kind !== 'ai')}
+              className="min-h-[44px] px-5 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 transition-colors disabled:opacity-50 disabled:cursor-wait whitespace-nowrap">
+              {asking ? 'در حال پرسیدن…' : 'بپرس'}
             </button>
-            <button type="button" onClick={handleGenerateAiDetails} disabled={isGeneratingAI || !formData.front} className="w-full min-h-[48px] px-4 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 transition-colors disabled:opacity-50 disabled:cursor-wait">
-                {isGeneratingAI ? 'در حال ساختن…' : '✨ معنی فارسی با هوش مصنوعی'}
-            </button>
+          </div>
+          {askError && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{askError}</p>}
+          {proposal && (
+            <ProposalPanel key={proposal.sourceName + JSON.stringify(proposal.value)} card={current()} proposal={proposal.value} sourceName={proposal.sourceName}
+              onApply={handleApply} onDismiss={() => setProposal(null)} />
+          )}
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
@@ -294,7 +391,7 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
             {/* Back of Card */}
           <div>
             <label htmlFor="back" className={label}>
-              معنی فارسی <span className="text-red-500">*</span>
+              {grammar ? 'توضیح فارسی' : 'معنی فارسی'} <span className="text-red-500">*</span>
             </label>
             <input
               type="text"
@@ -309,9 +406,25 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+        {grammar && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+            <div>
+              <label htmlFor="grammarPattern" className={label}>ساختار گرامری</label>
+              <input type="text" id="grammarPattern" name="grammarPattern" dir="ltr" value={formData.grammarPattern || ''} onChange={handleTextChange}
+                className={`${field} mt-1 px-3 font-en`} placeholder="had + past participle" />
+            </div>
+            <div>
+              <label htmlFor="practicePrompt" className={label}>تمرین جمله‌سازی</label>
+              <input type="text" id="practicePrompt" name="practicePrompt" dir="rtl" value={formData.practicePrompt || ''} onChange={handleTextChange}
+                className={`${field} mt-1 px-3`} />
+            </div>
+          </div>
+        )}
+
+        {!grammar && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-6">
           {/* Pronunciation */}
-          <div>
+          <div className="col-span-2 sm:col-span-1">
             <label htmlFor="pronunciation" className={label}>
               تلفظ <span className="font-en font-normal text-ink-muted dark:text-slate-400">(IPA)</span>
             </label>
@@ -340,29 +453,53 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
                 placeholder="noun, verb…"
               />
             </div>
+            <div>
+              <label htmlFor="level" className={label}>سطح</label>
+              <select id="level" name="level" dir="ltr" value={formData.level || ''} onChange={handleTextChange} className={`${field} mt-1 px-3 font-en`}>
+                <option value="">—</option>
+                {CEFR.map((l: CefrLevel) => <option key={l} value={l}>{l}</option>)}
+              </select>
+            </div>
+        </div>
+        )}
+
+        <div>
+          <label htmlFor="sourceSentence" className={label}>جملهٔ متن</label>
+          <p id="sentence-hint" className={hint}>جمله‌ای که این {grammar ? 'ساختار' : 'واژه'} در آن دیده شد. هوش مصنوعی معنی را در همین جمله می‌دهد.</p>
+          <textarea id="sourceSentence" name="sourceSentence" dir="ltr" rows={2} aria-describedby="sentence-hint" value={formData.sourceSentence || ''} onChange={handleTextChange} className={`${field} mt-1 px-3 py-2 font-en`} />
         </div>
 
         <div>
           <label htmlFor="definition" className={label}>تعریف انگلیسی</label>
-          <p id="definition-hint" className={hint}>اگر چند تعریف داری، با یک خط خالی از هم جدایشان کن.</p>
-          <textarea id="definition" name="definition" dir="ltr" rows={3} aria-describedby="definition-hint" value={formData.definition?.join('\n\n') || ''} onChange={handleTextAreaChange} className={`${field} mt-1 px-3 py-2 font-en`} />
+          <p id="definition-hint" className={hint}>هر تعریف در یک خط.</p>
+          <textarea id="definition" name="definition" dir="ltr" rows={3} aria-describedby="definition-hint" value={definitionText} onChange={e => setDefinitionText(e.target.value)} className={`${field} mt-1 px-3 py-2 font-en`} />
         </div>
 
         <div>
            <label htmlFor="exampleSentenceTarget" className={label}>جملهٔ مثال</label>
-           <p id="example-hint" className={hint}>اگر چند مثال داری، با یک خط خالی از هم جدایشان کن.</p>
-          <textarea id="exampleSentenceTarget" name="exampleSentenceTarget" dir="ltr" rows={3} aria-describedby="example-hint" value={formData.exampleSentenceTarget?.join('\n\n') || ''} onChange={handleTextAreaChange} className={`${field} mt-1 px-3 py-2 font-en`} />
+           <p id="example-hint" className={hint}>هر مثال در یک خط.</p>
+          <textarea id="exampleSentenceTarget" name="exampleSentenceTarget" dir="ltr" rows={3} aria-describedby="example-hint" value={examplesText} onChange={e => setExamplesText(e.target.value)} className={`${field} mt-1 px-3 py-2 font-en`} />
         </div>
+
+        {!grammar && (
+          <div>
+            <label htmlFor="collocations" className={label}>ترکیب‌های رایج</label>
+            <p id="collocations-hint" className={hint}>هر ترکیب در یک خط؛ معنی فارسی بعد از =، مثل <bdi dir="ltr" className="font-en">make a decision = تصمیم گرفتن</bdi></p>
+            <textarea id="collocations" name="collocations" dir="ltr" rows={3} aria-describedby="collocations-hint" value={collocationsText} onChange={e => setCollocationsText(e.target.value)} className={`${field} mt-1 px-3 py-2 font-en`} />
+          </div>
+        )}
 
         <div>
           <label htmlFor="notes" className={label}>یادداشت و ترفند به‌خاطرسپاری</label>
           <textarea id="notes" name="notes" dir="rtl" rows={3} value={formData.notes || ''} onChange={handleTextChange} className={`${field} mt-1 px-3 py-2`} />
         </div>
 
+        {!grammar && (
         <div>
             <span className={label}>صدای تلفظ</span>
-            <div className="mt-1 flex items-center gap-4 min-h-[52px]">
+            <div className="mt-1 flex items-center gap-3 min-h-[52px] flex-wrap">
                 {formData.audioSrc ? (
+                  <>
                     <button
                         type="button"
                         onClick={playAudio}
@@ -372,20 +509,24 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
                         {isFetchingAudio ? <LoadingIcon/> : <SpeakerIcon />}
                         <span>پخش صدا</span>
                     </button>
+                    <button type="button" onClick={() => setFormData(prev => ({ ...prev, audioSrc: undefined }))}
+                      className="min-h-[44px] px-3 rounded-xl text-sm text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40">
+                      حذف صدا
+                    </button>
+                  </>
                 ) : (
-                     <span className="text-sm text-ink-muted dark:text-slate-400 px-1">
-                        {isFetchingDetails ? 'در حال گرفتن جزئیات…' : 'صدا همراه جزئیات دیکشنری گرفته می‌شود.'}
-                     </span>
+                     <span className="text-sm text-ink-muted dark:text-slate-400 px-1">صدا با پرکردن از دیکشنری گرفته می‌شود.</span>
                 )}
             </div>
         </div>
+        )}
 
         <div className="flex justify-end gap-3 pt-2">
           <button type="button" onClick={onCancel} className="min-h-[44px] px-5 rounded-xl text-sm font-bold text-ink dark:text-slate-200 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
             لغو
           </button>
-          <button type="submit" className="min-h-[44px] px-6 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 transition-colors">
-            ذخیرهٔ کارت
+          <button type="submit" disabled={saving} className="min-h-[44px] px-6 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 transition-colors disabled:opacity-50">
+            {saving ? 'در حال ذخیره…' : 'ذخیرهٔ کارت'}
           </button>
         </div>
       </form>

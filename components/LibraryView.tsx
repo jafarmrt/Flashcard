@@ -47,6 +47,7 @@ interface LibraryViewProps {
   onDismissSectionReview: () => void;
   aiOptions?: AiRequestOptions;
   onCheckCards: (changes: { id: string; back?: string }[]) => Promise<void>;
+  onEditCard?: (card: Flashcard) => void; // opens the card form over this page
   settings: Settings;
   knownTerms: string[];
   loadText: (chapterId: string) => Promise<ChapterText>;
@@ -119,7 +120,7 @@ const ChapterPath: React.FC<{ chapter: Chapter; onOpenChunk: (i: number) => void
 
 // --- The words of one source, by chapter ---
 
-const SourceWords: React.FC<{ source: Source; chapters: Chapter[]; occurrences: Occurrence[]; cards: Flashcard[]; decks: Deck[] }> = ({ source, chapters, occurrences, cards, decks }) => {
+const SourceWords: React.FC<{ source: Source; chapters: Chapter[]; occurrences: Occurrence[]; cards: Flashcard[]; decks: Deck[]; onEditCard?: (card: Flashcard) => void }> = ({ source, chapters, occurrences, cards, decks, onEditCard }) => {
   const [query, setQuery] = useState('');
   const byId = useMemo(() => new Map(cards.filter(c => !c.isDeleted).map(c => [c.id, c])), [cards]);
   const groups = useMemo(() => {
@@ -182,7 +183,14 @@ const SourceWords: React.FC<{ source: Source; chapters: Chapter[]; occurrences: 
                     </span>
                   </div>
                   {o.sentence && <p dir="ltr" className="font-read text-[13px] italic text-ink-muted dark:text-slate-400">{o.sentence}</p>}
-                  {origin && <p className="text-[11px] text-ink-muted dark:text-slate-500">سازنده: <bdi>{origin}</bdi></p>}
+                  <div className="flex items-center gap-2">
+                    {origin && <p className="text-[11px] text-ink-muted dark:text-slate-500">سازنده: <bdi>{origin}</bdi></p>}
+                    <span className="flex-1" />
+                    {onEditCard && (
+                      <button type="button" onClick={() => onEditCard({ ...card, sourceSentence: card.sourceSentence || o.sentence })} aria-label={`ویرایش ${card.front}`}
+                        className="min-h-[32px] px-3 rounded-lg text-xs font-bold text-brand-700 dark:text-brand-300 hover:bg-brand-50 dark:hover:bg-slate-700">ویرایش</button>
+                    )}
+                  </div>
                 </li>
               );
             })}
@@ -293,9 +301,9 @@ const SourcePage: React.FC<LibraryViewProps & { source: Source }> = props => {
       </div>
 
       {tab === 'check' ? (
-        <CardCheckPanel cards={sourceCards} aiOptions={props.aiOptions} onCheckCards={props.onCheckCards} />
+        <CardCheckPanel cards={sourceCards} aiOptions={props.aiOptions} onCheckCards={props.onCheckCards} onEditCard={props.onEditCard} />
       ) : tab === 'words' ? (
-        <SourceWords source={source} chapters={chapters} occurrences={occurrences} cards={cards} decks={decks} />
+        <SourceWords source={source} chapters={chapters} occurrences={occurrences} cards={cards} decks={decks} onEditCard={props.onEditCard} />
       ) : activeChapter ? (
         <>
           {single && <BookCoverage source={source} chapters={chapters} cards={cards} knownWords={props.knownWords} userLevel={props.settings.userLevel} loadText={props.loadText} />}

@@ -125,6 +125,8 @@ export const useAppLogic = () => {
   const [decks, setDecks] = useState<Deck[]>([]);
   const [view, setView] = useState<View>('TODAY');
   const [editingCard, setEditingCard] = useState<Flashcard | null>(null);
+  // A card edited on top of the current screen (see openCardEditor)
+  const [overlayEdit, setOverlayEdit] = useState<{ card: Flashcard; onDone?: (saved: Flashcard | null) => void } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const previousViewRef = useRef<View>('TODAY');
   
@@ -724,43 +726,55 @@ export const useAppLogic = () => {
     showToast('کارت حذف شد.');
   };
 
-  const handleSaveCard = async (cardData: FlashcardFormData, deckName: string) => {
+  // The deck named in the card form, made when it does not exist yet.
+  const deckForName = async (deckName: string): Promise<Deck> => {
     const trimmedDeckName = deckName.trim();
-    if (!trimmedDeckName) {
+    const allDecks = await db.decks.toArray();
+    const found = allDecks.find(d => d.name.toLowerCase() === trimmedDeckName.toLowerCase() && !d.isDeleted);
+    if (found) return found;
+    const newDeck: Deck = { id: crypto.randomUUID(), name: trimmedDeckName, updatedAt: new Date().toISOString() };
+    await db.decks.add(newDeck);
+    return newDeck;
+  };
+
+  // A card's new content over what the database holds now, so a review
+  // answered while the form was open keeps its schedule.
+  const saveCardEdits = async (card: Flashcard, cardData: FlashcardFormData, deckName: string): Promise<Flashcard | null> => {
+    if (!deckName.trim()) {
+      showToast('نام دسته خالی است.');
+      return null;
+    }
+    const deck = await deckForName(deckName);
+    const stored = (await db.flashcards.get(card.id)) || card;
+    const now = new Date().toISOString();
+    const updatedCard: Flashcard = {
+      ...stored,
+      ...cardData,
+      deckId: deck.id,
+      // A card the user corrected by hand is no longer flagged for review.
+      ...((cardData.back || '').trim() ? { checkedAt: now } : {}),
+      updatedAt: now,
+    };
+    await db.flashcards.put(updatedCard);
+    showToast('کارت ذخیره شد.');
+    return updatedCard;
+  };
+
+  const handleSaveCard = async (cardData: FlashcardFormData, deckName: string) => {
+    if (!deckName.trim()) {
       showToast('نام دسته خالی است.');
       return;
     }
-    
-    const allDecks = await db.decks.toArray();
-    // Explicitly use Map/Set to avoid array inference issues in loops/complex logic if needed,
-    // but for simple lookup find() is fine.
-    let deck = allDecks.find(d => d.name.toLowerCase() === trimmedDeckName.toLowerCase() && !d.isDeleted);
-
-    if (!deck) {
-      const newDeck: Deck = { id: crypto.randomUUID(), name: trimmedDeckName, updatedAt: new Date().toISOString() };
-      await db.decks.add(newDeck);
-      deck = newDeck;
-    }
-    
     if (editingCard) {
-      const now = new Date().toISOString();
-      const updatedCard: Flashcard = {
-        ...editingCard,
-        ...cardData,
-        deckId: deck!.id,
-        // A card the user corrected by hand is no longer flagged for review.
-        ...((cardData.back || '').trim() ? { checkedAt: now } : {}),
-        updatedAt: now,
-      };
-      await db.flashcards.put(updatedCard);
-      showToast('کارت ذخیره شد.');
+      if (!(await saveCardEdits(editingCard, cardData, deckName))) return;
     } else {
+      const deck = await deckForName(deckName);
       const now = new Date().toISOString();
       const newCard: Flashcard = {
         ...cardData,
-        origin: { by: 'manual', at: now },
+        origin: cardData.origin || { by: 'manual', at: now },
         id: crypto.randomUUID(),
-        deckId: deck!.id,
+        deckId: deck.id,
         repetition: 0,
         easinessFactor: 2.5,
         interval: 0,
@@ -775,6 +789,22 @@ export const useAppLogic = () => {
     handleCheckAchievements();
     setEditingCard(null);
     setView(previousViewRef.current);
+  };
+
+  // Editing a card on top of the current screen (a review, a book's check
+  // list), so leaving the form returns to exactly where the user was.
+  const openCardEditor = (card: Flashcard, onDone?: (saved: Flashcard | null) => void) => setOverlayEdit({ card, onDone });
+  const closeCardEditor = () => {
+    overlayEdit?.onDone?.(null);
+    setOverlayEdit(null);
+  };
+  const saveOverlayEdit = async (cardData: FlashcardFormData, deckName: string) => {
+    if (!overlayEdit) return;
+    const saved = await saveCardEdits(overlayEdit.card, cardData, deckName);
+    if (!saved) return;
+    overlayEdit.onDone?.(saved);
+    setOverlayEdit(null);
+    await fetchData();
   };
 
   const handleSaveProfile = async (profileData: Partial<UserProfile>) => {
@@ -1608,6 +1638,7 @@ export const useAppLogic = () => {
       sources, chapters, occurrences, activeSourceId, activeChapterId, activeChunk, knownWords, sectionReview,
       freeDictApiStatus, mwDictApiStatus, settings, userProfile, streak, earnedAchievements,
       previousViewRef, autoFixProgress, autoFixReport,
+      overlayEdit, openCardEditor, closeCardEditor, saveOverlayEdit,
       // Handlers
       setView, showToast, handleAddCard, handleEditCard, handleDeleteCard, handleSaveCard,
       handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV,

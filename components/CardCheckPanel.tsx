@@ -9,6 +9,7 @@ interface CardCheckPanelProps {
   cards: Flashcard[]; // the cards of one source
   aiOptions?: AiRequestOptions;
   onCheckCards: (changes: { id: string; back?: string }[]) => Promise<void>;
+  onEditCard?: (card: Flashcard) => void; // the whole card in the card form
 }
 
 // An AI's verdicts stay for the session, so leaving the page and coming back
@@ -19,7 +20,8 @@ const Row: React.FC<{
   card: Flashcard;
   verdict?: MeaningVerdict;
   onCheck: (changes: { id: string; back?: string }[]) => Promise<void>;
-}> = ({ card, verdict, onCheck }) => {
+  onEdit?: (card: Flashcard) => void;
+}> = ({ card, verdict, onCheck, onEdit }) => {
   const reasons = checkReasons(card);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(card.back || '');
@@ -76,6 +78,10 @@ const Row: React.FC<{
           )}
           <button type="button" onClick={() => { setDraft(suggestion || card.back || ''); setEditing(true); }}
             className="min-h-[38px] px-4 rounded-xl text-sm border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700">اصلاح معنی</button>
+          {onEdit && (
+            <button type="button" onClick={() => onEdit(card)}
+              className="min-h-[38px] px-4 rounded-xl text-sm border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700">ویرایش کامل یا منبع دیگر</button>
+          )}
         </div>
       )}
     </li>
@@ -85,7 +91,7 @@ const Row: React.FC<{
 // Cards of a book that may be wrong: what the app's own checks found, and,
 // when asked, what an AI says about their meaning in the book's sentence.
 // Nothing changes until the user confirms or picks a suggestion.
-export const CardCheckPanel: React.FC<CardCheckPanelProps> = ({ cards, aiOptions, onCheckCards }) => {
+export const CardCheckPanel: React.FC<CardCheckPanelProps> = ({ cards, aiOptions, onCheckCards, onEditCard }) => {
   const [verdicts, setVerdicts] = useState<Map<string, MeaningVerdict>>(() => new Map(verdictCache));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -152,7 +158,7 @@ export const CardCheckPanel: React.FC<CardCheckPanelProps> = ({ cards, aiOptions
           <p className="mt-2 text-sm text-ink-muted dark:text-slate-400">همهٔ کارت‌های این منبع سالم به نظر می‌رسند.</p>
         ) : (
           <ul className="mt-1 flex flex-col divide-y divide-slate-100 dark:divide-slate-700">
-            {rows.map(card => <Row key={card.id} card={card} verdict={verdicts.get(card.id)} onCheck={onCheckCards} />)}
+            {rows.map(card => <Row key={card.id} card={card} verdict={verdicts.get(card.id)} onCheck={onCheckCards} onEdit={onEditCard} />)}
           </ul>
         )}
       </section>
