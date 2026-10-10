@@ -70,6 +70,29 @@ export interface Collocation {
   meaning?: string; // Persian meaning of the whole expression
 }
 
+// A word close in meaning, with what sets the two apart (Persian).
+export interface Synonym {
+  word: string;
+  note?: string; // "large is more formal; big is everyday"
+}
+
+// Another word of the same family: decide, decision, decisive, indecisive.
+export interface WordFamilyMember {
+  word: string;
+  partOfSpeech?: string;
+  meaning?: string; // Persian
+}
+
+// The extra sections of a card (services/cardExtras).
+export interface CardExtras {
+  synonyms?: Synonym[];
+  commonMistake?: string; // Persian: a mistake Persian speakers often make with the term
+  register?: string; // Persian: formal or informal, British or American, how common
+  wordFamily?: WordFamilyMember[];
+  wordRoot?: string; // Persian: its root, prefix and suffix
+  extrasAt?: string; // ISO: when an AI was last asked for these
+}
+
 // Who filled in a card: an AI (with provider and model), the free
 // dictionaries, the user by hand, or a CSV import. Cards made before this was
 // recorded have no origin.
@@ -80,7 +103,7 @@ export interface CardOrigin {
   at?: string; // ISO
 }
 
-export interface Flashcard {
+export interface Flashcard extends CardExtras {
   id: string;
   deckId: string;
   front: string; // Target Language (English)
@@ -118,6 +141,7 @@ export interface Flashcard {
   difficulty?: number; // 1 (easy) to 10 (hard)
   lastReviewed?: string; // ISO timestamp
   lapses?: number; // times forgotten after being learned
+  leechHelpLapses?: number; // the lapses when a fresh memory aid was last made for it (services/cardExtras)
 }
 
 export type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
@@ -237,7 +261,7 @@ export interface TextDoc {
   isDeleted?: boolean;
 }
 
-export interface ExtractedWordCard {
+export interface ExtractedWordCard extends CardExtras {
   front: string;
   back: string;
   pronunciation?: string;

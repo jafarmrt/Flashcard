@@ -89,6 +89,7 @@ const App: React.FC = () => {
         knownWords, sectionReview, handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview, handleCheckCards,
         handleStartSourceReview, handleReviewCards, handlePrestudyChapter,
         overlayEdit, openCardEditor, closeCardEditor, saveOverlayEdit,
+        handleFillExtras, extrasProgress, handleSaveCardContent,
     } = useAppLogic();
 
     const visibleFlashcards = useMemo(() => flashcards.filter(c => !c.isDeleted), [flashcards]);
@@ -214,6 +215,7 @@ const App: React.FC = () => {
                     sourceId={studySourceId}
                     aiOptions={aiRequestOptions(settings)}
                     onEditCard={openCardEditor}
+                    onSaveCard={handleSaveCardContent}
                 />;
             case 'PRACTICE':
                 return <PracticeView cards={visibleFlashcards} aiOptions={aiRequestOptions(settings)} audioOptions={geminiAudioOptions(settings)} awardXP={userProfile ? (points) => handleGoalUpdate('QUIZ', points, true) : () => {}} onQuizComplete={(score) => {
@@ -312,6 +314,8 @@ const App: React.FC = () => {
                     onStopAutoFix={handleStopAutoFix}
                     autoFixProgress={autoFixProgress}
                     places={places}
+                    onFillExtras={handleFillExtras}
+                    extrasProgress={extrasProgress}
                 />;
         }
     };

@@ -16,6 +16,7 @@ import { fa, Icon, Kbd, StageDots } from './common/ui';
 import { GrammarPractice } from './GrammarPractice';
 import { blankOf, checkCloze, clozeFor, type ClozeResult } from '../services/cloze';
 import { withEditedContent } from '../services/cardRefresh';
+import { applyLeechHelp, LeechHelp, leechHelpFor, needsLeechHelp } from '../services/cardExtras';
 
 const MODE_NAMES: Record<StudyMode, string> = { flip: 'برگرداندن', type: 'نوشتنی', cloze: 'جای خالی' };
 
@@ -44,6 +45,7 @@ interface StudyViewProps {
   sourceId?: string | null; // a review of one book: its sentences come first
   aiOptions?: AiRequestOptions; // checks sentences written for grammar cards
   onEditCard?: (card: Flashcard, onDone: (saved: Flashcard | null) => void) => void; // the card form over the session
+  onSaveCard?: (card: Flashcard) => Promise<Flashcard>; // a changed card's content (a stubborn card's new memory aid)
 }
 
 // Reads a word, phrase or sentence aloud with the browser's speech synthesis.
@@ -103,6 +105,13 @@ const CardAnswer: React.FC<{ card: Flashcard; places?: CardPlace[] }> = ({ card,
     <div className="flex flex-col gap-4 animate-reveal">
       <div className="h-px bg-slate-200 dark:bg-slate-700" />
       <p dir="rtl" className="text-2xl md:text-3xl font-extrabold text-center text-ink dark:text-white break-words">{card.back}</p>
+      {card.register && <p dir="rtl" className="-mt-2 text-sm text-center text-ink-muted dark:text-slate-400">{card.register}</p>}
+      {card.commonMistake && (
+        <div dir="rtl" role="note" className="flex items-start gap-2 rounded-2xl bg-amber-50 dark:bg-amber-900/30 text-amber-950 dark:text-amber-100 p-4 text-sm leading-7">
+          <span aria-hidden="true" className="shrink-0 font-extrabold">!</span>
+          <p className="min-w-0"><span className="font-bold">اشتباه رایج: </span><bdi dir="auto">{card.commonMistake}</bdi></p>
+        </div>
+      )}
       <div className="grid gap-3 md:grid-cols-2">
         {places.length > 0 && <Places places={places} />}
         {card.sourceSentence && !sentenceInPlaces && (
@@ -123,6 +132,36 @@ const CardAnswer: React.FC<{ card: Flashcard; places?: CardPlace[] }> = ({ card,
                 </li>
               ))}
             </ul>
+          </Section>
+        )}
+        {card.synonyms && card.synonyms.length > 0 && (
+          <Section title="هم‌معنی‌ها و فرقشان">
+            <ul dir="ltr" className="flex flex-col gap-1">
+              {card.synonyms.map((syn, i) => (
+                <li key={i} className="flex items-start flex-wrap gap-x-1.5 text-sm">
+                  <SpeakButton text={syn.word} size={14} />
+                  <span className="font-medium text-slate-800 dark:text-slate-100 pt-0.5">{syn.word}</span>
+                  {syn.note && <span dir="rtl" className="text-ink-muted dark:text-slate-400 pt-0.5">{syn.note}</span>}
+                </li>
+              ))}
+            </ul>
+          </Section>
+        )}
+        {((card.wordFamily && card.wordFamily.length > 0) || card.wordRoot) && (
+          <Section title="خانوادهٔ واژه">
+            {card.wordFamily && card.wordFamily.length > 0 && (
+              <ul dir="ltr" className="flex flex-col gap-1">
+                {card.wordFamily.map((m, i) => (
+                  <li key={i} className="flex items-center flex-wrap gap-x-1.5 text-sm">
+                    <SpeakButton text={m.word} size={14} />
+                    <span className="font-medium text-slate-800 dark:text-slate-100">{m.word}</span>
+                    {m.partOfSpeech && <span className="text-xs text-ink-muted dark:text-slate-400">{m.partOfSpeech}</span>}
+                    {m.meaning && <span dir="rtl" className="text-ink-muted dark:text-slate-400">{m.meaning}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {card.wordRoot && <p dir="rtl" className="text-sm text-slate-700 dark:text-slate-200"><bdi dir="auto">{card.wordRoot}</bdi></p>}
           </Section>
         )}
         {definitions.length > 0 && (
@@ -147,6 +186,65 @@ const CardAnswer: React.FC<{ card: Flashcard; places?: CardPlace[] }> = ({ card,
       </div>
       {madeBy && <p dir="rtl" className="text-xs text-center text-ink-muted dark:text-slate-400">سازنده: <bdi dir="auto">{madeBy}</bdi></p>}
     </div>
+  );
+};
+
+// A card forgotten again and again: a new way to remember it, made on
+// request and kept only if the user wants it.
+const LeechPanel: React.FC<{ card: Flashcard; aiOptions?: AiRequestOptions; onDone: (help: LeechHelp | null) => Promise<void> }> = ({ card, aiOptions, onDone }) => {
+  const [state, setState] = useState<'ask' | 'busy' | 'shown' | 'saving'>('ask');
+  const [help, setHelp] = useState<LeechHelp | null>(null);
+  const [error, setError] = useState('');
+  const make = async () => {
+    setState('busy');
+    setError('');
+    try {
+      setHelp(await leechHelpFor(card, aiOptions));
+      setState('shown');
+    } catch (e) {
+      console.error('Making a fresh memory aid failed:', e);
+      setError('هوش مصنوعی جواب نداد. بعداً دوباره امتحان کن.');
+      setState('ask');
+    }
+  };
+  const finish = async (keep: boolean) => {
+    setState('saving');
+    await onDone(keep ? help : null);
+  };
+  const button = 'min-h-[44px] px-4 rounded-xl text-sm font-bold';
+  return (
+    <section dir="rtl" aria-label="کارت سمج" className="rounded-2xl border-2 border-rose-200 dark:border-rose-800 bg-rose-50/70 dark:bg-rose-950/30 p-4 flex flex-col gap-3">
+      <p className="text-sm text-ink dark:text-slate-100">
+        <span className="font-bold">کارت سمج: </span>
+        این کارت را {fa(card.lapses || 0)} بار فراموش کرده‌ای. شاید یادیار فعلی به کارت نمی‌آید.
+      </p>
+      {state === 'shown' || (state === 'saving' && help) ? (
+        <div className="flex flex-col gap-2 rounded-xl bg-white dark:bg-slate-800 p-3 text-sm leading-7">
+          {help!.why && <p className="text-ink-muted dark:text-slate-400"><bdi dir="auto">{help!.why}</bdi></p>}
+          {help!.mnemonic && <p className="font-medium text-ink dark:text-white"><bdi dir="auto">{help!.mnemonic}</bdi></p>}
+          {help!.example && (
+            <p dir="ltr" className="flex items-start gap-1 italic text-slate-700 dark:text-slate-200"><span className="flex-1">{help!.example}</span><SpeakButton text={help!.example} size={14} /></p>
+          )}
+          {help!.exampleMeaning && <p className="text-ink-muted dark:text-slate-400">{help!.exampleMeaning}</p>}
+        </div>
+      ) : null}
+      {error && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{error}</p>}
+      <div className="flex flex-wrap gap-2 justify-end">
+        {state === 'shown' || (state === 'saving' && help) ? (
+          <>
+            <button type="button" disabled={state === 'saving'} onClick={() => finish(false)} className={`${button} text-ink dark:text-slate-200 border border-slate-200 dark:border-slate-600 hover:bg-white dark:hover:bg-slate-700`}>نه، همان قبلی</button>
+            <button type="button" disabled={state === 'saving'} onClick={() => finish(true)} className={`${button} text-white bg-brand-500 hover:bg-brand-600 disabled:opacity-50`}>گذاشتن در کارت</button>
+          </>
+        ) : (
+          <>
+            <button type="button" disabled={state !== 'ask'} onClick={() => finish(false)} className={`${button} text-ink dark:text-slate-200 border border-slate-200 dark:border-slate-600 hover:bg-white dark:hover:bg-slate-700`}>لازم نیست</button>
+            <button type="button" disabled={state !== 'ask'} onClick={make} className={`${button} text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50`}>
+              {state === 'busy' ? 'در حال ساختن…' : 'یادیار و مثال تازه بساز'}
+            </button>
+          </>
+        )}
+      </div>
+    </section>
   );
 };
 
@@ -178,7 +276,7 @@ interface Snapshot {
   card?: Flashcard; // the card as it was before this answer
 }
 
-export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak, studiedToday, goal, onExit, places, sourceId, aiOptions, onEditCard }) => {
+export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak, studiedToday, goal, onExit, places, sourceId, aiOptions, onEditCard, onSaveCard }) => {
   const [queue, setQueue] = useState<Flashcard[]>([]);
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
@@ -330,13 +428,26 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
     setEditing(true);
     onEditCard(current, saved => {
       setEditing(false);
-      if (!saved) return;
-      const patch = (c: Flashcard) => withEditedContent(c, saved);
-      const patchMap = (m: Map<string, Flashcard>) => new Map(Array.from(m, ([id, c]) => [id, patch(c)] as [string, Flashcard]));
-      setQueue(q => q.map(patch));
-      setUpdated(prev => (prev.has(saved.id) ? patchMap(prev) : prev));
-      setHistory(h => h.map(snap => ({ ...snap, queue: snap.queue.map(patch), updated: patchMap(snap.updated), ...(snap.card ? { card: patch(snap.card) } : {}) })));
+      if (saved) showSaved(saved);
     });
+  };
+
+  // A card's new content on every copy the session holds.
+  const showSaved = (saved: Flashcard) => {
+    const patch = (c: Flashcard) => withEditedContent(c, saved);
+    const patchMap = (m: Map<string, Flashcard>) => new Map(Array.from(m, ([id, c]) => [id, patch(c)] as [string, Flashcard]));
+    setQueue(q => q.map(patch));
+    setUpdated(prev => (prev.has(saved.id) ? patchMap(prev) : prev));
+    setHistory(h => h.map(snap => ({ ...snap, queue: snap.queue.map(patch), updated: patchMap(snap.updated), ...(snap.card ? { card: patch(snap.card) } : {}) })));
+  };
+
+  const finishLeech = async (help: LeechHelp | null) => {
+    if (!current || !onSaveCard) return;
+    try {
+      showSaved(await onSaveCard(applyLeechHelp(current, help)));
+    } catch (error) {
+      console.error('Saving the memory aid failed:', error);
+    }
   };
 
   const switchMode = (m: StudyMode) => { setMode(m); setRevealed(false); setAnswerState(null); setClozeResult(null); setSuggested(undefined); setTyped(''); };
@@ -508,6 +619,9 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
                 </p>
               )}
               <CardAnswer card={card} places={places?.get(card.id)} />
+              {current && onSaveCard && needsLeechHelp(current) && (
+                <LeechPanel key={current.id} card={current} aiOptions={aiOptions} onDone={finishLeech} />
+              )}
             </>
           ) : card.kind === 'grammar' ? null : cardMode === 'flip' ? (
             <button type="button" onClick={() => setRevealed(true)}

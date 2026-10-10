@@ -20,6 +20,7 @@ import {
   shownValue,
 } from '../services/cardRefresh';
 import { originText } from '../services/library';
+import { familyText, parseFamilyText, parseSynonymsText, synonymsText } from '../services/cardExtras';
 import { CEFR } from '../services/wordLevel';
 
 
@@ -89,7 +90,7 @@ const ProposalPanel: React.FC<{
       ) : (
         <ul className="flex flex-col gap-2">
           {changes.map(c => {
-            const ltr = c.field !== 'back' && c.field !== 'notes' && c.field !== 'practicePrompt';
+            const ltr = !(['back', 'notes', 'practicePrompt', 'commonMistake', 'register', 'wordRoot'] as RefreshField[]).includes(c.field);
             return (
               <li key={c.field}>
                 <label className="flex items-start gap-3 rounded-xl bg-white dark:bg-slate-800 p-3 cursor-pointer">
@@ -134,6 +135,8 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
   const [definitionText, setDefinitionText] = useState('');
   const [examplesText, setExamplesText] = useState('');
   const [collocationsText, setCollocationsText] = useState('');
+  const [synonymsBox, setSynonymsBox] = useState('');
+  const [familyBox, setFamilyBox] = useState('');
   const [deckName, setDeckName] = useState('Default Deck');
   const [saving, setSaving] = useState(false);
 
@@ -156,6 +159,8 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
     setDefinitionText(asList(data.definition).join('\n'));
     setExamplesText(asList(data.exampleSentenceTarget).join('\n'));
     setCollocationsText(shownValue('collocations', data.collocations || []));
+    setSynonymsBox(synonymsText(data.synonyms || []));
+    setFamilyBox(familyText(data.wordFamily || []));
   };
 
   useEffect(() => {
@@ -201,6 +206,8 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
     definition: lines(definitionText),
     exampleSentenceTarget: lines(examplesText),
     collocations: parseCollocations(collocationsText),
+    synonyms: parseSynonymsText(synonymsBox),
+    wordFamily: parseFamilyText(familyBox),
     level: formData.level || undefined,
   });
 
@@ -496,6 +503,32 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
             <textarea id="collocations" name="collocations" dir="ltr" rows={3} aria-describedby="collocations-hint" value={collocationsText} onChange={e => setCollocationsText(e.target.value)} className={`${field} mt-1 px-3 py-2 font-en`} />
           </div>
         )}
+
+        {!grammar && (<>
+          <div>
+            <label htmlFor="synonyms" className={label}>هم‌معنی‌ها و فرقشان</label>
+            <p id="synonyms-hint" className={hint}>هر واژه در یک خط؛ فرقش بعد از =، مثل <bdi dir="ltr" className="font-en">large = کمی رسمی‌تر از big</bdi></p>
+            <textarea id="synonyms" name="synonyms" dir="ltr" rows={3} aria-describedby="synonyms-hint" value={synonymsBox} onChange={e => setSynonymsBox(e.target.value)} className={`${field} mt-1 px-3 py-2 font-en`} />
+          </div>
+          <div>
+            <label htmlFor="commonMistake" className={label}>اشتباه رایج</label>
+            <p id="mistake-hint" className={hint}>اشتباهی که فارسی‌زبان‌ها با این واژه زیاد می‌کنند.</p>
+            <textarea id="commonMistake" name="commonMistake" dir="rtl" rows={2} aria-describedby="mistake-hint" value={formData.commonMistake || ''} onChange={handleTextChange} className={`${field} mt-1 px-3 py-2`} />
+          </div>
+          <div>
+            <label htmlFor="register" className={label}>سبک و کاربرد</label>
+            <input id="register" name="register" dir="rtl" placeholder="مثلاً: رسمی · بیشتر نوشتاری · کم‌کاربرد" value={formData.register || ''} onChange={handleTextChange} className={`${field} mt-1 px-3`} />
+          </div>
+          <div>
+            <label htmlFor="wordFamily" className={label}>خانوادهٔ واژه</label>
+            <p id="family-hint" className={hint}>هر واژه در یک خط، مثل <bdi dir="ltr" className="font-en">decision (n.) = تصمیم</bdi></p>
+            <textarea id="wordFamily" name="wordFamily" dir="ltr" rows={3} aria-describedby="family-hint" value={familyBox} onChange={e => setFamilyBox(e.target.value)} className={`${field} mt-1 px-3 py-2 font-en`} />
+          </div>
+          <div>
+            <label htmlFor="wordRoot" className={label}>ریشه</label>
+            <input id="wordRoot" name="wordRoot" dir="rtl" placeholder="ریشه، پیشوند یا پسوند" value={formData.wordRoot || ''} onChange={handleTextChange} className={`${field} mt-1 px-3`} />
+          </div>
+        </>)}
 
         <div>
           <label htmlFor="notes" className={label}>یادداشت و ترفند به‌خاطرسپاری</label>

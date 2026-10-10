@@ -48,6 +48,12 @@ export const mergeExtracted = (cards: ExtractedWordCard[]): ExtractedWordCard[] 
       notes: prev.notes || card.notes,
       sourceSentence: prev.sourceSentence || card.sourceSentence,
       collocations: mergeCollocations(prev.collocations, card.collocations),
+      synonyms: prev.synonyms?.length ? prev.synonyms : card.synonyms,
+      wordFamily: prev.wordFamily?.length ? prev.wordFamily : card.wordFamily,
+      commonMistake: prev.commonMistake || card.commonMistake,
+      register: prev.register || card.register,
+      wordRoot: prev.wordRoot || card.wordRoot,
+      extrasAt: prev.extrasAt || card.extrasAt,
     });
   }
   return Array.from(byKey.values());

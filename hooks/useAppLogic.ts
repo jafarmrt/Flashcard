@@ -28,6 +28,9 @@ import { applyDictionarySettings } from '../services/dictSettings';
 import { DictionaryResult, lookupDictionary } from '../services/dictionaryService';
 import { AutoFixStats } from '../components/AutoFixReportModal';
 import { fa } from '../components/common/ui';
+import { EXTRAS_BATCH, extrasForCards, hasExtras, lacksExtras, parseSynonymsText, parseFamilyText, withExtras } from '../services/cardExtras';
+import { isPermanentAiError } from '../services/aiClient';
+import { withEditedContent } from '../services/cardRefresh';
 
 // Types used within the hook and exported for the App component
 export type View = 'TODAY' | 'ME' | 'TEXTS' | 'READER' | 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS' | 'PROFILE' | 'AI_EXTRACT' | 'USAGE';
@@ -105,6 +108,12 @@ const cardFromExtracted = (cardData: ExtractedWordCard, deckId: string, now: Dat
     ...(cardData.level ? { level: cardData.level } : {}),
     ...(cardData.notInDictionary ? { notInDictionary: true } : {}),
     ...(cardData.origin ? { origin: cardData.origin } : {}),
+    ...(cardData.synonyms?.length ? { synonyms: cardData.synonyms } : {}),
+    ...(cardData.wordFamily?.length ? { wordFamily: cardData.wordFamily } : {}),
+    ...(cardData.commonMistake ? { commonMistake: cardData.commonMistake } : {}),
+    ...(cardData.register ? { register: cardData.register } : {}),
+    ...(cardData.wordRoot ? { wordRoot: cardData.wordRoot } : {}),
+    ...(cardData.extrasAt ? { extrasAt: cardData.extrasAt } : {}),
     repetition: 0,
     easinessFactor: 2.5,
     interval: 0,
@@ -158,6 +167,8 @@ export const useAppLogic = () => {
   const [autoFixProgress, setAutoFixProgress] = useState<{ current: number, total: number } | null>(null);
   const [autoFixReport, setAutoFixReport] = useState<AutoFixStats | null>(null);
   const cancelAutoFixRef = useRef(false);
+  const cancelExtrasRef = useRef(false);
+  const [extrasProgress, setExtrasProgress] = useState<{ current: number, total: number } | null>(null);
 
   // Health & Settings
   const [dbStatus, setDbStatus] = useState<HealthStatus>('checking');
@@ -981,6 +992,11 @@ export const useAppLogic = () => {
                 practicePrompt: row.practicePrompt || undefined,
                 ...(parseLevel(row.level) ? { level: parseLevel(row.level) } : {}),
                 ...(row.grammarId?.trim() ? { grammarId: row.grammarId.trim() } : {}),
+                ...(row.synonyms?.trim() ? { synonyms: parseSynonymsText(row.synonyms, ';') } : {}),
+                ...(row.wordFamily?.trim() ? { wordFamily: parseFamilyText(row.wordFamily, ';') } : {}),
+                ...(row.commonMistake?.trim() ? { commonMistake: row.commonMistake.trim() } : {}),
+                ...(row.register?.trim() ? { register: row.register.trim() } : {}),
+                ...(row.wordRoot?.trim() ? { wordRoot: row.wordRoot.trim() } : {}),
                 origin: { by: 'import', at: now },
                 repetition: 0,
                 easinessFactor: 2.5,
@@ -1290,6 +1306,11 @@ export const useAppLogic = () => {
     });
     await fetchData();
     handleCheckAchievements();
+    // Meanings from the reader are short; the rest comes in the background.
+    if (newCards.some(lacksExtras)) {
+      cancelExtrasRef.current = false;
+      void fillCardExtras(newCards, { silent: true });
+    }
     if (!options.quiet) {
       const parts = [];
       if (newCards.length) parts.push(`${fa(newCards.length)} کارت تازه در «${deck.name}»`);
@@ -1626,6 +1647,58 @@ export const useAppLogic = () => {
 
   const handleStopAutoFix = () => {
       cancelAutoFixRef.current = true;
+      cancelExtrasRef.current = true;
+  };
+
+  // Synonyms, a common mistake, register, word family and root for cards
+  // that lack them, a few per AI request. Each batch is saved as it comes.
+  const fillCardExtras = async (cards: Flashcard[], options: { silent?: boolean } = {}): Promise<number> => {
+    const todo = cards.filter(lacksExtras);
+    let filled = 0;
+    for (let i = 0; i < todo.length; i += EXTRAS_BATCH) {
+      if (cancelExtrasRef.current) break;
+      const batch = todo.slice(i, i + EXTRAS_BATCH);
+      try {
+        const { extras } = await extrasForCards(batch, aiRequestOptions(settings));
+        const now = new Date();
+        const stored = (await db.flashcards.bulkGet(batch.map(c => c.id))) as (Flashcard | undefined)[];
+        const next = stored.map((c, n) => (c && !c.isDeleted ? withExtras(c, extras[n], now) : null)).filter((c): c is Flashcard => !!c);
+        await db.flashcards.bulkPut(next);
+        const byId = new Map(next.map(c => [c.id, c] as [string, Flashcard]));
+        setFlashcards(prev => prev.map(c => byId.get(c.id) || c));
+        filled += extras.filter(e => e && hasExtras(e)).length;
+      } catch (error) {
+        console.error('Filling card extras failed:', error);
+        if (!options.silent) showToast(`پر کردن بخش‌های تازه نیمه‌کاره ماند: ${(error as Error).message || 'هوش مصنوعی جواب نداد'}`);
+        // A wrong key or model fails the same way for every batch.
+        if (isPermanentAiError(error) || !options.silent) break;
+      }
+      if (!options.silent) setExtrasProgress({ current: Math.min(i + EXTRAS_BATCH, todo.length), total: todo.length });
+    }
+    return filled;
+  };
+
+  const handleFillExtras = async (cards: Flashcard[]) => {
+    const todo = cards.filter(lacksExtras);
+    if (todo.length === 0) {
+      showToast('همهٔ کارت‌ها این بخش‌ها را دارند.');
+      return;
+    }
+    cancelExtrasRef.current = false;
+    setExtrasProgress({ current: 0, total: todo.length });
+    const filled = await fillCardExtras(todo);
+    setExtrasProgress(null);
+    showToast(filled ? `${fa(filled)} کارت هم‌معنی، خانوادهٔ واژه و نکته‌های تازه گرفت.` : 'چیزی اضافه نشد.');
+  };
+
+  // A card whose content changed outside the form (a stubborn card's new
+  // memory aid). The schedule in the database stays as it is.
+  const handleSaveCardContent = async (card: Flashcard): Promise<Flashcard> => {
+    const stored = (await db.flashcards.get(card.id)) || card;
+    const next: Flashcard = { ...withEditedContent(stored, card), updatedAt: new Date().toISOString() };
+    await db.flashcards.put(next);
+    setFlashcards(prev => prev.map(c => (c.id === next.id ? next : c)));
+    return next;
   };
   
   const handleCloseAutoFixReport = () => {
@@ -1638,7 +1711,7 @@ export const useAppLogic = () => {
       syncStatus, studyDeckId, studyCards, studySessionId, isStudySetupModalOpen, studyMode, studySourceId, studyLogs, dbStatus, apiStatus,
       sources, chapters, occurrences, activeSourceId, activeChapterId, activeChunk, knownWords, sectionReview,
       freeDictApiStatus, mwDictApiStatus, settings, userProfile, streak, earnedAchievements,
-      previousViewRef, autoFixProgress, autoFixReport,
+      previousViewRef, autoFixProgress, autoFixReport, extrasProgress,
       overlayEdit, openCardEditor, closeCardEditor, saveOverlayEdit,
       // Handlers
       setView, showToast, handleAddCard, handleEditCard, handleDeleteCard, handleSaveCard,
@@ -1651,5 +1724,6 @@ export const useAppLogic = () => {
       handleDeleteSource, handleCompleteChunk, loadChapterText, handleSaveReaderCards,
       handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview: () => setSectionReview(null),
       handleCheckCards, handleStartSourceReview, handleReviewCards, handlePrestudyChapter,
+      handleFillExtras, handleSaveCardContent,
   };
 };
