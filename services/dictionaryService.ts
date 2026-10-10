@@ -1,128 +1,47 @@
-// This service handles fetching and parsing data from external dictionary APIs.
+// This service asks the dictionaries (through the server) and fetches their
+// pronunciation audio.
 
-// A helper function to call our secure proxy
-const callProxy = async (action: 'dictionary-free' | 'dictionary-mw', payload: object) => {
-    const response = await fetch('/api/proxy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, ...payload }),
-    });
-
-    if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `Proxy request failed for ${action}`);
-    }
-    return response.json();
-};
+import { callProxy } from './apiService';
+import { activeDictionaryRequest } from './dictSettings';
+import type { DictionaryId } from './dictionaryCatalog';
 
 export interface DictionaryResult {
+    headword: string;
     pronunciation: string;
     partOfSpeech: string;
     definitions: string[];
     exampleSentences: string[];
     audioUrl?: string;
+    source?: string; // the dictionary that answered
 }
 
-// --- Free Dictionary API (dictionaryapi.dev) ---
-export const fetchFromFreeDictionary = async (word: string): Promise<DictionaryResult> => {
-    const data = await callProxy('dictionary-free', { word });
-
-    if (!Array.isArray(data) || data.length === 0) {
-        throw new Error("Word not found in Free Dictionary.");
-    }
-
-    const entry = data[0];
-    const phonetic = entry.phonetics?.find((p: any) => p.text && p.audio)?.text || entry.phonetic || '';
-    const audioUrl = entry.phonetics?.find((p: any) => p.audio)?.audio;
-    
-    const definitions: string[] = [];
-    const exampleSentences: string[] = [];
-    let partOfSpeech = '';
-
-    entry.meanings?.forEach((meaning: any) => {
-        if (!partOfSpeech) {
-             partOfSpeech = meaning.partOfSpeech || '';
-        }
-        meaning.definitions?.forEach((def: any) => {
-            if (def.definition) {
-                definitions.push(def.definition);
-            }
-            if (def.example) {
-                exampleSentences.push(def.example);
-            }
-        });
-    });
-
+// The user's dictionaries in their order, or only `source`. `timeoutMs` is how
+// long each dictionary may take before the next one is asked.
+export const lookupDictionary = async (word: string, options: { source?: DictionaryId; timeoutMs?: number } = {}): Promise<DictionaryResult> => {
+    const entry = await callProxy('dictionary-lookup', { word, ...options, dictionaries: activeDictionaryRequest() });
     return {
-        pronunciation: phonetic,
-        partOfSpeech: partOfSpeech,
-        definitions: definitions,
-        exampleSentences: exampleSentences,
-        audioUrl: audioUrl,
+        headword: entry.headword || word,
+        pronunciation: entry.pronunciation || '',
+        partOfSpeech: entry.partOfSpeech || '',
+        definitions: entry.definitions || [],
+        exampleSentences: entry.examples || [],
+        audioUrl: entry.audioUrl,
+        source: entry.source,
     };
 };
 
-// --- Merriam-Webster API (dictionaryapi.com) ---
-const getMwAudioUrl = (audio: string): string | undefined => {
-    if (!audio) return undefined;
-    let subdir = '';
-    if (audio.startsWith('bix')) {
-        subdir = 'bix';
-    } else if (audio.startsWith('gg')) {
-        subdir = 'gg';
-    } else if (/^[0-9_]/.test(audio.charAt(0))) {
-        subdir = 'number';
-    } else {
-        subdir = audio.charAt(0);
+// Tries one dictionary (or the translation service) with the keys being typed.
+export const testDictionary = async (source: DictionaryId | 'mymemory', dictionaries: object): Promise<{ ok: boolean; message: string }> => {
+    try {
+        const res = await callProxy('test-dictionary', { source, dictionaries });
+        return { ok: true, message: res?.message || 'ok' };
+    } catch (error) {
+        const message = String((error as Error)?.message || '');
+        if (/needs an API key/i.test(message)) return { ok: false, message: 'کلید ندارد؛ کلید را وارد کن.' };
+        if (/refused the key/i.test(message)) return { ok: false, message: 'کلید پذیرفته نشد؛ درستی کلید و نام دیکشنری را نگاه کن.' };
+        if (/quota/i.test(message)) return { ok: false, message: 'جواب نداد؛ شاید سهمیهٔ امروز تمام شده باشد.' };
+        return { ok: false, message: 'جواب نداد؛ از سرور برنامه در دسترس نیست. کمی بعد دوباره امتحان کن.' };
     }
-    return `https://media.merriam-webster.com/audio/prons/en/us/mp3/${subdir}/${audio}.mp3`;
-};
-
-// Helper to recursively find example sentences in MW's complex structure
-const findMwExamples = (obj: any, examples: string[]) => {
-    if (Array.isArray(obj)) {
-        if (obj[0] === 'vis') { // 'vis' marks a "verbal illustration" (example)
-            obj[1].forEach((item: any) => {
-                if (item.t) {
-                    // Clean the example text from formatting tags
-                    const exampleText = item.t.replace(/{it}|{\/it}|{ldquo}|{rdquo}/g, '').replace(/ {dx}.*?{\/dx}/g, '');
-                    examples.push(exampleText);
-                }
-            });
-        } else {
-            obj.forEach(item => findMwExamples(item, examples));
-        }
-    } else if (typeof obj === 'object' && obj !== null) {
-        Object.values(obj).forEach(value => findMwExamples(value, examples));
-    }
-};
-
-
-export const fetchFromMerriamWebster = async (word: string): Promise<DictionaryResult> => {
-    const data = await callProxy('dictionary-mw', { word });
-    
-    if (!Array.isArray(data) || data.length === 0 || typeof data[0] !== 'object') {
-        throw new Error("Word not found in Merriam-Webster.");
-    }
-    
-    const entry = data[0];
-    const pronunciation = entry.hwi?.prs?.[0]?.mw || '';
-    const audioFile = entry.hwi?.prs?.[0]?.sound?.audio;
-
-    const definitions = entry.shortdef || [];
-    const exampleSentences: string[] = [];
-    if (entry.def) {
-        findMwExamples(entry.def, exampleSentences);
-    }
-
-
-    return {
-        pronunciation: `/${pronunciation}/`,
-        partOfSpeech: entry.fl || '',
-        definitions: definitions,
-        exampleSentences: exampleSentences,
-        audioUrl: getMwAudioUrl(audioFile),
-    };
 };
 
 // --- Audio Fetcher ---

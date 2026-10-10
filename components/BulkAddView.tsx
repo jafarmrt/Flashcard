@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, memo, useEffect } from 'react';
 import { Flashcard } from '../types';
 import { AiRequestOptions, generatePersianDetails } from '../services/geminiService';
-import { fetchFromFreeDictionary, fetchFromMerriamWebster, fetchAudioData, DictionaryResult } from '../services/dictionaryService';
+import { lookupDictionary, fetchAudioData } from '../services/dictionaryService';
 import { aiOrigin, dictionaryOrigin } from '../services/aiSettings';
 import { fa, Icon } from './common/ui';
 
@@ -32,13 +32,10 @@ interface ProcessedWord {
     isExpanded: boolean;
 }
 
-type DictionarySource = 'free' | 'mw';
-
 interface BulkAddViewProps {
     onSave: (cards: FlashcardFormData[], deckName: string) => Promise<void>;
     onCancel: () => void;
     showToast: (message: string) => void;
-    defaultApiSource: DictionarySource;
     concurrency: number;
     aiTimeout: number; // in seconds
     dictTimeout: number; // in seconds
@@ -170,7 +167,7 @@ const ReviewItem = memo(({
 });
 
 
-export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, showToast, defaultApiSource, concurrency, aiTimeout, dictTimeout, aiOptions }) => {
+export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, showToast, concurrency, aiTimeout, dictTimeout, aiOptions }) => {
     const [step, setStep] = useState<'input' | 'processing' | 'review'>('input');
     const [wordsInput, setWordsInput] = useState('');
     const [deckName, setDeckName] = useState('New Vocabulary');
@@ -209,20 +206,10 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
         try {
             if (part === 'dictionary') {
                 updateWordState(word, draft => { draft.details.dictionary.status = 'loading'; });
-                const primaryFetcher = defaultApiSource === 'free' ? fetchFromFreeDictionary : fetchFromMerriamWebster;
-                const secondaryFetcher = defaultApiSource === 'free' ? fetchFromMerriamWebster : fetchFromFreeDictionary;
-                let details: DictionaryResult;
-                let source: string;
-                try {
-                    details = await Promise.race([
-                        primaryFetcher(word),
-                        timeoutPromise(dictTimeout * 1000, `دیکشنری اصلی دیر جواب داد.`)
-                    ]);
-                    source = defaultApiSource === 'free' ? 'دیکشنری رایگان' : 'Merriam-Webster';
-                } catch (e) {
-                    details = await secondaryFetcher(word);
-                    source = defaultApiSource === 'free' ? 'Merriam-Webster' : 'دیکشنری رایگان';
-                }
+                // The dictionaries in the order set in the settings; each has
+                // `dictTimeout` seconds before the next one is asked.
+                const details = await lookupDictionary(word, { timeoutMs: dictTimeout * 1000 });
+                const source = details.source || 'دیکشنری';
                 updateWordState(word, draft => {
                     draft.card = { ...draft.card,
                         pronunciation: details.pronunciation,
@@ -286,7 +273,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                 }
             });
         }
-    }, [defaultApiSource, aiTimeout, dictTimeout, aiOptions]);
+    }, [aiTimeout, dictTimeout, aiOptions]);
 
     const handleProcessWord = useCallback(async (word: string) => {
         if (isCancelledRef.current) return;

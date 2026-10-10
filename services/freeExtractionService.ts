@@ -8,6 +8,7 @@ import { callProxy } from './apiService';
 import { dictionaryOrigin } from './aiSettings';
 import { candidatePhrasalVerbs, candidateWords, pickHardWords } from './freeCandidates';
 import { cachedLookup } from './lookupCache';
+import { activeDictionaryRequest } from './dictSettings';
 import { DICTIONARY_SERVICE, logUsage, TRANSLATION_SERVICE } from './usageLog';
 import { levelOfFrequency } from './wordLevel';
 
@@ -22,6 +23,9 @@ export interface FreeEnrichment {
   translation: string;
   collocations: { phrase: string }[];
   frequency?: number | null; // per million words
+  source?: string; // the dictionary that knew the term
+  kindHint?: 'idiom' | 'slang'; // the dictionary labels the term so
+  incomplete?: boolean; // a dictionary did not answer: not kept
 }
 
 // Looked up once per word on this device (services/lookupCache). Each
@@ -30,7 +34,7 @@ export interface FreeEnrichment {
 export const freeEnrich = (term: string, onlyIfFound = false): Promise<FreeEnrichment> =>
   cachedLookup(term, async () => {
     try {
-      const value: FreeEnrichment = await callProxy('free-enrich', { term, onlyIfFound });
+      const value: FreeEnrichment = await callProxy('free-enrich', { term, onlyIfFound, dictionaries: activeDictionaryRequest() });
       logUsage({ service: DICTIONARY_SERVICE, task: 'lookup', ok: true, chars: value?.translation ? (value.headword || term).length : 0 });
       return value;
     } catch (error) {
@@ -41,7 +45,7 @@ export const freeEnrich = (term: string, onlyIfFound = false): Promise<FreeEnric
 
 export const freeTranslate = async (text: string): Promise<string> => {
   try {
-    const res = await callProxy('free-translate', { text });
+    const res = await callProxy('free-translate', { text, dictionaries: activeDictionaryRequest() });
     logUsage({ service: TRANSLATION_SERVICE, task: 'translate', ok: !!res?.translation, chars: text.length, ...(res?.translation ? {} : { error: 'no translation came back (the daily quota may be used up)' }) });
     return res?.translation || '';
   } catch (error) {
@@ -71,14 +75,15 @@ export const enrichmentToCard = (term: string, sentence: string | undefined, e: 
   definition: e.definitions.slice(0, 2),
   exampleSentenceTarget: e.examples.slice(0, 2),
   notes: '',
-  kind,
+  // A phrase the dictionary calls an idiom or slang becomes that kind of card.
+  kind: kind === 'phrase' && e.kindHint ? e.kindHint : kind,
   sourceSentence: sentence,
   collocations: e.collocations,
   audioSrc: e.audioUrl,
   ...(kind !== 'grammar' && levelOfFrequency(e.frequency) ? { level: levelOfFrequency(e.frequency) } : {}),
   ...(e.found ? {} : { notInDictionary: true }),
   selected: true,
-  origin: dictionaryOrigin(),
+  origin: { ...dictionaryOrigin(), ...(e.source ? { provider: e.source } : {}) },
 });
 
 const MAX_PHRASAL_CHECKED = 10;
@@ -129,7 +134,7 @@ export const extractWithFreeDictionaries = async ({ text, level, count, exclude 
   }, signal);
 
   const found = cards.filter((c): c is ExtractedWordCard => !!c);
-  const phrases = found.filter(c => c.kind === 'phrase').slice(0, MAX_PHRASAL_KEPT);
-  const singles = found.filter(c => c.kind !== 'phrase').slice(0, count);
+  const phrases = found.filter(c => c.kind !== 'word').slice(0, MAX_PHRASAL_KEPT);
+  const singles = found.filter(c => c.kind === 'word').slice(0, count);
   return [...phrases, ...singles];
 };

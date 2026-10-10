@@ -1,4 +1,5 @@
 import { Collocation, Flashcard, Deck, CardKind } from '../types';
+import { CARD_KINDS } from './cardKinds';
 
 // Columns of an export. Lists are joined with "; ", collocations as
 // "phrase = meaning". Older exports have only the first eight columns.
@@ -92,9 +93,8 @@ export const parseCollocations = (value: string | undefined): Collocation[] =>
     return meaning.length ? { phrase: phrase.trim(), meaning: meaning.join(' = ').trim() } : { phrase: phrase.trim() };
   });
 
-const KINDS: CardKind[] = ['word', 'phrase', 'idiom', 'grammar'];
 export const parseKind = (value: string | undefined): CardKind | undefined =>
-  KINDS.includes(value as CardKind) ? (value as CardKind) : undefined;
+  CARD_KINDS.includes(value as CardKind) ? (value as CardKind) : undefined;
 
 // Saves a CSV as a file. The byte-order mark makes Excel read it as UTF-8.
 export const downloadCSV = (filename: string, csv: string) => {

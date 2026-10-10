@@ -6,12 +6,14 @@
 import type { FreeEnrichment } from './freeExtractionService';
 import { db } from './localDBService';
 import { lookupKeepMs, lookupKey } from './lookupLifetime';
+import { activeDictionarySignature } from './dictSettings';
 
 // No IndexedDB (tests, old browsers): nothing is kept.
 const lookupsTable = () => (typeof indexedDB === 'undefined' ? null : db.lookups);
 
 export async function cachedLookup(term: string, load: () => Promise<FreeEnrichment>): Promise<FreeEnrichment> {
-  const key = lookupKey(term);
+  // Other dictionaries give another answer: each choice keeps its own.
+  const key = `${activeDictionarySignature()}|${lookupKey(term)}`;
   const table = lookupsTable();
   if (table) {
     try {

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { CARD_KINDS, KIND_LABEL } from '../services/cardKinds';
 import { Flashcard, Deck, CefrLevel } from '../types';
 import {
   AiRequestOptions,
@@ -423,7 +424,7 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
         )}
 
         {!grammar && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-6">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-6">
           {/* Pronunciation */}
           <div className="col-span-2 sm:col-span-1">
             <label htmlFor="pronunciation" className={label}>
@@ -453,6 +454,12 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
                 className={`${field} mt-1 px-3 font-en`}
                 placeholder="noun, verb…"
               />
+            </div>
+            <div>
+              <label htmlFor="kind" className={label}>نوع</label>
+              <select id="kind" name="kind" value={formData.kind || 'word'} onChange={handleTextChange} className={`${field} mt-1 px-3`}>
+                {CARD_KINDS.filter(k => k !== 'grammar').map(k => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
+              </select>
             </div>
             <div>
               <label htmlFor="level" className={label}>سطح</label>

@@ -1,7 +1,8 @@
 // File: /services/geminiService.ts
 // Handles Gemini API calls via backend server proxy with support for custom API keys and models.
 
-import { Flashcard, ExtractedWordCard, CardOrigin, CefrLevel } from '../types';
+import { Flashcard, ExtractedWordCard, CardOrigin, CardKind, CefrLevel } from '../types';
+import { CARD_KINDS, parseCardKind } from './cardKinds';
 import { callProxy } from './apiService';
 import { aiGenerate, providerFields } from './aiClient';
 import { aiOrigin } from './aiSettings';
@@ -239,36 +240,62 @@ export interface ExtractVocabularyParams {
   count?: number;
   exclude?: string[]; // terms that already have a card
   includeGrammar?: boolean;
+  kinds?: CardKind[]; // what to look for (services/cardKinds); all when unset
   options?: AiRequestOptions;
 }
 
-const KINDS = ['word', 'phrase', 'idiom', 'grammar'] as const;
+const KINDS = CARD_KINDS;
 export const CEFR_LEVELS: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
 export const parseLevel = (value: unknown): CefrLevel | undefined => {
   const level = String(value || '').trim().toUpperCase();
   return (CEFR_LEVELS as string[]).includes(level) ? (level as CefrLevel) : undefined;
 };
 
-export const buildExtractionPrompt = ({ text, level, count = 10, exclude = [], includeGrammar = true }: ExtractVocabularyParams): string => `You are an expert linguistics tutor helping a Persian-speaking student learn English.
+// How each kind is described to the AI.
+const KIND_GUIDE: Record<CardKind, string> = {
+  word: '"word": a single hard word.',
+  phrase: '"phrase": a phrasal verb or other multi-word verb ("give up", "come across", "put up with"), also when its parts are split ("took it into account").',
+  collocation: '"collocation": a fixed word partnership a learner would not guess and should learn whole ("make a decision", "heavy rain", "bitterly cold", "pay attention").',
+  idiom: '"idiom": a figurative expression whose meaning is not the sum of its words ("spill the beans", "a blessing in disguise").',
+  expression: '"expression": a fixed or conversational expression, saying or discourse marker ("no wonder", "by the way", "it goes without saying", "to make matters worse").',
+  slang: '"slang": informal or slang usage, including an ordinary word used in a slang sense ("broke" = without money, "ghost someone").',
+  grammar: '"grammar": a hard or notable grammar structure ("Had I known…" inversion, mixed conditional, cleft sentence, participle clause).',
+};
+
+// The kinds asked for: the chosen ones (single words always), grammar only
+// when it is included.
+export const wantedKinds = ({ includeGrammar = true, kinds }: Pick<ExtractVocabularyParams, 'includeGrammar' | 'kinds'>): CardKind[] =>
+  (kinds && kinds.length ? KINDS.filter(k => k === 'word' || kinds.includes(k)) : [...KINDS])
+    .filter(k => k !== 'grammar' || includeGrammar);
+
+export const buildExtractionPrompt = ({ text, level, count = 10, exclude = [], includeGrammar = true, kinds }: ExtractVocabularyParams): string => {
+  const wanted = wantedKinds({ includeGrammar, kinds });
+  const grammar = wanted.includes('grammar');
+  const multi = wanted.filter(k => k !== 'word' && k !== 'grammar');
+  return `You are an expert linguistics tutor helping a Persian-speaking student learn English.
 Analyze the following text and extract up to ${count} valuable, high-impact items for a learner at level: "${level}".
-Items can be single words ("word"), multi-word phrases such as phrasal verbs and collocations ("phrase"), idioms ("idiom")${includeGrammar ? ', and at most 2 notable grammar structures ("grammar")' : ''}.
+
+Look for these kinds of items:
+${wanted.map(k => `- ${KIND_GUIDE[k]}`).join('\n')}
 
 CRITICAL INSTRUCTIONS:
-1. Target level: "${level}". Skip items that are trivial for this level or far beyond it.
-2. Give meanings for the sense used IN THIS TEXT, not the most common sense of the word.
-3. ${exclude.length ? `The student already has cards for these; do NOT include them: ${JSON.stringify(exclude)}.` : 'Do not repeat the same item twice.'}
-4. For each item:
-   - "kind": one of ${JSON.stringify(includeGrammar ? KINDS : KINDS.filter(k => k !== 'grammar'))}.
-   - "front": the base form ("reluctant", "take into account"). For grammar, a short name of the structure ("Past perfect").
-   - "back": accurate, natural Persian translation of the item as used in the text.
+1. Target level: "${level}". Skip items that are trivial for this level or far beyond it.${multi.length ? `
+2. Read EVERY sentence for multi-word items (${multi.join(', ')}) before choosing single words. A multi-word item is worth a card when its meaning is not obvious from its words, even when every word in it is easy ("put up with", "make up for"). When the text has them, at least half of the items should be multi-word items; never return only single words if the text contains such items.` : ''}
+3. Give meanings for the sense used IN THIS TEXT, not the most common sense of the word.
+4. ${exclude.length ? `The student already has cards for these; do NOT include them: ${JSON.stringify(exclude)}.` : 'Do not repeat the same item twice.'}${grammar ? `
+5. At most 2 grammar items, and only structures that are hard for this level.` : ''}
+6. For each item:
+   - "kind": one of ${JSON.stringify(wanted)}.
+   - "front": the base or dictionary form ("reluctant", "take into account", "spill the beans"). For grammar, a short name of the structure ("Past perfect").
+   - "back": accurate, natural Persian translation of the item as used in the text (for idioms and slang, the Persian equivalent meaning, not a word-for-word translation).
    - "pronunciation": IPA ("/rɪˈlʌk.tənt/"); empty for grammar.
-   - "partOfSpeech": "adj.", "v.", "n.", "phrasal verb", "idiom" or "grammar".
+   - "partOfSpeech": "adj.", "v.", "n.", "phrasal verb", "collocation", "idiom", "expression", "slang" or "grammar".
    - "level": the CEFR level of the item: "A1", "A2", "B1", "B2", "C1" or "C2".
    - "definition": 1-2 concise English definitions (for grammar: what the structure expresses).
    - "sourceSentence": the EXACT sentence of the text where the item appears, copied verbatim.
    - "exampleSentenceTarget": 1-2 NEW example sentences (not the source sentence).
    - "collocations": 3-5 other common expressions that use this item, each with "phrase" and its Persian "meaning" (e.g. for "decision": "make a decision", "tough decision"). Empty for grammar.
-   - "notes": a brief Persian memory aid, root explanation or usage tip.${includeGrammar ? `
+   - "notes": a brief Persian memory aid, root explanation or usage tip (for slang: how informal it is and where it is used).${grammar ? `
    - For grammar only: "grammarPattern" (the form, e.g. "had + past participle") and "practicePrompt" (a short Persian instruction asking the student to write their own English sentence with this structure).` : ''}
 
 Input Text:
@@ -277,6 +304,7 @@ ${text}
 """
 
 Return a JSON object containing a "words" array.`;
+};
 
 const toStringArray = (v: unknown): string[] =>
   Array.isArray(v) ? v.map(String).filter(Boolean) : (v ? [String(v)] : []);
@@ -299,7 +327,7 @@ export const parseExtractedItems = (parsed: any): ExtractedWordCard[] => {
   return list
     .filter((w: any) => w && typeof w.front === 'string' && w.front.trim())
     .map((w: any): ExtractedWordCard => {
-      const kind = String(w.kind || '').trim().toLowerCase();
+      const kind = parseCardKind(w.kind) || (String(w.front).trim().includes(' ') ? 'phrase' : 'word');
       return {
         front: w.front.trim(),
         back: typeof w.back === 'string' ? w.back.trim() : '',
@@ -308,7 +336,7 @@ export const parseExtractedItems = (parsed: any): ExtractedWordCard[] => {
         definition: toStringArray(w.definition),
         exampleSentenceTarget: toStringArray(w.exampleSentenceTarget),
         notes: w.notes || '',
-        kind: (KINDS as readonly string[]).includes(kind) ? (kind as ExtractedWordCard['kind']) : (String(w.front).trim().includes(' ') ? 'phrase' : 'word'),
+        kind,
         sourceSentence: typeof w.sourceSentence === 'string' && w.sourceSentence.trim() ? w.sourceSentence.trim() : undefined,
         collocations: (Array.isArray(w.collocations) ? w.collocations : [])
           .map((c: any) => (typeof c === 'string' ? { phrase: c } : { phrase: String(c?.phrase || ''), meaning: c?.meaning ? String(c.meaning) : undefined }))
@@ -327,6 +355,7 @@ export const extractVocabularyFromText = async (
 ): Promise<ExtractedWordCard[]> => {
   const { options } = params;
   const prompt = buildExtractionPrompt(params);
+  const wanted = wantedKinds(params);
 
   try {
     const response = await aiGenerate(options, {
@@ -341,7 +370,7 @@ export const extractVocabularyFromText = async (
               items: {
                 type: 'OBJECT',
                 properties: {
-                  kind: { type: 'STRING', enum: [...KINDS], description: 'word, phrase, idiom or grammar' },
+                  kind: { type: 'STRING', enum: wanted, description: wanted.join(', ') },
                   front: { type: 'STRING', description: 'English target word, phrase or structure name' },
                   back: { type: 'STRING', description: 'Persian translation' },
                   pronunciation: { type: 'STRING', description: 'IPA pronunciation' },
@@ -375,7 +404,10 @@ export const extractVocabularyFromText = async (
     }, 'extract');
 
     const origin = aiOrigin(response.used);
-    return parseExtractedItems(parseJsonFromAiResponse(response.text)).map(card => ({ ...card, origin }));
+    // A model may still send a kind that was switched off: it is left out.
+    return parseExtractedItems(parseJsonFromAiResponse(response.text))
+      .filter(card => wanted.includes(card.kind || 'word'))
+      .map(card => ({ ...card, origin }));
   } catch (error) {
     console.error('Error extracting vocabulary from text with AI:', error);
     throw error;

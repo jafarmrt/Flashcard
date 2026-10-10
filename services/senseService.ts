@@ -6,7 +6,8 @@
 //   - the grammar of a sentence: its structures, explained in Persian, each
 //     with a sentence-building exercise.
 
-import type { CardOrigin, CefrLevel, ExtractedWordCard } from '../types';
+import type { CardKind, CardOrigin, CefrLevel, ExtractedWordCard } from '../types';
+import { CARD_KINDS } from './cardKinds';
 import { aiGenerate } from './aiClient';
 import { aiOrigin } from './aiSettings';
 import { AiRequestOptions, parseJsonFromAiResponse, parseLevel } from './geminiService';
@@ -23,13 +24,13 @@ export interface Sense {
   definition?: string;
   partOfSpeech?: string;
   pronunciation?: string;
-  kind?: 'word' | 'phrase' | 'idiom';
+  kind?: Exclude<CardKind, 'grammar'>;
   notes?: string;
   level?: CefrLevel;
   origin?: CardOrigin; // the AI service that answered
 }
 
-const SENSE_KINDS = ['word', 'phrase', 'idiom'];
+const SENSE_KINDS = CARD_KINDS.filter(k => k !== 'grammar');
 
 export const buildSensePrompt = (items: SenseRequest[], level: string): string => `You help a Persian-speaking student at level "${level}" read an English book.
 For each numbered item, give the meaning the English term has IN ITS SENTENCE (not its most common meaning).
@@ -38,11 +39,11 @@ ${items.map((it, n) => `${n + 1}. term: ${JSON.stringify(it.term)}\n   sentence:
 
 For each item return an object with:
 - "index": the item number.
-- "front": the dictionary form of the term ("decide" for "decided", "take into account" for "took it into account"). Keep phrasal verbs, collocations and idioms whole.
-- "kind": "word", "phrase" (phrasal verb or collocation) or "idiom".
+- "front": the dictionary form of the term ("decide" for "decided", "take into account" for "took it into account"). Keep phrasal verbs, collocations, idioms and expressions whole: when the tapped word is part of one in this sentence, give the whole one.
+- "kind": "word", "phrase" (phrasal verb), "collocation", "idiom", "expression" (fixed or conversational expression) or "slang" (also an ordinary word used in a slang sense).
 - "back": a short, natural Persian translation of this sense (a few words).
 - "definition": one short English definition of this sense.
-- "partOfSpeech": as used here ("n.", "v.", "adj.", "adv.", "phrasal verb", "idiom").
+- "partOfSpeech": as used here ("n.", "v.", "adj.", "adv.", "phrasal verb", "collocation", "idiom", "expression", "slang").
 - "pronunciation": IPA of the dictionary form.
 - "notes": one short Persian note when this sense differs from the usual meaning of the term, otherwise "".
 - "level": the CEFR level of the term in this sense: "A1", "A2", "B1", "B2", "C1" or "C2".
@@ -101,7 +102,7 @@ export const parseSenses = (parsed: any, count: number): (Sense | null)[] => {
       definition: text(raw.definition) || undefined,
       partOfSpeech: text(raw.partOfSpeech) || undefined,
       pronunciation: text(raw.pronunciation) || undefined,
-      kind: SENSE_KINDS.includes(kind) ? (kind as Sense['kind']) : undefined,
+      kind: (SENSE_KINDS as string[]).includes(kind) ? (kind as Sense['kind']) : undefined,
       notes: text(raw.notes) || undefined,
       level: parseLevel(raw.level),
     };

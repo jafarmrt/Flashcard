@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { KIND_LABEL } from '../services/cardKinds';
 import type { Chapter, ChapterText, Deck, ExtractedWordCard, Flashcard, KnownWord, Occurrence, Settings, Source, SourceKind } from '../types';
 import type { StudyMode, View } from '../hooks/useAppLogic';
 import type { ImportedSource } from '../services/importers';
@@ -24,7 +25,7 @@ const KIND_STYLE: Record<SourceKind, string> = {
   article: 'bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-100',
   text: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200',
 };
-const CARD_KIND: Record<string, string> = { phrase: 'عبارت', idiom: 'اصطلاح', grammar: 'دستوری' };
+const CARD_KIND: Record<string, string> = Object.fromEntries(Object.entries(KIND_LABEL).filter(([kind]) => kind !== 'word'));
 
 interface LibraryViewProps {
   sources: Source[];

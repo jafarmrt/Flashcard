@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { KIND_LABEL } from '../services/cardKinds';
 import { Flashcard } from '../types';
 import type { SessionSummary, StudyMode } from '../hooks/useAppLogic';
 import { calculateSrs, previewIntervals, PerformanceRating } from '../services/srsService';
@@ -450,7 +451,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
           <div className="flex justify-between items-center gap-2 text-xs text-ink-muted dark:text-slate-400">
             <span className="flex items-center gap-2"><StageDots stage={stage} />{STAGE_NAMES[stage]}</span>
             <span className="flex items-center gap-2">
-              {card.kind && card.kind !== 'word' && <span>{{ phrase: 'عبارت', idiom: 'اصطلاح', grammar: 'ساختار دستوری' }[card.kind]}</span>}
+              {card.kind && card.kind !== 'word' && <span>{KIND_LABEL[card.kind]}</span>}
               {revealed && onEditCard && (
                 <button type="button" onClick={editCard} aria-label={`ویرایش کارت ${card.front}`} title="اگر اطلاعات کارت درست نیست، ویرایشش کن یا از منبع دیگری بپرس"
                   className="min-h-[36px] px-3 rounded-lg text-xs font-bold text-brand-700 dark:text-brand-300 hover:bg-brand-50 dark:hover:bg-slate-700">ویرایش کارت</button>

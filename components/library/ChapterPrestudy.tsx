@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { extractKinds } from '../../services/cardKinds';
 import type { Chapter, ChapterText, ExtractedWordCard, Settings } from '../../types';
 import { extractFromLongText } from '../../services/extractionPipeline';
 import { aiRequestOptions } from '../../services/aiSettings';
@@ -53,7 +54,7 @@ export const ChapterPrestudy: React.FC<ChapterPrestudyProps> = ({ chapter, setti
         setProgress(`بخش ${fa(i + 1)} از ${fa(sections.length)}…`);
         const result = await extractFromLongText({
           text: sections[i], level, perSection: PER_SECTION, source: settings.extractionSource || 'ai',
-          existingFronts: [...existingFronts, ...found.map(p => p.item.front)], knownTerms, includeGrammar: false,
+          existingFronts: [...existingFronts, ...found.map(p => p.item.front)], knownTerms, includeGrammar: false, kinds: extractKinds(settings),
           aiOptions: aiRequestOptions(settings), signal: controller.signal,
         });
         if (controller.signal.aborted) return;

@@ -2,7 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import { Buffer } from 'buffer';
 import { randomUUID } from 'crypto';
-import { fetchDictionaryEntries, freeEnrich, freeTranslate, lookupFrequencies } from './freeLookup.js';
+import { freeEnrich, freeTranslate, lookupFrequencies } from './freeLookup.js';
+import { lookupChain, lookupSingle, mwKey } from './dictionaries.js';
+import { cleanDictionaryRequest, DEFAULT_DICTIONARY_ORDER, DICTIONARY_IDS, DictionaryRequest, dictionarySignature } from '../services/dictionaryCatalog.js';
 import { applyChanges, changesSince, upgradeStore } from './syncStore.js';
 import { fetchPublicPage, PageFetchError } from './pageFetch.js';
 import { packChapter, unpackChapter } from './chapterText.js';
@@ -134,6 +136,17 @@ async function setKey(key: string, value: unknown): Promise<void> {
     throw e;
   }
 }
+
+// How long each dictionary may take: the bulk-add setting, within limits.
+const lookupTimeout = (value: unknown): number | undefined => {
+  const ms = Number(value);
+  return Number.isFinite(ms) && ms > 0 ? Math.min(Math.max(ms, 1000), 8_000) : undefined;
+};
+
+// Which dictionaries can answer, so a cached lookup is only reused for the
+// same choice (a key on the server counts like one typed on the device).
+const serverSignature = (request: DictionaryRequest) =>
+  dictionarySignature(request.order ?? DEFAULT_DICTIONARY_ORDER, id => (id === 'mw-learners' || id === 'mw-collegiate') && !!mwKey(id, request.keys));
 
 // Where dictionary lookups are kept: Redis, a file on the VPS, or nowhere
 // (Vercel without cloud storage).
@@ -442,7 +455,7 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
       case 'ping-mw': {
         // Only says whether a key is set: calling Merriam-Webster here would
         // spend its quota on every page load.
-        return res.status(200).json({ message: process.env.MW_API_KEY ? 'configured' : 'unconfigured' });
+        return res.status(200).json({ message: process.env.MW_API_KEY || process.env.MW_LEARNERS_API_KEY ? 'configured' : 'unconfigured' });
       }
 
       case 'gemini-generate': {
@@ -481,17 +494,45 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         return await handleGeminiGenerate(testPayload, res, apiKey);
       }
 
-      case 'dictionary-free': {
+      case 'dictionary-lookup': {
+        // One dictionary (`source`), or the user's dictionaries in order.
         const { word } = payload;
-        if (!word) return res.status(400).json({ error: 'Word is required.' });
-        // dictionaryapi.dev first, Datamuse definitions as fallback
-        const data = await fetchDictionaryEntries(word);
-
-        if (data && Array.isArray(data) && data.length > 0) {
-          return res.status(200).json(data);
+        if (!word || typeof word !== 'string') return res.status(400).json({ error: 'Word is required.' });
+        if (word.length > 100) return res.status(400).json({ error: 'word is too long.' });
+        const request = cleanDictionaryRequest(payload.dictionaries);
+        const timeoutMs = lookupTimeout(payload.timeoutMs);
+        const source = DICTIONARY_IDS.find(id => id === payload.source);
+        try {
+          const entry = source
+            ? await lookupSingle(source, word, { request, timeoutMs })
+            : await lookupChain(word, { request, timeoutMs });
+          if (entry) return res.status(200).json(entry);
+          return res.status(404).json({ error: `Could not find definition for "${word}".` });
+        } catch (e) {
+          return res.status(400).json({ error: (e as Error).message });
         }
+      }
 
-        return res.status(404).json({ error: `Could not find definition for "${word}".` });
+      case 'test-dictionary': {
+        // Asks one dictionary (or the translation service) for a word it
+        // certainly knows, with the key typed on the device.
+        const request = cleanDictionaryRequest(payload.dictionaries);
+        if (payload.source === 'mymemory') {
+          const translation = await freeTranslate('good morning', undefined, request.keys?.mymemory);
+          return translation
+            ? res.status(200).json({ message: translation })
+            : res.status(503).json({ error: 'MyMemory did not answer (or its daily quota is used up).' });
+        }
+        const source = DICTIONARY_IDS.find(id => id === payload.source);
+        if (!source) return res.status(400).json({ error: 'Unknown dictionary.' });
+        try {
+          const entry = await lookupSingle(source, source === 'urban' ? 'ghosting' : source === 'wiktionary' ? 'break the ice' : 'hello', { request, timeoutMs: 6000 });
+          return entry
+            ? res.status(200).json({ message: entry.definitions[0] || 'ok' })
+            : res.status(503).json({ error: 'The dictionary did not answer.' });
+        } catch (e) {
+          return res.status(400).json({ error: (e as Error).message });
+        }
       }
 
       case 'word-frequencies': {
@@ -506,29 +547,16 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         if (!term || typeof term !== 'string') return res.status(400).json({ error: 'term is required.' });
         if (term.length > 100) return res.status(400).json({ error: 'term is too long.' });
         const onlyIfFound = payload.onlyIfFound === true;
-        return res.status(200).json(await cachedEnrich(term, lookupStore(), () => freeEnrich(term, undefined, onlyIfFound)));
+        const request = cleanDictionaryRequest(payload.dictionaries);
+        const timeoutMs = lookupTimeout(payload.timeoutMs);
+        return res.status(200).json(await cachedEnrich(term, lookupStore(), () => freeEnrich(term, undefined, onlyIfFound, request, timeoutMs), serverSignature(request)));
       }
 
       case 'free-translate': {
         const { text } = payload;
         if (!text || typeof text !== 'string') return res.status(400).json({ error: 'text is required.' });
-        return res.status(200).json({ translation: await freeTranslate(text) });
-      }
-
-      case 'dictionary-mw': {
-        const { word } = payload;
-        if (!word) return res.status(400).json({ error: 'Word is required.' });
-        const mwApiKey = process.env.MW_API_KEY;
-        if (!mwApiKey) return res.status(500).json({ error: 'Merriam-Webster API key not configured in .env (MW_API_KEY).' });
-        try {
-          const apiResponse = await fetch(`https://www.dictionaryapi.com/api/v3/references/collegiate/json/${encodeURIComponent(word)}?key=${mwApiKey}`, {
-            signal: AbortSignal.timeout(7000),
-          });
-          const data = await apiResponse.json();
-          return res.status(apiResponse.status).json(data);
-        } catch (mwErr: any) {
-          return res.status(503).json({ error: `Merriam-Webster service unavailable: ${mwErr.message}` });
-        }
+        const request = cleanDictionaryRequest(payload.dictionaries);
+        return res.status(200).json({ translation: await freeTranslate(text, undefined, request.keys?.mymemory) });
       }
 
       case 'fetch-audio': {
