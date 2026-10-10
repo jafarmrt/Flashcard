@@ -257,7 +257,7 @@ export const originText = (origin?: CardOrigin): string | null => {
   if (!origin) return null;
   switch (origin.by) {
     case 'ai': return [origin.provider || 'AI', origin.model].filter(Boolean).join(' · ');
-    case 'dictionary': return 'دیکشنری رایگان';
+    case 'dictionary': return origin.provider || 'دیکشنری رایگان';
     case 'manual': return 'دستی';
     case 'import': return 'فایل CSV';
     case 'rules': return 'قاعده‌های برنامه';

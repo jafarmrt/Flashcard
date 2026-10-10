@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useEffect, useMemo } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useRef } from 'react';
 import { useAppLogic, View, HealthStatus } from './hooks/useAppLogic';
 
 import { Flashcard, Deck } from './types';
@@ -6,6 +6,7 @@ import FlashcardList from './components/FlashcardList';
 import FlashcardForm from './components/FlashcardForm';
 import { StudyView } from './components/StudyView';
 import { aiRequestOptions, geminiAudioOptions } from './services/aiSettings';
+import { refreshSources } from './services/cardRefresh';
 import Toast from './components/Toast';
 import DeckList from './components/DeckList';
 import SettingsView from './components/SettingsView';
@@ -87,11 +88,14 @@ const App: React.FC = () => {
         handleCompleteChunk, loadChapterText, handleSaveReaderCards,
         knownWords, sectionReview, handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview, handleCheckCards,
         handleStartSourceReview, handleReviewCards, handlePrestudyChapter,
+        overlayEdit, openCardEditor, closeCardEditor, saveOverlayEdit,
     } = useAppLogic();
 
     const visibleFlashcards = useMemo(() => flashcards.filter(c => !c.isDeleted), [flashcards]);
     const knownTerms = useMemo(() => Array.from(knownTermSet(knownWords)), [knownWords]);
     const visibleDecks = decks.filter(d => !d.isDeleted);
+    const cardSources = useMemo(() => refreshSources(settings), [settings]);
+    const backdropPress = useRef(false);
     const dueCards = visibleFlashcards.filter(c => isDue(c));
     const health = [
         { label: 'DB', status: dbStatus },
@@ -170,6 +174,7 @@ const App: React.FC = () => {
                     onDismissSectionReview={dismissSectionReview}
                     aiOptions={aiRequestOptions(settings)}
                     onCheckCards={handleCheckCards}
+                    onEditCard={card => openCardEditor(card)}
                     settings={settings}
                     knownTerms={knownTerms}
                     loadText={loadChapterText}
@@ -208,6 +213,7 @@ const App: React.FC = () => {
                     places={places}
                     sourceId={studySourceId}
                     aiOptions={aiRequestOptions(settings)}
+                    onEditCard={openCardEditor}
                 />;
             case 'PRACTICE':
                 return <PracticeView cards={visibleFlashcards} aiOptions={aiRequestOptions(settings)} audioOptions={geminiAudioOptions(settings)} awardXP={userProfile ? (points) => handleGoalUpdate('QUIZ', points, true) : () => {}} onQuizComplete={(score) => {
@@ -262,8 +268,7 @@ const App: React.FC = () => {
                     onCancel={() => setView(previousViewRef.current)}
                     initialDeckName={editingCardDeckName}
                     showToast={showToast}
-                    defaultApiSource={settings.defaultApiSource}
-                    aiOptions={aiRequestOptions(settings)}
+                    sources={cardSources}
                     audioOptions={geminiAudioOptions(settings)}
                 />;
             case 'STATS':
@@ -375,6 +380,25 @@ const App: React.FC = () => {
                     stats={autoFixReport}
                 />
             </div>
+
+            {overlayEdit && (
+                <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 px-2 py-4 sm:p-8" role="dialog" aria-modal="true" aria-label="ویرایش کارت"
+                    // Closes only on a click that starts and ends on the backdrop: a text
+                    // selection dragged out of the form must not throw the edits away.
+                    onPointerDown={e => { backdropPress.current = e.target === e.currentTarget; }}
+                    onClick={e => { if (backdropPress.current && e.target === e.currentTarget) closeCardEditor(); backdropPress.current = false; }}>
+                    <FlashcardForm
+                        card={overlayEdit.card}
+                        decks={visibleDecks}
+                        onSave={saveOverlayEdit}
+                        onCancel={closeCardEditor}
+                        initialDeckName={visibleDecks.find(d => d.id === overlayEdit.card.deckId)?.name || ''}
+                        showToast={showToast}
+                        sources={cardSources}
+                        audioOptions={geminiAudioOptions(settings)}
+                    />
+                </div>
+            )}
 
             {['TODAY', 'LIST', 'DECKS'].includes(view) && <AddFab onClick={handleAddCard} />}
             {!isStudy && <BottomTabs view={view} onNavigate={handleNavigate} />}

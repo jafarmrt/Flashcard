@@ -14,6 +14,7 @@ import type { AiRequestOptions } from '../services/geminiService';
 import { fa, Icon, Kbd, StageDots } from './common/ui';
 import { GrammarPractice } from './GrammarPractice';
 import { blankOf, checkCloze, clozeFor, type ClozeResult } from '../services/cloze';
+import { withEditedContent } from '../services/cardRefresh';
 
 const MODE_NAMES: Record<StudyMode, string> = { flip: 'برگرداندن', type: 'نوشتنی', cloze: 'جای خالی' };
 
@@ -41,6 +42,7 @@ interface StudyViewProps {
   places?: Map<string, CardPlace[]>; // where each card was met while reading
   sourceId?: string | null; // a review of one book: its sentences come first
   aiOptions?: AiRequestOptions; // checks sentences written for grammar cards
+  onEditCard?: (card: Flashcard, onDone: (saved: Flashcard | null) => void) => void; // the card form over the session
 }
 
 // Reads a word, phrase or sentence aloud with the browser's speech synthesis.
@@ -175,7 +177,7 @@ interface Snapshot {
   card?: Flashcard; // the card as it was before this answer
 }
 
-export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak, studiedToday, goal, onExit, places, sourceId, aiOptions }) => {
+export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak, studiedToday, goal, onExit, places, sourceId, aiOptions, onEditCard }) => {
   const [queue, setQueue] = useState<Flashcard[]>([]);
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
@@ -193,6 +195,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
   const [audioBusy, setAudioBusy] = useState(false);
   const [suggested, setSuggested] = useState<PerformanceRating | undefined>(undefined);
   const [clozeResult, setClozeResult] = useState<ClozeResult | null>(null);
+  const [editing, setEditing] = useState(false);
   const startedAt = useRef(Date.now());
   const busy = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -319,6 +322,22 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
     setRevealed(true);
   };
 
+  // The card form opens over the session; what is saved shows at once and
+  // the session goes on where it was.
+  const editCard = () => {
+    if (!current || !onEditCard || editing) return;
+    setEditing(true);
+    onEditCard(current, saved => {
+      setEditing(false);
+      if (!saved) return;
+      const patch = (c: Flashcard) => withEditedContent(c, saved);
+      const patchMap = (m: Map<string, Flashcard>) => new Map(Array.from(m, ([id, c]) => [id, patch(c)] as [string, Flashcard]));
+      setQueue(q => q.map(patch));
+      setUpdated(prev => (prev.has(saved.id) ? patchMap(prev) : prev));
+      setHistory(h => h.map(snap => ({ ...snap, queue: snap.queue.map(patch), updated: patchMap(snap.updated), ...(snap.card ? { card: patch(snap.card) } : {}) })));
+    });
+  };
+
   const switchMode = (m: StudyMode) => { setMode(m); setRevealed(false); setAnswerState(null); setClozeResult(null); setSuggested(undefined); setTyped(''); };
 
   // Keyboard: Space/Enter shows the answer, 1-4 rate, P plays, Z undoes, Esc leaves.
@@ -328,6 +347,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
     // Persian keyboard layout is on; Ctrl/Cmd/Alt combinations stay the browser's.
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (editing) return; // the card form is open over the session
       const typing = (e.target as HTMLElement).closest('input, textarea');
       if (e.key === 'Escape') { exitEarly(); return; }
       if (typing && !revealed) return;
@@ -429,7 +449,13 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
         <section className="flex-[999_1_34rem] max-w-3xl min-w-0 bg-white dark:bg-slate-800 rounded-[28px] shadow-[0_10px_30px_rgba(23,26,51,0.08)] p-5 md:p-8 flex flex-col gap-5">
           <div className="flex justify-between items-center gap-2 text-xs text-ink-muted dark:text-slate-400">
             <span className="flex items-center gap-2"><StageDots stage={stage} />{STAGE_NAMES[stage]}</span>
-            {card.kind && card.kind !== 'word' && <span>{{ phrase: 'عبارت', idiom: 'اصطلاح', grammar: 'ساختار دستوری' }[card.kind]}</span>}
+            <span className="flex items-center gap-2">
+              {card.kind && card.kind !== 'word' && <span>{{ phrase: 'عبارت', idiom: 'اصطلاح', grammar: 'ساختار دستوری' }[card.kind]}</span>}
+              {revealed && onEditCard && (
+                <button type="button" onClick={editCard} aria-label={`ویرایش کارت ${card.front}`} title="اگر اطلاعات کارت درست نیست، ویرایشش کن یا از منبع دیگری بپرس"
+                  className="min-h-[36px] px-3 rounded-lg text-xs font-bold text-brand-700 dark:text-brand-300 hover:bg-brand-50 dark:hover:bg-slate-700">ویرایش کارت</button>
+              )}
+            </span>
           </div>
 
           {cardMode === 'cloze' && cloze && (
