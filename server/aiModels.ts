@@ -39,7 +39,7 @@ export const geminiModels = (data: any): AiModel[] =>
       ...(m.displayName ? { name: String(m.displayName) } : {}),
       ...(num(m.inputTokenLimit) ? { context: num(m.inputTokenLimit) } : {}),
     }))
-    .filter((m: AiModel) => m.id && !/(embedding|aqa|imagen|veo|tts|image|live|transcribe)/i.test(m.id));
+    .filter((m: AiModel) => /^(gemini|gemma)-/.test(m.id) && !/(embedding|aqa|imagen|veo|tts|image|live|transcribe)/i.test(m.id));
 
 // An OpenAI-style list. OpenRouter adds names, prices and what each model
 // writes; a model that only makes images or audio is left out.

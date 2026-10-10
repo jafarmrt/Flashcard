@@ -76,7 +76,7 @@ export async function aiGenerate(options: AiRequestOptions | undefined, body: Ai
       const tokensOut = count(usage?.output);
       const cost = count(usage?.cost);
       logUsage({
-        service, task, ok: true, model: (typeof response?.model === 'string' && response.model) || fields.model,
+        service, task, ok: true, model: fields.model, // the name asked for, so failures land on the same row
         ...(tokensIn !== undefined ? { tokensIn } : {}), ...(tokensOut !== undefined ? { tokensOut } : {}), ...(cost !== undefined ? { cost } : {}),
       });
       return { text: response?.text || '', candidates: response?.candidates, used: attempt };

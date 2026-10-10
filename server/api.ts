@@ -521,7 +521,10 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         } catch (e) {
           const status = Number((e as { status?: number }).status) || 502;
           const host = isCustomOpenAi ? (() => { try { return new URL(cleanAiBaseUrl(payload.aiBaseUrl)).hostname; } catch { return 'AI'; } })() : 'Gemini';
-          return res.status(status >= 400 && status < 600 ? status : 502).json({ error: aiErrorMessage(host, status, (e as Error).message || 'the model list could not be read') });
+          const error = status === 404
+            ? `${host} (404): this service does not list its models; type the model name instead`
+            : aiErrorMessage(host, status, (e as Error).message || 'the model list could not be read');
+          return res.status(status >= 400 && status < 600 ? status : 502).json({ error });
         }
       }
 

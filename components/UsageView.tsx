@@ -121,7 +121,7 @@ export const UsageView: React.FC<UsageViewProps> = ({ cards, onBack }) => {
             today: totalsByService(all, today),
             month: totalsByService(all, monthStart),
             days: usageByDay(all, today, 7),
-            errors: recentErrors(all, 10),
+            errors: recentErrors(all.filter(r => r.day >= monthStart), 10),
             translated: translationCharsOn(all, today),
             makers: cardsByMaker(cards, monthStart),
         };
