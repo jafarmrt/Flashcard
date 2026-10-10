@@ -1,4 +1,4 @@
-import { PerformanceRating } from '../types';
+import type { PerformanceRating } from '../types';
 
 // XP rewards learning, not collecting: reviews earn XP, adding cards does not.
 const REVIEW_XP: Record<PerformanceRating, number> = { AGAIN: 1, HARD: 4, GOOD: 6, EASY: 8 };

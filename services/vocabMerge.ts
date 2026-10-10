@@ -2,7 +2,7 @@
 // Merges extraction results of several text sections and flags terms that
 // already have a card, so the same word is never offered twice.
 
-import { Collocation, ExtractedWordCard } from '../types';
+import type { Collocation, ExtractedWordCard } from '../types';
 
 // Key used to compare terms: lower case, no surrounding punctuation, no leading
 // article or "to", single spaces. "To Take Into Account." -> "take into account".
