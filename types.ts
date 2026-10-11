@@ -294,3 +294,26 @@ export interface StudySessionOptions {
   filter: 'all-due' | 'new' | 'review' | 'all-cards';
   limit: number;
 }
+// One spoken try in pronunciation practice, with what the AI heard. Kept
+// without the sound itself (too heavy to sync), so the history follows the
+// account to every device.
+export interface SpeechIssue {
+  sound: string; // an id from services/speechPractice SOUNDS ('th-voiceless', 'stress'…)
+  word?: string; // the word where it happened
+  detail: string; // Persian: what was heard and how to say it
+}
+
+export interface SpeechAttempt {
+  id: string;
+  cardId?: string;
+  target: string; // the word or sentence that was read aloud
+  kind: 'word' | 'sentence';
+  score: number; // 0-100
+  heard?: string; // what the AI heard, in English
+  feedback: string; // Persian summary
+  correction?: string; // IPA of the right pronunciation
+  issues: SpeechIssue[];
+  createdAt: string;
+  updatedAt: string;
+  isDeleted?: boolean;
+}

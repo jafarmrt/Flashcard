@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie';
-import { Flashcard, Deck, StudyLog, UserProfile, UserAchievement, TextDoc, Source, Chapter, ChapterText, Occurrence, KnownWord } from '../types';
+import { Flashcard, Deck, StudyLog, UserProfile, UserAchievement, TextDoc, Source, Chapter, ChapterText, Occurrence, KnownWord, SpeechAttempt } from '../types';
 
 // Small values this browser keeps for itself, such as how far it has synced.
 export interface MetaRow {
@@ -48,6 +48,7 @@ export class LinguaCardsDB extends Dexie {
   knownWords!: Table<KnownWord>;
   lookups!: Table<LookupRow>;
   usage!: Table<UsageRow>;
+  speechAttempts!: Table<SpeechAttempt>;
 
   constructor() {
     super('LinguaCardsDB');
@@ -248,6 +249,25 @@ export class LinguaCardsDB extends Dexie {
         knownWords: 'id, term, updatedAt',
         lookups: 'term',
         usage: '++id, day'
+    });
+
+    // Version 15: tries in pronunciation practice, with the AI's feedback (synced).
+    (this as any).version(15).stores({
+        flashcards: 'id, deckId, front, back, dueDate, isDeleted, createdAt, updatedAt',
+        decks: 'id, name, isDeleted',
+        studyHistory: '++id, cardId, date',
+        userProfile: 'id, firstName, lastName, bio',
+        userAchievements: '&achievementId',
+        texts: 'id, updatedAt, isDeleted',
+        sources: 'id, updatedAt',
+        chapters: 'id, sourceId, updatedAt',
+        chapterTexts: 'id, sourceId',
+        occurrences: 'id, cardId, sourceId, chapterId',
+        meta: 'key',
+        knownWords: 'id, term, updatedAt',
+        lookups: 'term',
+        usage: '++id, day',
+        speechAttempts: 'id, cardId, createdAt'
     });
   }
 }

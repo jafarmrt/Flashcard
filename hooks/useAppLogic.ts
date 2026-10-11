@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile, UserAchievement, ExtractedWordCard, StudyLog, Source, Chapter, ChapterText, Occurrence, KnownWord } from '../types';
+import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile, UserAchievement, ExtractedWordCard, StudyLog, Source, Chapter, ChapterText, Occurrence, KnownWord, SpeechAttempt } from '../types';
 import { db } from '../services/localDBService';
 import { calculateLevel, calculateStreak, checkAndAwardAchievements } from '../services/gamificationService';
 import { generateNewDailyGoals, updateGoalProgress, reviewGoalId } from '../services/dailyGoalsService';
@@ -158,6 +158,7 @@ export const useAppLogic = () => {
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [occurrences, setOccurrences] = useState<Occurrence[]>([]);
   const [knownWords, setKnownWords] = useState<KnownWord[]>([]);
+  const [speechAttempts, setSpeechAttempts] = useState<SpeechAttempt[]>([]);
   // A section just finished: its cards, offered for a short review.
   const [sectionReview, setSectionReview] = useState<{ sourceId: string; chapterId: string; chunk: number; cardIds: string[] } | null>(null);
   const [activeSourceId, setActiveSourceId] = useState<string | null>(null);
@@ -309,10 +310,12 @@ export const useAppLogic = () => {
     const allChapters = await db.chapters.toArray();
     const allOccurrences = await db.occurrences.toArray();
     const allKnown = await db.knownWords.toArray();
+    const allSpeech = await db.speechAttempts.toArray();
     setSources(allSources);
     setChapters(allChapters);
     setOccurrences(allOccurrences);
     setKnownWords(allKnown);
+    setSpeechAttempts(allSpeech);
     setFlashcards(allCards);
     setDecks(allDecks);
     setEarnedAchievements(allAchievements);
@@ -349,7 +352,7 @@ export const useAppLogic = () => {
     
     return {
       cards: allCards, decks: allDecks, sources: allSources, chapters: allChapters, occurrences: allOccurrences,
-      knownWords: allKnown, logs: allLogs, profile, achievements: allAchievements,
+      knownWords: allKnown, speechAttempts: allSpeech, logs: allLogs, profile, achievements: allAchievements,
     };
   };
   
@@ -486,7 +489,7 @@ export const useAppLogic = () => {
   const rememberSynced = (fresh: Awaited<ReturnType<typeof fetchData>>) => {
     lastSyncedFingerprint.current = syncFingerprint({
       cards: fresh.cards, decks: fresh.decks, sources: fresh.sources, chapters: fresh.chapters, occurrences: fresh.occurrences,
-      knownWords: fresh.knownWords, profile: fresh.profile, achievements: fresh.achievements, settingsUpdatedAt: readSavedSettings().updatedAt,
+      knownWords: fresh.knownWords, speechAttempts: fresh.speechAttempts, profile: fresh.profile, achievements: fresh.achievements, settingsUpdatedAt: readSavedSettings().updatedAt,
     });
   };
 
@@ -497,6 +500,7 @@ export const useAppLogic = () => {
     chapters: await db.chapters.toArray(),
     occurrences: await db.occurrences.toArray(),
     knownWords: await db.knownWords.toArray(),
+    speechAttempts: await db.speechAttempts.toArray(),
     logs: await db.studyHistory.toArray(),
     profile: await db.userProfile.get(1),
     achievements: await db.userAchievements.toArray(),
@@ -505,7 +509,7 @@ export const useAppLogic = () => {
 
   const SYNC_DB_TABLES: Record<SyncTable, any> = {
     decks: db.decks, cards: db.flashcards, sources: db.sources, chapters: db.chapters, occurrences: db.occurrences,
-    knownWords: db.knownWords,
+    knownWords: db.knownWords, speechAttempts: db.speechAttempts,
   };
   const stampOf = (table: SyncTable) => (table === 'decks' ? deckStamp : cardStamp) as (row: any) => string;
 
@@ -565,7 +569,7 @@ export const useAppLogic = () => {
 
             let maxBefore = 0;
             let maxAfter = 0;
-            await (db as any).transaction('rw', [db.decks, db.flashcards, db.sources, db.chapters, db.occurrences, db.knownWords, db.studyHistory, db.userProfile, db.userAchievements], async () => {
+            await (db as any).transaction('rw', [db.decks, db.flashcards, db.sources, db.chapters, db.occurrences, db.knownWords, db.speechAttempts, db.studyHistory, db.userProfile, db.userAchievements], async () => {
                 for (const table of SYNC_TABLES) {
                     const incoming = changes[table];
                     if (!Array.isArray(incoming) || incoming.length === 0) continue;
@@ -721,13 +725,13 @@ export const useAppLogic = () => {
     }
 
     const fingerprint = syncFingerprint({
-        cards: flashcards, decks, sources, chapters, occurrences, knownWords, profile: userProfile, achievements: earnedAchievements, settingsUpdatedAt: settings.updatedAt,
+        cards: flashcards, decks, sources, chapters, occurrences, knownWords, speechAttempts, profile: userProfile, achievements: earnedAchievements, settingsUpdatedAt: settings.updatedAt,
     });
     if (fingerprint === lastSyncedFingerprint.current) return;
 
     const handler = setTimeout(() => handleSync(), 2000);
     return () => clearTimeout(handler);
-  }, [flashcards, decks, userProfile, earnedAchievements, sources, chapters, occurrences, knownWords, isLoggedIn, autoFixProgress, settings.updatedAt]);
+  }, [flashcards, decks, userProfile, earnedAchievements, sources, chapters, occurrences, knownWords, speechAttempts, isLoggedIn, autoFixProgress, settings.updatedAt]);
 
 
   const updateSettings = (changes: Partial<Settings>) => {
@@ -1371,6 +1375,13 @@ export const useAppLogic = () => {
     setKnownWords(prev => [...prev, row]);
   };
 
+  // A try in pronunciation practice, kept with its feedback; it syncs like
+  // the rest of the account.
+  const handleSaveSpeechAttempt = async (attempt: SpeechAttempt) => {
+    await db.speechAttempts.put(attempt);
+    setSpeechAttempts(prev => [...prev.filter(a => a.id !== attempt.id), attempt]);
+  };
+
   const handleUnmarkKnown = async (term: string) => {
     const gone = forgetRows(await db.knownWords.where('term').equals(normalizeTerm(term)).toArray(), term);
     if (gone.length === 0) return;
@@ -1765,7 +1776,7 @@ export const useAppLogic = () => {
       // State
       flashcards, decks, view, editingCard, toastMessage, isLoggedIn, currentUser, authLoading, appLoading,
       syncStatus, studyDeckId, studyCards, studySessionId, isStudySetupModalOpen, studyMode, studySourceId, studyLogs, dbStatus, apiStatus,
-      sources, chapters, occurrences, activeSourceId, activeChapterId, activeChunk, knownWords, sectionReview,
+      sources, chapters, occurrences, activeSourceId, activeChapterId, activeChunk, knownWords, speechAttempts, handleSaveSpeechAttempt, sectionReview,
       freeDictApiStatus, mwDictApiStatus, settings, userProfile, streak, earnedAchievements,
       previousViewRef, autoFixProgress, autoFixReport, extrasProgress,
       overlayEdit, openCardEditor, closeCardEditor, saveOverlayEdit,

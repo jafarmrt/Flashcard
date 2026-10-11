@@ -292,3 +292,18 @@ test('the usage page reads the sizes kept on the server, from a file or in one R
     delete process.env.KV_REST_API_TOKEN;
   }
 });
+
+test('pronunciation tries sync between devices, and a store saved before them gets the table', async () => {
+  const { store } = upgradeStore({ ...upgradeStore(null, newId).store, speechAttempts: undefined }, newId);
+  assert.deepEqual(store.speechAttempts, []);
+
+  setupServer();
+  assert.equal((await call({ action: 'auth-register', username: 'jafar', password: 'long-enough-password' })).status, 201);
+  const attempt = {
+    id: 's1', cardId: 'c1', target: 'think', kind: 'word', score: 55, feedback: 'خوب بود', createdAt: T0, updatedAt: T0,
+    issues: [{ sound: 'th-voiceless', word: 'think', detail: 'th را مثل ت گفتی' }],
+  };
+  assert.equal((await call({ action: 'sync', since: 0, changes: { speechAttempts: [attempt] } }, 'jafar')).status, 200);
+  const other = await call({ action: 'sync', since: 0, changes: {} }, 'jafar');
+  assert.deepEqual(other.body.changes.speechAttempts, [attempt]);
+});
