@@ -9,13 +9,15 @@ import type { AiRequestOptions } from './geminiService';
 import { parseJsonFromAiResponse } from './geminiService';
 import { aiGenerate } from './aiClient';
 import { aiOrigin } from './aiSettings';
-import { extrasPromptLines } from './cardExtras';
+import { extrasPromptLines, replyPlaces } from './cardExtras';
+
+export { replyPlaces };
 import { CardProposal, FIELD_NAMES, parseCardRefresh, proposalChanges, RefreshField, FieldChange } from './cardRefresh';
 
 // The parts a batch can improve, in the order they are offered.
 export const IMPROVE_FIELDS = [
   'back', 'notes', 'definition', 'exampleSentenceTarget', 'collocations',
-  'synonyms', 'commonMistake', 'register', 'wordFamily', 'wordRoot',
+  'synonyms', 'commonMistake', 'register', 'wordFamily', 'wordRoot', 'reference',
   'pronunciation', 'partOfSpeech', 'level',
 ] as const satisfies readonly RefreshField[];
 export type ImproveField = (typeof IMPROVE_FIELDS)[number];
@@ -30,7 +32,7 @@ export type ImproveMode = 'empty' | 'all';
 // Cards per request. Asking to rewrite filled parts sends them along, so
 // fewer cards fit.
 export const improveBatchSize = (mode: ImproveMode, fields: ImproveField[]): number =>
-  mode === 'empty' ? 10 : fields.length > 6 ? 4 : 6;
+  mode === 'empty' ? (fields.length <= 4 ? 10 : fields.length <= 8 ? 6 : 4) : fields.length > 6 ? 4 : 6;
 
 const isEmpty = (value: unknown): boolean =>
   value === undefined || value === null || (typeof value === 'string' && !value.trim()) || (Array.isArray(value) && value.length === 0);
@@ -53,7 +55,7 @@ export const improveRequestCount = (cards: number, mode: ImproveMode, fields: Im
 const REPLY_KEY: Record<ImproveField, string> = {
   back: 'translation', notes: 'notes', definition: 'definitions', exampleSentenceTarget: 'examples',
   collocations: 'collocations', synonyms: 'synonyms', commonMistake: 'commonMistake', register: 'register',
-  wordFamily: 'wordFamily', wordRoot: 'wordRoot', pronunciation: 'pronunciation', partOfSpeech: 'partOfSpeech', level: 'level',
+  wordFamily: 'wordFamily', wordRoot: 'wordRoot', reference: 'reference', pronunciation: 'pronunciation', partOfSpeech: 'partOfSpeech', level: 'level',
 };
 
 const GUIDE: Partial<Record<ImproveField, string>> = {
@@ -67,7 +69,7 @@ const GUIDE: Partial<Record<ImproveField, string>> = {
   level: '"level": its CEFR level, one of A1 A2 B1 B2 C1 C2',
 };
 
-const EXTRA_KEYS = ['synonyms', 'commonMistake', 'register', 'wordFamily', 'wordRoot'] as const;
+const EXTRA_KEYS = ['synonyms', 'commonMistake', 'register', 'wordFamily', 'wordRoot', 'reference'] as const;
 
 const shown = (value: unknown): string => JSON.stringify(value);
 
@@ -115,13 +117,10 @@ export const parseImproveReply = (
 ): CardImprovement[] => {
   const list = listIn(parsed);
   if (!list) throw new Error('The AI reply had no list of cards.');
-  const seen = new Set<number>();
   const out: CardImprovement[] = [];
-  list.forEach((raw, order) => {
-    const n = Number(raw?.index);
-    const at = Number.isInteger(n) && n >= 1 && n <= cards.length ? n - 1 : order;
-    if (at >= cards.length || seen.has(at)) return;
-    seen.add(at);
+  replyPlaces(list, cards.length).forEach((at, order) => {
+    if (at === null) return;
+    const raw = list[order];
     const card = cards[at];
     const asked = fieldsToAsk(card, fields, mode);
     const all = parseCardRefresh(raw, card);

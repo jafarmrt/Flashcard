@@ -115,6 +115,7 @@ const cardFromExtracted = (cardData: ExtractedWordCard, deckId: string, now: Dat
     ...(cardData.commonMistake ? { commonMistake: cardData.commonMistake } : {}),
     ...(cardData.register ? { register: cardData.register } : {}),
     ...(cardData.wordRoot ? { wordRoot: cardData.wordRoot } : {}),
+    ...(cardData.reference ? { reference: cardData.reference } : {}),
     ...(cardData.extrasAt ? { extrasAt: cardData.extrasAt } : {}),
     repetition: 0,
     easinessFactor: 2.5,
@@ -1038,6 +1039,7 @@ export const useAppLogic = () => {
                 ...(row.commonMistake?.trim() ? { commonMistake: row.commonMistake.trim() } : {}),
                 ...(row.register?.trim() ? { register: row.register.trim() } : {}),
                 ...(row.wordRoot?.trim() ? { wordRoot: row.wordRoot.trim() } : {}),
+                ...(row.reference?.trim() ? { reference: row.reference.trim() } : {}),
                 origin: { by: 'import', at: now },
                 repetition: 0,
                 easinessFactor: 2.5,
@@ -1757,8 +1759,12 @@ export const useAppLogic = () => {
     picks.forEach((p, i) => {
       const card = stored[i];
       if (!card || card.isDeleted) return;
-      const changed = applyProposal(card, p.improvement.proposal, p.fields);
-      const extras = p.fields.some(f => (EXTRA_FIELDS as readonly string[]).includes(f));
+      // "Empty parts only": a part filled since the run began (another
+      // device, an edit) is left as it is.
+      const fields = p.onlyEmpty ? p.fields.filter(f => { const v = (card as any)[f]; return v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0); }) : p.fields;
+      if (fields.length === 0) return;
+      const changed = applyProposal(card, p.improvement.proposal, fields);
+      const extras = fields.some(f => (EXTRA_FIELDS as readonly string[]).includes(f));
       next.push({ ...changed, ...(extras ? { extrasAt: now } : {}), updatedAt: now });
     });
     await db.flashcards.bulkPut(next);

@@ -78,3 +78,26 @@ test('improving asks only the chosen service and the kept meaning records it', a
   assert.equal(next.back, 'بی‌رغبت');
   assert.equal(next.origin?.by, 'ai');
 });
+
+test('reply items find their card by number, from 1 or from 0, never by a shifted order', async () => {
+  const { replyPlaces } = await import('../services/cardImprove');
+  assert.deepEqual(replyPlaces([{ index: 2 }, { index: 1 }], 3), [1, 0]);
+  assert.deepEqual(replyPlaces([{ index: 0 }, { index: 1 }, { index: 2 }], 3), [0, 1, 2]);
+  assert.deepEqual(replyPlaces([{ index: 1 }, { index: 1 }, { index: 9 }], 3), [0, null, null]);
+  // No numbers: the order is trusted only with one item per card.
+  assert.deepEqual(replyPlaces([{}, {}, {}], 3), [0, 1, 2]);
+  assert.deepEqual(replyPlaces([{}, {}], 3), [null, null]);
+});
+
+test('a reference is asked for, kept and offered as a part to improve', async () => {
+  const { parseExtras, hasExtras } = await import('../services/cardExtras');
+  const { IMPROVE_FIELDS } = await import('../services/cardImprove');
+  const extras = parseExtras({ reference: 'اشاره به آشیل در اسطوره‌های یونان.' });
+  assert.equal(extras.reference, 'اشاره به آشیل در اسطوره‌های یونان.');
+  assert.equal(hasExtras(extras), true);
+  assert.deepEqual(parseExtras({ reference: 'none' }), {});
+  assert.ok((IMPROVE_FIELDS as readonly string[]).includes('reference'));
+  const prompt = buildImprovePrompt([card({ front: "Achilles' heel" })], ['reference'], 'empty');
+  assert.match(prompt, /"reference": when the term/);
+  assert.match(prompt, /give: reference/);
+});

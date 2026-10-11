@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { Flashcard } from '../types';
 import type { RefreshSource } from '../services/cardRefresh';
 import type { RefreshField } from '../services/cardRefresh';
@@ -6,13 +6,13 @@ import {
   CardImprovement, DEFAULT_IMPROVE_FIELDS, IMPROVE_FIELDS, ImproveField, ImproveMode, improveBatch, improveBatchSize,
   improveCandidates, improveFieldName, improveRequestCount,
 } from '../services/cardImprove';
-import { isPermanentAiError } from '../services/aiClient';
 import { fa, Icon } from './common/ui';
 
 export interface ImprovementPick {
   id: string;
   improvement: CardImprovement;
   fields: RefreshField[];
+  onlyEmpty: boolean; // "fill empty parts only": a part filled meanwhile stays
 }
 
 interface ImproveCardsPanelProps {
@@ -37,7 +37,9 @@ const saveFields = (fields: ImproveField[]) => {
   try { localStorage.setItem(FIELDS_KEY, JSON.stringify(fields)); } catch { /* storage may be blocked */ }
 };
 
-const RTL_FIELDS: RefreshField[] = ['back', 'notes', 'commonMistake', 'register', 'wordRoot'];
+const RTL_FIELDS: RefreshField[] = ['back', 'notes', 'commonMistake', 'register', 'wordRoot', 'reference'];
+// English with Persian meanings after "=": each line finds its own direction.
+const MIXED_FIELDS: RefreshField[] = ['synonyms', 'wordFamily', 'collocations'];
 
 const button = 'min-h-[44px] px-4 rounded-xl text-sm font-bold disabled:opacity-40';
 const quiet = `${button} text-ink dark:text-slate-200 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700`;
@@ -57,6 +59,9 @@ export const ImproveCardsPanel: React.FC<ImproveCardsPanelProps> = ({ cards, sou
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const stop = useRef(false);
+  const [stopping, setStopping] = useState(false);
+  // Leaving the panel some other way stops the remaining requests.
+  useEffect(() => () => { stop.current = true; }, []);
 
   const candidates = useMemo(() => improveCandidates(cards, fields, mode), [cards, fields, mode]);
   const count = Math.min(candidates.length, Math.max(1, limit || 1));
@@ -74,6 +79,7 @@ export const ImproveCardsPanel: React.FC<ImproveCardsPanelProps> = ({ cards, sou
     const todo = candidates.slice(0, count);
     const size = improveBatchSize(mode, fields);
     stop.current = false;
+    setStopping(false);
     setError('');
     setResults([]);
     setStep('running');
@@ -88,8 +94,9 @@ export const ImproveCardsPanel: React.FC<ImproveCardsPanelProps> = ({ cards, sou
         console.error('Improving cards failed:', e);
         const message = (e as Error)?.message || '';
         setError(/429|quota|rate/i.test(message) ? `سهمیهٔ ${source.name} تمام شد.` : `${source.name} جواب نداد: ${message.slice(0, 160)}`);
-        // A wrong key or model fails the same way for every batch.
-        if (isPermanentAiError(e)) break;
+        // No quota, no network or a wrong key fail the same way for the
+        // rest: stop rather than pay for failing requests.
+        break;
       }
       setProgress({ done: Math.min(i + size, todo.length), total: todo.length });
     }
@@ -111,9 +118,12 @@ export const ImproveCardsPanel: React.FC<ImproveCardsPanelProps> = ({ cards, sou
     setSaving(true);
     try {
       await onApply(results
-        .map(r => ({ id: r.card.id, improvement: r, fields: Array.from(picked.get(r.card.id) || []) }))
+        .map(r => ({ id: r.card.id, improvement: r, fields: Array.from(picked.get(r.card.id) || []), onlyEmpty: mode === 'empty' }))
         .filter(p => p.fields.length > 0));
       onClose();
+    } catch (e) {
+      console.error('Saving improvements failed:', e);
+      setError('ذخیره نشد. دوباره امتحان کن.');
     } finally {
       setSaving(false);
     }
@@ -190,7 +200,9 @@ export const ImproveCardsPanel: React.FC<ImproveCardsPanelProps> = ({ cards, sou
               <div className="h-full bg-brand-500 transition-all" style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }} />
             </div>
             {error && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{error}</p>}
-            <button type="button" onClick={() => { stop.current = true; }} className={`${quiet} self-end`}>توقف و دیدن پیشنهادها</button>
+            <button type="button" disabled={stopping} onClick={() => { stop.current = true; setStopping(true); }} className={`${quiet} self-end`}>
+              {stopping ? 'بعد از همین درخواست می‌ایستد…' : 'توقف و دیدن پیشنهادها'}
+            </button>
           </div>
         )}
 
@@ -214,14 +226,15 @@ export const ImproveCardsPanel: React.FC<ImproveCardsPanelProps> = ({ cards, sou
                         {r.card.back && <span className="text-sm text-ink-muted dark:text-slate-400">{r.card.back}</span>}
                       </p>
                       {r.changes.map(c => {
-                        const ltr = !RTL_FIELDS.includes(c.field);
+                        const ltr = !RTL_FIELDS.includes(c.field) && !MIXED_FIELDS.includes(c.field);
+                        const dir = MIXED_FIELDS.includes(c.field) ? 'auto' : ltr ? 'ltr' : 'rtl';
                         return (
                           <label key={c.field} className="flex items-start gap-3 rounded-xl bg-slate-50 dark:bg-slate-900/50 p-2.5 cursor-pointer">
                             <input type="checkbox" checked={!!picked.get(r.card.id)?.has(c.field)} onChange={() => toggle(r.card.id, c.field)} className="mt-1 w-5 h-5 accent-brand-500 shrink-0" />
                             <span className="flex-1 min-w-0 flex flex-col gap-0.5">
                               <span className="text-xs font-bold text-ink-muted dark:text-slate-400">{improveFieldName(c.field as ImproveField)}</span>
-                              <span dir={ltr ? 'ltr' : 'rtl'} className={`text-sm whitespace-pre-line break-words text-ink dark:text-white ${ltr ? 'font-en text-left' : ''}`}>{c.proposed}</span>
-                              {c.current && <span dir={ltr ? 'ltr' : 'rtl'} className={`text-xs whitespace-pre-line break-words text-ink-muted dark:text-slate-400 line-through decoration-slate-400/60 ${ltr ? 'font-en text-left' : ''}`}>{c.current}</span>}
+                              <span dir={dir} className={`text-sm whitespace-pre-line break-words text-ink dark:text-white ${ltr ? 'font-en text-left' : ''}`}>{c.proposed}</span>
+                              {c.current && <span dir={dir} className={`text-xs whitespace-pre-line break-words text-ink-muted dark:text-slate-400 line-through decoration-slate-400/60 ${ltr ? 'font-en text-left' : ''}`}>{c.current}</span>}
                             </span>
                           </label>
                         );
