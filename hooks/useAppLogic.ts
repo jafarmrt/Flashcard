@@ -9,6 +9,7 @@ import { buildSource, cardIndex, cardsInText, chaptersOf, findCard, markChunkDon
 import { cardsOfSource, pickBookReview } from '../services/readingStats';
 import { normalizeTerm } from '../services/vocabMerge';
 import { forgetRows, newKnownWord } from '../services/knownWords';
+import { compactAttempts } from '../services/speechPractice';
 import { ALL_ACHIEVEMENTS } from '../services/achievements';
 import { aiRequestOptions } from '../services/aiSettings';
 import { AUTH_REQUIRED_EVENT, callProxy } from '../services/apiService';
@@ -1379,7 +1380,9 @@ export const useAppLogic = () => {
   // the rest of the account.
   const handleSaveSpeechAttempt = async (attempt: SpeechAttempt) => {
     await db.speechAttempts.put(attempt);
-    setSpeechAttempts(prev => [...prev.filter(a => a.id !== attempt.id), attempt]);
+    const compacted = compactAttempts(await db.speechAttempts.toArray());
+    if (compacted.length) await db.speechAttempts.bulkPut(compacted);
+    setSpeechAttempts(await db.speechAttempts.toArray());
   };
 
   const handleUnmarkKnown = async (term: string) => {

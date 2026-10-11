@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Flashcard, SpeechAttempt } from '../types';
 import {
-  attemptKey, cleanEvaluation, dailyScores, focusSounds, itemProgress, newAttempt, pronunciationPrompt,
+  attemptKey, cleanEvaluation, compactAttempts, dailyScores, focusSounds, itemProgress, newAttempt, pronunciationPrompt,
   PRONUNCIATION_SCHEMA, SOUND_IDS, speechSummary, weakCardIds, weakSounds,
 } from '../services/speechPractice';
 import { syncFingerprint } from '../services/syncState';
@@ -33,9 +33,12 @@ test('the AI answer is cleaned: whole score in 0-100, known sound ids, short tex
   assert.deepEqual(e.issues[0], { sound: 'th-voiceless', word: 'think', detail: 'th را مثل ت گفتی' });
   assert.equal(e.issues[1].sound, 'other', 'an unknown id becomes "other"');
   assert.equal(e.issues.length, 6, 'at most six problems');
-  assert.equal(cleanEvaluation({ score: 'x' }).score, 0);
-  assert.deepEqual(cleanEvaluation(null).issues, []);
+  assert.throws(() => cleanEvaluation({ score: 'x' }), 'no score is no answer, not a zero');
+  assert.throws(() => cleanEvaluation({}));
+  assert.throws(() => cleanEvaluation(null));
   assert.equal(cleanEvaluation({ score: -5 }).score, 0);
+  assert.equal(cleanEvaluation({ score: '72' }).score, 72);
+  assert.deepEqual(cleanEvaluation({ score: 0 }).issues, []);
 });
 
 test('the prompt asks for the fixed sound ids and names his usual weak sounds', () => {
@@ -80,6 +83,7 @@ test('progress: averages by day, recent against earlier, every item with its sco
   assert.equal(s.change, 14);
   assert.equal(s.practisedItems, 3, 'a card read as a word and as its sentence counts twice');
   assert.equal(speechSummary(list.slice(0, 5)).change, null, 'no comparison before 20 tries');
+  assert.equal(speechSummary(list.slice(0, 11)).previousAverage, null, 'not one try passed off as the earlier ten');
 
   const items = itemProgress(list);
   assert.equal(items[0].kind, 'sentence', 'most recent first');
@@ -109,4 +113,19 @@ test('a new try keeps its card, kind and evaluation; tries are part of what sync
   const local: LocalData = { decks: [], cards: [], sources: [], chapters: [], occurrences: [], knownWords: [], speechAttempts: [a], logs: [], achievements: [] };
   const out = nextOutgoing(local, freshSyncState('jafar'));
   assert.deepEqual(out.changes.speechAttempts, [a]);
+});
+
+test('old tries lose their long texts but keep score, sounds and words', () => {
+  const list = Array.from({ length: 5 }, (_, i) => attempt({
+    score: 40 + i, createdAt: at(1, i), heard: 'tink', correction: '/θɪŋk/', feedback: 'بلند',
+    issues: [{ sound: 'th-voiceless', word: 'think', detail: 'توضیح' }],
+  }));
+  const out = compactAttempts(list, 3, new Date(at(9)));
+  assert.deepEqual(out.map(a => a.score), [40, 41], 'only beyond the latest three');
+  assert.deepEqual(out[0].issues, [{ sound: 'th-voiceless', word: 'think', detail: '' }]);
+  assert.equal(out[0].feedback, '');
+  assert.equal('heard' in out[0] || 'correction' in out[0], false);
+  assert.equal(out[0].updatedAt, at(9), 'newer, so the short copy wins on every device');
+  assert.deepEqual(compactAttempts([...out, ...list.slice(2)], 3), [], 'nothing twice');
+  assert.equal(weakSounds([...out, ...list.slice(2)])[0].count, 5, 'still counted');
 });

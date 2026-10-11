@@ -105,8 +105,10 @@ const MAX_ISSUES = 6;
 // known sound ids, short texts.
 export const cleanEvaluation = (raw: any): Evaluation => {
   const r = raw && typeof raw === 'object' ? raw : {};
-  const n = Number(r.score);
-  const score = Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 0;
+  const n = typeof r.score === 'string' && r.score.trim() === '' ? NaN : Number(r.score ?? NaN);
+  // An answer without a score is no answer: it is not saved as a zero.
+  if (!Number.isFinite(n)) throw new Error('The AI sent no score.');
+  const score = Math.max(0, Math.min(100, Math.round(n)));
   const issues: SpeechIssue[] = (Array.isArray(r.issues) ? r.issues : [])
     .map((i: any): SpeechIssue | null => {
       if (!i || typeof i !== 'object') return null;
@@ -215,7 +217,8 @@ const average = (xs: number[]) => (xs.length ? Math.round(xs.reduce((s, x) => s 
 export const speechSummary = (attempts: SpeechAttempt[], size = 10): SpeechSummary => {
   const live = liveAttempts(attempts);
   const recentAverage = average(live.slice(-size).map(a => a.score));
-  const previousAverage = average(live.slice(-2 * size, -size).map(a => a.score));
+  // Compared only once there are `size` earlier tries to compare with.
+  const previousAverage = live.length >= 2 * size ? average(live.slice(-2 * size, -size).map(a => a.score)) : null;
   return {
     total: live.length,
     recentAverage,
@@ -273,3 +276,24 @@ export const weakCardIds = (attempts: SpeechAttempt[], threshold = WEAK_SCORE): 
 // at least two of the recent tries.
 export const focusSounds = (attempts: SpeechAttempt[]): string[] =>
   weakSounds(attempts, 30, 2).map(w => w.sound);
+
+// Tries beyond the latest `keep` lose their long texts (feedback, what was
+// heard, each problem's explanation) but keep the score, the sound ids and
+// the words, so the progress page still counts them while the account's
+// record on the server stays small. Returns the rows to write back.
+export const KEEP_FULL_ATTEMPTS = 200;
+export const compactAttempts = (attempts: SpeechAttempt[], keep = KEEP_FULL_ATTEMPTS, now: Date = new Date()): SpeechAttempt[] => {
+  const live = liveAttempts(attempts);
+  return live.slice(0, Math.max(0, live.length - keep))
+    .filter(a => !a.compact)
+    .map(a => {
+      const { heard: _h, correction: _c, ...rest } = a;
+      return {
+        ...rest,
+        feedback: '',
+        issues: (a.issues || []).map(i => ({ sound: i.sound, ...(i.word ? { word: i.word } : {}), detail: '' })),
+        compact: true,
+        updatedAt: now.toISOString(),
+      };
+    });
+};

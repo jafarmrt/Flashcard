@@ -313,6 +313,7 @@ export interface SpeechAttempt {
   feedback: string; // Persian summary
   correction?: string; // IPA of the right pronunciation
   issues: SpeechIssue[];
+  compact?: true; // an old try kept without its long texts (services/speechPractice)
   createdAt: string;
   updatedAt: string;
   isDeleted?: boolean;

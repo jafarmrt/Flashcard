@@ -116,6 +116,9 @@ export const SpeakingMode: React.FC<SpeakingModeProps> = ({ sessionCards, kind, 
   const chunks = useRef<Blob[]>([]);
   const alive = useRef(true);
   const limit = useRef<ReturnType<typeof setTimeout>>();
+  const starting = useRef(false);
+  const indexRef = useRef(0);
+  indexRef.current = index;
 
   const card = sessionCards[index];
   const target = card ? speakingTarget(card, kind) : '';
@@ -124,23 +127,30 @@ export const SpeakingMode: React.FC<SpeakingModeProps> = ({ sessionCards, kind, 
   // Asked once per session, so the AI listens closely for his usual slips.
   const weak = useMemo(() => focusSounds(attempts), []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => () => {
+  useEffect(() => {
+    alive.current = true;
+    return () => {
     alive.current = false;
     clearTimeout(limit.current);
     recorder.current?.stream.getTracks().forEach(t => t.stop());
+    };
   }, []);
   useEffect(() => () => { if (myVoice) URL.revokeObjectURL(myVoice); }, [myVoice]);
 
-  const evaluate = async (blob: Blob) => {
+  // The try is saved even when the page was left meanwhile; it is shown only
+  // while the same card is still on screen.
+  const evaluate = async (blob: Blob, forIndex: number) => {
     setIsAnalyzing(true);
     setError('');
     try {
-      const evaluation = await evaluatePronunciation(target, await blobToBase64(blob), blob.type, audioOptions, { kind, weak });
-      if (!alive.current) return;
+      // Gemini wants the bare type: "audio/webm", not "audio/webm;codecs=opus".
+      const mime = blob.type.split(';')[0] || 'audio/webm';
+      const evaluation = await evaluatePronunciation(target, await blobToBase64(blob), mime, audioOptions, { kind, weak });
       const attempt = newAttempt(target, kind, evaluation, card.id);
+      await onSaveAttempt(attempt);
+      if (!alive.current || indexRef.current !== forIndex) return;
       setResult(attempt);
       setTried(prev => [...prev, attempt]);
-      await onSaveAttempt(attempt);
     } catch (err) {
       if (alive.current) setError(`صدا بررسی نشد: ${(err as Error)?.message || 'سرویس Gemini پاسخ نداد'}. دوباره امتحان کن.`);
     } finally {
@@ -150,23 +160,31 @@ export const SpeakingMode: React.FC<SpeakingModeProps> = ({ sessionCards, kind, 
 
   const toggleRecording = async () => {
     if (isRecording) {
+      // Busy at once, so nothing can move on before the answer comes.
+      setIsAnalyzing(true);
       recorder.current?.stop();
       setIsRecording(false);
       return;
     }
+    if (starting.current || recorder.current?.state === 'recording') return;
     setError('');
     if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       setError('این مرورگر نمی‌تواند صدا ضبط کند.');
       return;
     }
     let stream: MediaStream;
+    starting.current = true;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err) {
       console.error('Error accessing microphone:', err);
       setError('برای این تمرین باید به میکروفون اجازه بدهی.');
       return;
+    } finally {
+      starting.current = false;
     }
+    if (!alive.current) { stream.getTracks().forEach(t => t.stop()); return; }
+    const forIndex = indexRef.current;
     const rec = new MediaRecorder(stream);
     recorder.current = rec;
     chunks.current = [];
@@ -177,15 +195,15 @@ export const SpeakingMode: React.FC<SpeakingModeProps> = ({ sessionCards, kind, 
       if (!alive.current) return;
       // Safari records mp4, Chrome and Firefox webm or ogg.
       const blob = new Blob(chunks.current, { type: rec.mimeType || chunks.current[0]?.type || 'audio/webm' });
-      if (blob.size < 1000) { setError('صدایی ضبط نشد. دکمه را بزن، بگو و دوباره بزن.'); return; }
+      if (blob.size < 1000) { setIsAnalyzing(false); setError('صدایی ضبط نشد. دکمه را بزن، بگو و دوباره بزن.'); return; }
       setMyVoice(URL.createObjectURL(blob));
-      evaluate(blob);
+      evaluate(blob, forIndex);
     };
     rec.start();
     setIsRecording(true);
     // A forgotten recording stops by itself, so the upload stays small.
     limit.current = setTimeout(() => {
-      if (rec.state === 'recording') { rec.stop(); setIsRecording(false); }
+      if (rec.state === 'recording') { setIsAnalyzing(true); rec.stop(); setIsRecording(false); }
     }, MAX_RECORDING_MS);
   };
 
@@ -386,7 +404,7 @@ export const SpeechProgress: React.FC<SpeechProgressProps> = ({ attempts, onPrac
         </div>
         <div>
           <p className={`text-3xl font-extrabold ${summary.change === null ? 'text-ink-muted dark:text-slate-400' : summary.change >= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
-            {summary.change === null ? '—' : `${summary.change > 0 ? '+' : summary.change < 0 ? '−' : ''}${fa(Math.abs(summary.change))}`}
+            {summary.change === null ? '—' : <bdi dir="ltr">{`${summary.change > 0 ? '+' : summary.change < 0 ? '−' : ''}${fa(Math.abs(summary.change))}`}</bdi>}
           </p>
           <p className="text-xs text-ink-muted dark:text-slate-400 mt-1">{summary.change === null ? 'پیشرفت پس از ۲۰ تلاش' : 'نسبت به ۱۰ تلاش پیش از آن'}</p>
         </div>
