@@ -1,5 +1,6 @@
 // File: /server/speech.ts
-// Reading aloud with an AI voice (Gemini text-to-speech). The newer TTS
+// Reading aloud with an AI voice: Gemini text-to-speech, or any speech model
+// on OpenRouter (its /audio/speech, below). Gemini's newer TTS
 // models are documented on the Interactions API; older ones answer on
 // generateContent. Each is tried in turn when the first says the request is
 // not one it knows (400/404). The audio comes back as base64: WAV, or raw
@@ -13,7 +14,14 @@ export const DEFAULT_SPEECH_VOICE = 'Kore';
 export const MAX_SPEECH_CHARS = 700;
 const SPEECH_TIMEOUT_MS = 45_000;
 
-type FetchLike = (url: string, init?: any) => Promise<{ ok: boolean; status: number; json: () => Promise<any>; text: () => Promise<string> }>;
+type FetchLike = (url: string, init?: any) => Promise<{
+  ok: boolean;
+  status: number;
+  json: () => Promise<any>;
+  text: () => Promise<string>;
+  arrayBuffer?: () => Promise<ArrayBuffer>;
+  headers?: { get(name: string): string | null };
+}>;
 
 export interface SpeechAudio {
   data: string; // base64
@@ -72,13 +80,13 @@ const reasonOf = (body: string): string => {
   }
 };
 
-const failure = (status: number, body: string): SpeechError => {
+const failure = (status: number, body: string, service = 'Gemini voice'): SpeechError => {
   const hint = status === 401 || status === 403 ? 'the API key is wrong or not allowed'
     : status === 429 ? 'the free quota is used up for now'
     : status === 404 ? 'this voice model is not available'
     : '';
   const reason = reasonOf(body).replace(/\s+/g, ' ').trim().slice(0, 200);
-  return new SpeechError(`Gemini voice (${status}): ${[hint, reason].filter(Boolean).join(' - ') || 'request failed'}`, status);
+  return new SpeechError(`${service} (${status}): ${[hint, reason].filter(Boolean).join(' - ') || 'request failed'}`, status);
 };
 
 const BASE = 'https://generativelanguage.googleapis.com/v1beta';
@@ -138,4 +146,91 @@ export async function generateSpeech(apiKey: string, text: string, model: string
       throw tryOther(second) ? first : second;
     }
   }
+}
+
+// --- OpenRouter ---
+
+export const OPENROUTER_SPEECH_URL = 'https://openrouter.ai/api/v1/audio/speech';
+export const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models?output_modalities=speech';
+// Cheap (well under a cent a section) and quick; any other is picked in Settings.
+export const DEFAULT_OPENROUTER_SPEECH_MODEL = 'hexgrad/kokoro-82m';
+
+// OpenRouter model and voice ids also have "/" and ":" ("fish-audio/s2.1-pro-free:free",
+// "en-US-Harper:MAI-Voice-2"). They only go in a JSON body.
+export const cleanOpenRouterName = (value: unknown, fallback: string): string => {
+  const s = typeof value === 'string' ? value.trim() : '';
+  return /^[A-Za-z0-9._:/-]{1,120}$/.test(s) ? s : fallback;
+};
+
+// MP3 first (a tenth of the size); a model that only makes PCM says 400,
+// and is asked again for PCM (16-bit, 24 kHz unless it says otherwise).
+// No voice: the model's own default.
+export async function openRouterSpeech(apiKey: string, text: string, model: string, voice: string | undefined, fetchImpl: FetchLike = fetch as unknown as FetchLike): Promise<SpeechAudio> {
+  let first: SpeechError | null = null;
+  for (const format of ['mp3', 'pcm'] as const) {
+    const res = await fetchImpl(OPENROUTER_SPEECH_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ model, input: text, ...(voice ? { voice } : {}), response_format: format }),
+      signal: AbortSignal.timeout(SPEECH_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      const error = failure(res.status, await res.text(), 'OpenRouter voice');
+      if (res.status === 400 && format === 'mp3') { first = error; continue; }
+      throw first || error;
+    }
+    const type = (res.headers?.get('content-type') || (format === 'mp3' ? 'audio/mpeg' : 'audio/pcm')).toLowerCase();
+    if (type.includes('json')) throw new SpeechError('OpenRouter voice: the answer had no audio', 502);
+    const bytes = Buffer.from(res.arrayBuffer ? await res.arrayBuffer() : new ArrayBuffer(0));
+    if (bytes.length === 0) throw new SpeechError('OpenRouter voice: the answer had no audio', 502);
+    const rate = RATE.exec(type);
+    return {
+      data: bytes.toString('base64'),
+      mimeType: format === 'pcm' && !type.startsWith('audio/') ? 'audio/pcm' : type.split(';')[0].trim(),
+      ...(rate ? { sampleRate: Number(rate[1]) } : {}),
+    };
+  }
+  throw first || new SpeechError('OpenRouter voice: request failed', 502);
+}
+
+export interface SpeechModel {
+  id: string;
+  name?: string;
+  price?: number; // dollars per million (characters or tokens, as OpenRouter lists it)
+  free?: boolean;
+  voices?: string[];
+}
+
+const voiceId = (v: unknown): string => {
+  if (typeof v === 'string') return v;
+  if (v && typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    const id = o.id ?? o.voice_id ?? o.voice ?? o.name;
+    return typeof id === 'string' ? id : '';
+  }
+  return '';
+};
+
+// OpenRouter's speech models, with their voices when it lists them.
+export const speechModels = (data: any): SpeechModel[] =>
+  (Array.isArray(data?.data) ? data.data : [])
+    .filter((m: any) => m && typeof m.id === 'string' && m.id)
+    .map((m: any) => {
+      const price = Number(m.pricing?.prompt);
+      const model: SpeechModel = { id: m.id };
+      if (typeof m.name === 'string' && m.name && m.name !== m.id) model.name = m.name;
+      if (Number.isFinite(price) && price >= 0) model.price = Math.round(price * 1_000_000 * 10_000) / 10_000;
+      if (m.id.endsWith(':free') || price === 0) model.free = true;
+      const voices = (Array.isArray(m.supported_voices) ? m.supported_voices : []).map(voiceId).filter(Boolean);
+      if (voices.length) model.voices = [...new Set<string>(voices)].slice(0, 300);
+      return model;
+    });
+
+export async function listOpenRouterSpeechModels(apiKey: string, fetchImpl: FetchLike = fetch as unknown as FetchLike): Promise<SpeechModel[]> {
+  const res = await fetchImpl(OPENROUTER_MODELS_URL, {
+    headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw failure(res.status, await res.text(), 'OpenRouter');
+  return speechModels(await res.json());
 }

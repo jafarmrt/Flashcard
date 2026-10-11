@@ -12,7 +12,7 @@ import { geminiUsage, listGeminiModels, listOpenAiModels, openAiUsage } from './
 import { cachedEnrich, fileLookupStore, LookupStore } from './lookupCache.js';
 import { openKeys, sealKeys } from './keyVault.js';
 import { cleanSentKeys, mergeKeyEntries } from '../services/keySync.js';
-import { cleanSpeechName, DEFAULT_SPEECH_MODEL, DEFAULT_SPEECH_VOICE, generateSpeech, MAX_SPEECH_CHARS, SpeechError } from './speech.js';
+import { cleanOpenRouterName, cleanSpeechName, DEFAULT_OPENROUTER_SPEECH_MODEL, DEFAULT_SPEECH_MODEL, DEFAULT_SPEECH_VOICE, generateSpeech, listOpenRouterSpeechModels, MAX_SPEECH_CHARS, openRouterSpeech, SpeechError } from './speech.js';
 import {
   PUBLIC_ACTIONS, USERNAME_PATTERN, MIN_PASSWORD_LENGTH, registrationAllowed,
   hashPassword, verifyPassword, getSessionSecret, createSessionToken, sessionUser,
@@ -486,12 +486,34 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         const text = typeof payload.text === 'string' ? payload.text.replace(/\s+/g, ' ').trim() : '';
         if (!text) return res.status(400).json({ error: 'text is required.' });
         if (text.length > MAX_SPEECH_CHARS) return res.status(400).json({ error: `At most ${MAX_SPEECH_CHARS} characters at a time.` });
+        if (payload.provider === 'openrouter') {
+          const key = payload.customApiKey || process.env.OPENROUTER_API_KEY;
+          if (!key) return res.status(400).json({ error: 'OpenRouter voice: no API key. Enter an OpenRouter key in the AI settings.' });
+          const model = cleanOpenRouterName(payload.model, DEFAULT_OPENROUTER_SPEECH_MODEL);
+          try {
+            const audio = await openRouterSpeech(key, text, model, cleanOpenRouterName(payload.voice, '') || undefined);
+            return res.status(200).json({ ...audio, model });
+          } catch (e) {
+            if (e instanceof SpeechError) return res.status(e.status >= 400 && e.status < 600 ? e.status : 502).json({ error: e.message });
+            throw e;
+          }
+        }
         const apiKey = payload.customApiKey || process.env.GEMINI_API_KEY || process.env.API_KEY;
         if (!apiKey) return res.status(400).json({ error: 'Gemini voice: no API key. Enter a Gemini key in the AI settings.' });
         const model = cleanSpeechName(payload.model, DEFAULT_SPEECH_MODEL);
         try {
           const audio = await generateSpeech(apiKey, text, model, cleanSpeechName(payload.voice, DEFAULT_SPEECH_VOICE));
           return res.status(200).json({ ...audio, model });
+        } catch (e) {
+          if (e instanceof SpeechError) return res.status(e.status >= 400 && e.status < 600 ? e.status : 502).json({ error: e.message });
+          throw e;
+        }
+      }
+
+      case 'list-speech-models': {
+        // OpenRouter's speech models and their voices, for Settings.
+        try {
+          return res.status(200).json({ models: await listOpenRouterSpeechModels(payload.customApiKey || process.env.OPENROUTER_API_KEY || '') });
         } catch (e) {
           if (e instanceof SpeechError) return res.status(e.status >= 400 && e.status < 600 ? e.status : 502).json({ error: e.message });
           throw e;

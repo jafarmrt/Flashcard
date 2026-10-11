@@ -184,8 +184,11 @@ export interface Settings {
     preReadAuto?: boolean; // the reader shows a section's hard words before it
     hideGrammar?: boolean; // the reader does not underline grammar structures
     readAloudVoice?: 'device' | 'ai'; // reading aloud with the device's voice (default) or an AI voice
+    aiSpeechProvider?: 'gemini' | 'openrouter'; // the service that makes the AI voice (Gemini by default)
     aiSpeechVoice?: string; // the AI voice (a Gemini voice name)
     aiSpeechModel?: string; // the Gemini text-to-speech model
+    orSpeechModel?: string; // the OpenRouter speech model
+    orSpeechVoice?: string; // its voice; unset: the model's own default
     updatedAt?: string; // when settings last changed; the newest wins across devices
 }
 

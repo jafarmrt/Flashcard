@@ -1,12 +1,13 @@
 // File: /services/aiSpeech.ts
 // Reading aloud with an AI voice: one piece of text becomes audio on the
-// server (Gemini text-to-speech, server/speech.ts), the browser plays it.
-// Only Gemini has voices here; its key (or the server's) is used.
+// server (server/speech.ts), the browser plays it. Gemini (its key, or the
+// server's) or a speech model on OpenRouter (the OpenRouter key).
 
 import type { Settings } from '../types';
 import { callProxy, ProxyError } from './apiService';
-import { geminiAudioOptions } from './aiSettings';
+import { geminiAudioOptions, providerKey } from './aiSettings';
 import { logUsage } from './usageLog';
+import { cachedSpeech, saveSpeech, speechKey } from './speechCache';
 
 export const DEFAULT_SPEECH_MODEL = 'gemini-3.8-flash-tts';
 export const DEFAULT_SPEECH_VOICE = 'Kore';
@@ -24,8 +25,29 @@ export const AI_VOICES: { id: string; label: string }[] = [
   { id: 'Orus', label: 'محکم، بم' },
 ];
 
-export const speechModel = (settings: Partial<Settings>) => settings.aiSpeechModel?.trim() || DEFAULT_SPEECH_MODEL;
-export const speechVoice = (settings: Partial<Settings>) => settings.aiSpeechVoice?.trim() || DEFAULT_SPEECH_VOICE;
+export const DEFAULT_OPENROUTER_SPEECH_MODEL = 'hexgrad/kokoro-82m';
+
+export type SpeechProvider = 'gemini' | 'openrouter';
+export const speechProvider = (settings: Partial<Settings>): SpeechProvider => (settings.aiSpeechProvider === 'openrouter' ? 'openrouter' : 'gemini');
+export const speechModel = (settings: Partial<Settings>) => speechProvider(settings) === 'openrouter'
+  ? settings.orSpeechModel?.trim() || DEFAULT_OPENROUTER_SPEECH_MODEL
+  : settings.aiSpeechModel?.trim() || DEFAULT_SPEECH_MODEL;
+// OpenRouter: '' is the model's own default voice.
+export const speechVoice = (settings: Partial<Settings>) => speechProvider(settings) === 'openrouter'
+  ? settings.orSpeechVoice?.trim() || ''
+  : settings.aiSpeechVoice?.trim() || DEFAULT_SPEECH_VOICE;
+export const speechServiceName = (settings: Partial<Settings>) => (speechProvider(settings) === 'openrouter' ? 'OpenRouter' : 'Gemini');
+
+export interface SpeechModel {
+  id: string;
+  name?: string;
+  price?: number; // dollars per million, as OpenRouter lists it
+  free?: boolean;
+  voices?: string[];
+}
+
+export const listSpeechModels = async (settings: Partial<Settings>): Promise<SpeechModel[]> =>
+  (await callProxy('list-speech-models', { customApiKey: providerKey(settings, 'openrouter') }))?.models || [];
 
 export const base64ToBytes = (b64: string): Uint8Array => {
   const bin = atob(b64);
@@ -67,21 +89,32 @@ export const audioBytes = (data: string, mimeType = '', sampleRate?: number): { 
   return { bytes: raw, type: mimeType };
 };
 
-export async function aiSpeech(text: string, settings: Partial<Settings>): Promise<Blob> {
+// Audio made before for the same text, service, model and voice is played
+// from this device (services/speechCache); `fresh` always asks the service
+// (the sample in Settings, which checks the key).
+export async function aiSpeech(text: string, settings: Partial<Settings>, fresh = false): Promise<Blob> {
+  const provider = speechProvider(settings);
+  const service = speechServiceName(settings);
   const model = speechModel(settings);
+  const key = fresh ? null : await speechKey(provider, model, speechVoice(settings), text).catch(() => null);
+  const kept = key ? await cachedSpeech(key) : null;
+  if (kept) return kept;
   try {
     const res = await callProxy('ai-speech', {
       text,
+      provider,
       model,
       voice: speechVoice(settings),
-      customApiKey: geminiAudioOptions(settings as Settings).customApiKey,
+      customApiKey: provider === 'openrouter' ? providerKey(settings, 'openrouter') : geminiAudioOptions(settings as Settings).customApiKey,
     });
-    if (!res?.data) throw new ProxyError('Gemini voice: no audio came back', 502);
+    if (!res?.data) throw new ProxyError(`${service} voice: no audio came back`, 502);
     const { bytes, type } = audioBytes(res.data, res.mimeType, res.sampleRate);
-    logUsage({ service: 'Gemini', task: 'speech', ok: true, model, chars: text.length });
-    return new Blob([bytes as BlobPart], { type });
+    logUsage({ service, task: 'speech', ok: true, model });
+    const blob = new Blob([bytes as BlobPart], { type });
+    if (key) saveSpeech(key, blob);
+    return blob;
   } catch (error) {
-    logUsage({ service: 'Gemini', task: 'speech', ok: false, model, status: error instanceof ProxyError ? error.status : undefined, error: (error as Error)?.message });
+    logUsage({ service, task: 'speech', ok: false, model, status: error instanceof ProxyError ? error.status : undefined, error: (error as Error)?.message });
     throw error;
   }
 }
