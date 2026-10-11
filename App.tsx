@@ -89,7 +89,7 @@ const App: React.FC = () => {
         knownWords, sectionReview, handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview, handleCheckCards,
         handleStartSourceReview, handleReviewCards, handlePrestudyChapter,
         overlayEdit, openCardEditor, closeCardEditor, saveOverlayEdit,
-        handleFillExtras, handleStopFillExtras, extrasProgress, handleSaveCardContent,
+        handleFillExtras, handleStopFillExtras, extrasProgress, handleSaveCardContent, handleApplyImprovements,
     } = useAppLogic();
 
     const visibleFlashcards = useMemo(() => flashcards.filter(c => !c.isDeleted), [flashcards]);
@@ -316,6 +316,8 @@ const App: React.FC = () => {
                     places={places}
                     onFillExtras={handleFillExtras}
                     onStopFillExtras={handleStopFillExtras}
+                    aiSources={cardSources.filter(s => s.kind === 'ai')}
+                    onApplyImprovements={handleApplyImprovements}
                     extrasProgress={extrasProgress}
                 />;
         }

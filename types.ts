@@ -90,6 +90,7 @@ export interface CardExtras {
   register?: string; // Persian: formal or informal, British or American, how common
   wordFamily?: WordFamilyMember[];
   wordRoot?: string; // Persian: its root, prefix and suffix
+  reference?: string; // Persian: the historical, literary or cultural reference the term or its sentence makes
   extrasAt?: string; // ISO: when an AI was last asked for these
 }
 

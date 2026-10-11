@@ -29,9 +29,10 @@ import { applyDictionarySettings } from '../services/dictSettings';
 import { DictionaryResult, lookupDictionary } from '../services/dictionaryService';
 import { AutoFixStats } from '../components/AutoFixReportModal';
 import { fa } from '../components/common/ui';
-import { EXTRAS_BATCH, extrasForCards, hasExtras, lacksExtras, parseSynonymsText, parseFamilyText, withExtras } from '../services/cardExtras';
+import { EXTRA_FIELDS, EXTRAS_BATCH, extrasForCards, hasExtras, lacksExtras, parseSynonymsText, parseFamilyText, withExtras } from '../services/cardExtras';
 import { isPermanentAiError } from '../services/aiClient';
-import { withEditedContent } from '../services/cardRefresh';
+import { applyProposal, withEditedContent } from '../services/cardRefresh';
+import type { ImprovementPick } from '../components/ImproveCardsPanel';
 
 // Types used within the hook and exported for the App component
 export type View = 'TODAY' | 'ME' | 'TEXTS' | 'READER' | 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS' | 'PROFILE' | 'AI_EXTRACT' | 'USAGE';
@@ -114,6 +115,7 @@ const cardFromExtracted = (cardData: ExtractedWordCard, deckId: string, now: Dat
     ...(cardData.commonMistake ? { commonMistake: cardData.commonMistake } : {}),
     ...(cardData.register ? { register: cardData.register } : {}),
     ...(cardData.wordRoot ? { wordRoot: cardData.wordRoot } : {}),
+    ...(cardData.reference ? { reference: cardData.reference } : {}),
     ...(cardData.extrasAt ? { extrasAt: cardData.extrasAt } : {}),
     repetition: 0,
     easinessFactor: 2.5,
@@ -1037,6 +1039,7 @@ export const useAppLogic = () => {
                 ...(row.commonMistake?.trim() ? { commonMistake: row.commonMistake.trim() } : {}),
                 ...(row.register?.trim() ? { register: row.register.trim() } : {}),
                 ...(row.wordRoot?.trim() ? { wordRoot: row.wordRoot.trim() } : {}),
+                ...(row.reference?.trim() ? { reference: row.reference.trim() } : {}),
                 origin: { by: 'import', at: now },
                 repetition: 0,
                 easinessFactor: 2.5,
@@ -1746,6 +1749,30 @@ export const useAppLogic = () => {
     showToast(filled ? `${fa(filled)} کارت هم‌معنی، خانوادهٔ واژه و نکته‌های تازه گرفت.` : 'چیزی اضافه نشد.');
   };
 
+  // The changes picked after improving cards with an AI, over what the
+  // database holds now.
+  const handleApplyImprovements = async (picks: ImprovementPick[]) => {
+    if (picks.length === 0) return;
+    const now = new Date().toISOString();
+    const stored = (await db.flashcards.bulkGet(picks.map(p => p.id))) as (Flashcard | undefined)[];
+    const next: Flashcard[] = [];
+    picks.forEach((p, i) => {
+      const card = stored[i];
+      if (!card || card.isDeleted) return;
+      // "Empty parts only": a part filled since the run began (another
+      // device, an edit) is left as it is.
+      const fields = p.onlyEmpty ? p.fields.filter(f => { const v = (card as any)[f]; return v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0); }) : p.fields;
+      if (fields.length === 0) return;
+      const changed = applyProposal(card, p.improvement.proposal, fields);
+      const extras = fields.some(f => (EXTRA_FIELDS as readonly string[]).includes(f));
+      next.push({ ...changed, ...(extras ? { extrasAt: now } : {}), updatedAt: now });
+    });
+    await db.flashcards.bulkPut(next);
+    const byId = new Map(next.map(c => [c.id, c] as [string, Flashcard]));
+    setFlashcards(prev => prev.map(c => byId.get(c.id) || c));
+    showToast(`${fa(next.length)} کارت بهبود پیدا کرد.`);
+  };
+
   // A card whose content changed outside the form (a stubborn card's new
   // memory aid). The schedule in the database stays as it is.
   const handleSaveCardContent = async (card: Flashcard): Promise<Flashcard> => {
@@ -1780,6 +1807,6 @@ export const useAppLogic = () => {
       handleDeleteSource, handleCompleteChunk, loadChapterText, handleSaveReaderCards,
       handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview: () => setSectionReview(null),
       handleCheckCards, handleStartSourceReview, handleReviewCards, handlePrestudyChapter,
-      handleFillExtras, handleStopFillExtras, handleSaveCardContent,
+      handleFillExtras, handleStopFillExtras, handleSaveCardContent, handleApplyImprovements,
   };
 };

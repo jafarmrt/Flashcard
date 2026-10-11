@@ -13,7 +13,7 @@ import { parseJsonFromAiResponse } from './geminiService';
 import { aiGenerate } from './aiClient';
 import { aiOrigin } from './aiSettings';
 
-export const EXTRA_FIELDS = ['synonyms', 'commonMistake', 'register', 'wordFamily', 'wordRoot'] as const;
+export const EXTRA_FIELDS = ['synonyms', 'commonMistake', 'register', 'wordFamily', 'wordRoot', 'reference'] as const;
 export type ExtraField = (typeof EXTRA_FIELDS)[number];
 
 export const EXTRA_NAMES: Record<ExtraField, string> = {
@@ -22,6 +22,7 @@ export const EXTRA_NAMES: Record<ExtraField, string> = {
   register: 'سبک و کاربرد',
   wordFamily: 'خانوادهٔ واژه',
   wordRoot: 'ریشه',
+  reference: 'ارجاع',
 };
 
 // What the AI is asked for each term, in any prompt about single terms.
@@ -31,6 +32,7 @@ export const extrasPromptLines = (bullet = '-'): string => [
   `${bullet} "register": a few Persian words on its style: رسمی / خنثی / محاوره‌ای / عامیانه, British or American when that matters, and how common it is (پرکاربرد / رایج / کم‌کاربرد), e.g. "رسمی · بیشتر نوشتاری · کم‌کاربرد".`,
   `${bullet} "wordFamily": up to 4 other common words of the same family, each {"word": English, "partOfSpeech": "n.", "v.", "adj." or "adv.", "meaning": Persian}. [] when it has none (most idioms).`,
   `${bullet} "wordRoot": one short Persian sentence on its root, prefix or suffix when that helps to remember it ("in- یعنی نه، decisive یعنی قاطع"), otherwise "".`,
+  `${bullet} "reference": when the term, or the sentence it was met in, alludes to something historical, literary, biblical, mythological or cultural (a person, an event, a book, a myth, a famous line: "Achilles' heel", "a Pyrrhic victory", "Big Brother", "to be or not to be"), two or three short Persian sentences on what it refers to and what it means here. Otherwise "". Never invent one.`,
 ].join('\n');
 
 const OBJECT_LIST = (props: Record<string, unknown>, required: string) => ({
@@ -45,6 +47,7 @@ export const EXTRAS_SCHEMA_PROPERTIES = {
   register: { type: 'STRING', description: 'Persian: style and how common' },
   wordFamily: OBJECT_LIST({ word: { type: 'STRING' }, partOfSpeech: { type: 'STRING' }, meaning: { type: 'STRING', description: 'Persian' } }, 'word'),
   wordRoot: { type: 'STRING', description: 'Persian; empty when not helpful' },
+  reference: { type: 'STRING', description: 'Persian: the historical or literary reference; empty when none' },
 };
 
 const text = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
@@ -69,7 +72,7 @@ export const parseExtras = (raw: any, front = ''): CardExtras => {
     .filter((m: WordFamilyMember) => m.word && !same(m.word, front))
     .slice(0, 5);
   if (family.length) out.wordFamily = family;
-  for (const key of ['commonMistake', 'register', 'wordRoot'] as const) {
+  for (const key of ['commonMistake', 'register', 'wordRoot', 'reference'] as const) {
     const value = text(r[key]);
     // "none", "—" and the like mean there is nothing to say.
     if (value && !/^(none|n\/a|-+|—|ندارد|هیچ)\.?$/i.test(value)) out[key] = value;
@@ -78,7 +81,7 @@ export const parseExtras = (raw: any, front = ''): CardExtras => {
 };
 
 export const hasExtras = (card: CardExtras): boolean =>
-  !!(card.synonyms?.length || card.wordFamily?.length || card.commonMistake || card.register || card.wordRoot);
+  !!(card.synonyms?.length || card.wordFamily?.length || card.commonMistake || card.register || card.wordRoot || card.reference);
 
 // Cards the batch fill should still ask about: not grammar, never asked.
 export const lacksExtras = (card: Flashcard): boolean =>
@@ -126,6 +129,24 @@ ${cards.map((c, n) => `${n + 1}. term: ${JSON.stringify(c.front)}${c.partOfSpeec
 
 Answer for the meaning on the card. Return a JSON object {"cards": [{"index": item number, ...the fields}]}.`;
 
+// Which card each reply item is for: its number, counted from 1 (or from 0
+// when the model counts that way). Without usable numbers, the order is
+// trusted only when there is exactly one item per card; otherwise an item
+// could land on the wrong card, and it is dropped.
+export const replyPlaces = (list: any[], count: number): (number | null)[] => {
+  const nums = list.map(raw => Number(raw?.index));
+  const fromZero = nums.some(n => n === 0);
+  const seen = new Set<number>();
+  return nums.map((n, order) => {
+    let at: number | null = Number.isInteger(n) ? (fromZero ? n : n - 1) : null;
+    if (at !== null && (at < 0 || at >= count)) at = null;
+    if (at === null && list.length === count && nums.every(x => !Number.isInteger(x))) at = order;
+    if (at === null || seen.has(at)) return null;
+    seen.add(at);
+    return at;
+  });
+};
+
 const listIn = (parsed: any): any[] | null => {
   if (Array.isArray(parsed)) return parsed;
   if (!parsed || typeof parsed !== 'object') return null;
@@ -138,11 +159,8 @@ export const parseExtrasReply = (parsed: any, cards: Pick<Flashcard, 'front'>[])
   const list = listIn(parsed);
   if (!list) throw new Error('The AI reply had no list of cards.');
   const out: (CardExtras | null)[] = new Array(cards.length).fill(null);
-  list.forEach((raw, order) => {
-    const n = Number(raw?.index);
-    const at = Number.isInteger(n) && n >= 1 && n <= cards.length ? n - 1 : order;
-    if (at >= cards.length || out[at]) return;
-    out[at] = parseExtras(raw, cards[at].front);
+  replyPlaces(list, cards.length).forEach((at, order) => {
+    if (at !== null) out[at] = parseExtras(list[order], cards[at].front);
   });
   return out;
 };
@@ -178,7 +196,7 @@ export const withExtras = (card: Flashcard, extras: CardExtras | null, now: Date
   if (!extras) return next;
   if (!card.synonyms?.length && extras.synonyms?.length) next.synonyms = extras.synonyms;
   if (!card.wordFamily?.length && extras.wordFamily?.length) next.wordFamily = extras.wordFamily;
-  for (const key of ['commonMistake', 'register', 'wordRoot'] as const) {
+  for (const key of ['commonMistake', 'register', 'wordRoot', 'reference'] as const) {
     if (!card[key] && extras[key]) next[key] = extras[key];
   }
   return next;
