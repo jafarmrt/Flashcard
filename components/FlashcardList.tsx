@@ -4,6 +4,8 @@ import { fetchAudioData } from '../services/dictionaryService';
 import { CardPlace, originText } from '../services/library';
 import { fa, Icon } from './common/ui';
 import { isLeech, lacksExtras } from '../services/cardExtras';
+import type { RefreshSource } from '../services/cardRefresh';
+import { ImproveCardsPanel, type ImprovementPick } from './ImproveCardsPanel';
 
 interface FlashcardListProps {
   cards: Flashcard[];
@@ -19,6 +21,8 @@ interface FlashcardListProps {
   onFillExtras?: (cards: Flashcard[]) => void; // synonyms, word family… for the cards that lack them
   extrasProgress?: { current: number, total: number } | null;
   onStopFillExtras?: () => void;
+  aiSources?: RefreshSource[]; // the AI services set up on this device, for improving cards
+  onApplyImprovements?: (picks: ImprovementPick[]) => Promise<void>;
 }
 
 const EditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>;
@@ -69,7 +73,8 @@ const CardSource: React.FC<{ places?: CardPlace[]; origin: string | null }> = ({
 
 const control = 'block w-full min-h-[44px] rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-ink dark:text-white focus:border-brand-500 focus:outline-none';
 
-const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onDelete, onBackToDecks, onCompleteCard, onAutoFixAll, onStopAutoFix, autoFixProgress, places, onFillExtras, extrasProgress, onStopFillExtras }) => {
+const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onDelete, onBackToDecks, onCompleteCard, onAutoFixAll, onStopAutoFix, autoFixProgress, places, onFillExtras, extrasProgress, onStopFillExtras, aiSources, onApplyImprovements }) => {
+  const [improving, setImproving] = useState(false);
   const [show, setShow] = useState<'all' | 'leech' | 'no-extras'>('all');
   const [sortKey, setSortKey] = useState<string>('front-asc');
   const [selectedDeckId, setSelectedDeckId] = useState<string>('all');
@@ -182,7 +187,7 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
 
   return (
     <div dir="rtl" className="font-fa max-w-5xl mx-auto w-full flex flex-col gap-4">
-        <header className="flex items-center gap-3">
+        <header className="flex flex-wrap items-center gap-3">
             <button onClick={onBackToDecks} aria-label="بازگشت به دسته‌ها" title="بازگشت به دسته‌ها"
                 className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 text-ink dark:text-white hover:bg-slate-200 dark:hover:bg-slate-800">
                 <Icon.Back size={20} />
@@ -193,23 +198,36 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                     {sortedCards.length === cards.length ? `${fa(cards.length)} کارت` : `${fa(sortedCards.length)} از ${fa(cards.length)} کارت`}
                 </p>
             </div>
-            {autoFixProgress ? (
-                 <button onClick={onStopAutoFix} className="inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold text-white bg-red-600 hover:bg-red-700 transition-colors shrink-0">
-                    <StopIcon /> توقف ({fa(autoFixProgress.current)} از {fa(autoFixProgress.total)})
-                 </button>
-            ) : (
-                <button onClick={onAutoFixAll} disabled={!!extrasProgress} title="فقط جاهای خالی کارت‌ها پر می‌شود"
-                    className="inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 transition-colors shrink-0">
-                    <MagicWandIcon /> تکمیل خودکار همه
-                </button>
-            )}
+            <div className="flex gap-2 w-full sm:w-auto [&>button]:flex-1 sm:[&>button]:flex-none">
+                {onApplyImprovements && aiSources && aiSources.length > 0 && (
+                    <button onClick={() => setImproving(true)} disabled={!!autoFixProgress || !!extrasProgress} title="بخش‌هایی را که انتخاب می‌کنی، برای کارت‌های همین فهرست با هوش مصنوعی بهبود بده"
+                        className="inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold text-brand-700 dark:text-brand-200 bg-white dark:bg-slate-800 border border-brand-200 dark:border-brand-700 hover:bg-brand-50 dark:hover:bg-slate-700 transition-colors shrink-0 disabled:opacity-50">
+                        <MagicWandIcon /> بهبود<span className="hidden sm:inline">&nbsp;با هوش مصنوعی</span>
+                    </button>
+                )}
+                {autoFixProgress ? (
+                     <button onClick={onStopAutoFix} className="inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold text-white bg-red-600 hover:bg-red-700 transition-colors shrink-0">
+                        <StopIcon /> توقف ({fa(autoFixProgress.current)} از {fa(autoFixProgress.total)})
+                     </button>
+                ) : (
+                    <button onClick={onAutoFixAll} disabled={!!extrasProgress} title="فقط جاهای خالی کارت‌ها پر می‌شود"
+                        className="inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 transition-colors shrink-0">
+                        <MagicWandIcon /> تکمیل خودکار همه
+                    </button>
+                )}
+            </div>
         </header>
+
+        {improving && onApplyImprovements && aiSources && (
+            <ImproveCardsPanel cards={sortedCards} sources={aiSources} onApply={onApplyImprovements} onClose={() => setImproving(false)} />
+        )}
 
         <details className="rounded-2xl bg-white dark:bg-slate-800 px-4 py-3 text-sm text-ink dark:text-slate-200">
             <summary className="cursor-pointer font-bold min-h-[28px]">دکمه‌های تکمیل چه می‌کنند؟</summary>
             <ul className="mt-2 flex flex-col gap-1.5 leading-7 list-disc pr-5">
                 <li><span className="font-bold">فقط جاهای خالی پر می‌شوند.</span> هر چه کارت دارد، حتی چیزی که دستی نوشته‌ای، عوض نمی‌شود. برای عوض کردن یک بخش پر، کارت را ویرایش کن و «پرکردن دوباره از منبع دیگر» را بزن.</li>
                 <li><span className="font-bold">«تکمیل خودکار همه» و دکمهٔ تکمیل هر کارت:</span> تلفظ، نقش دستوری، تعریف، مثال، صدا و ترکیب‌ها از دیکشنری‌های رایگان، به ترتیبی که در تنظیمات چیده‌ای. معنی فارسی و یادداشت از هوش مصنوعی با کلیدهای خودت، و اگر هوش مصنوعی جواب ندهد، معنی از ترجمهٔ رایگان.</li>
+                <li><span className="font-bold">«بهبود با هوش مصنوعی»:</span> خودت انتخاب می‌کنی کدام بخش‌ها، فقط جاهای خالی یا بخش‌های پر هم، با کدام سرویس و برای چند کارت از همین فهرست. هیچ تغییری بی‌تیک تو ذخیره نمی‌شود.</li>
                 <li><span className="font-bold">«افزودن با هوش مصنوعی»:</span> هم‌معنی‌ها، اشتباه رایج، سبک و خانوادهٔ واژه را فقط با هوش مصنوعی می‌سازد، برای کارت‌هایی که هیچ‌کدام را ندارند.</li>
             </ul>
         </details>

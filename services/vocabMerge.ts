@@ -53,6 +53,7 @@ export const mergeExtracted = (cards: ExtractedWordCard[]): ExtractedWordCard[] 
       commonMistake: prev.commonMistake || card.commonMistake,
       register: prev.register || card.register,
       wordRoot: prev.wordRoot || card.wordRoot,
+      reference: prev.reference || card.reference,
       extrasAt: prev.extrasAt || card.extrasAt,
     });
   }

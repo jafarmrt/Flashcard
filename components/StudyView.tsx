@@ -164,6 +164,11 @@ const CardAnswer: React.FC<{ card: Flashcard; places?: CardPlace[] }> = ({ card,
             {card.wordRoot && <p dir="rtl" className="text-sm text-slate-700 dark:text-slate-200">{card.wordRoot}</p>}
           </Section>
         )}
+        {card.reference && (
+          <Section title="ارجاع">
+            <p dir="rtl" className="text-sm leading-7 text-slate-700 dark:text-slate-200 whitespace-pre-line">{card.reference}</p>
+          </Section>
+        )}
         {definitions.length > 0 && (
           <Section title="تعریف">
             <ol dir="ltr" className="list-decimal list-inside text-sm flex flex-col gap-1 text-slate-700 dark:text-slate-200">

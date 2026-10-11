@@ -90,7 +90,7 @@ const ProposalPanel: React.FC<{
       ) : (
         <ul className="flex flex-col gap-2">
           {changes.map(c => {
-            const ltr = !(['back', 'notes', 'practicePrompt', 'commonMistake', 'register', 'wordRoot'] as RefreshField[]).includes(c.field);
+            const ltr = !(['back', 'notes', 'practicePrompt', 'commonMistake', 'register', 'wordRoot', 'reference'] as RefreshField[]).includes(c.field);
             return (
               <li key={c.field}>
                 <label className="flex items-start gap-3 rounded-xl bg-white dark:bg-slate-800 p-3 cursor-pointer">
@@ -527,6 +527,11 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
           <div>
             <label htmlFor="wordRoot" className={label}>ریشه</label>
             <input id="wordRoot" name="wordRoot" dir="rtl" placeholder="ریشه، پیشوند یا پسوند" value={formData.wordRoot || ''} onChange={handleTextChange} className={`${field} mt-1 px-3`} />
+          </div>
+          <div>
+            <label htmlFor="reference" className={label}>ارجاع</label>
+            <p id="reference-hint" className={hint}>اگر واژه یا جمله‌اش به یک شخصیت، رویداد، کتاب یا اسطوره اشاره دارد.</p>
+            <textarea id="reference" name="reference" dir="rtl" rows={2} aria-describedby="reference-hint" value={formData.reference || ''} onChange={handleTextChange} className={`${field} mt-1 px-3 py-2`} />
           </div>
         </>)}
 
