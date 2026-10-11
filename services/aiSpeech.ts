@@ -7,6 +7,7 @@ import type { Settings } from '../types';
 import { callProxy, ProxyError } from './apiService';
 import { geminiAudioOptions, providerKey } from './aiSettings';
 import { logUsage } from './usageLog';
+import { cachedSpeech, saveSpeech, speechKey } from './speechCache';
 
 export const DEFAULT_SPEECH_MODEL = 'gemini-3.8-flash-tts';
 export const DEFAULT_SPEECH_VOICE = 'Kore';
@@ -88,10 +89,16 @@ export const audioBytes = (data: string, mimeType = '', sampleRate?: number): { 
   return { bytes: raw, type: mimeType };
 };
 
-export async function aiSpeech(text: string, settings: Partial<Settings>): Promise<Blob> {
+// Audio made before for the same text, service, model and voice is played
+// from this device (services/speechCache); `fresh` always asks the service
+// (the sample in Settings, which checks the key).
+export async function aiSpeech(text: string, settings: Partial<Settings>, fresh = false): Promise<Blob> {
   const provider = speechProvider(settings);
   const service = speechServiceName(settings);
   const model = speechModel(settings);
+  const key = fresh ? null : await speechKey(provider, model, speechVoice(settings), text).catch(() => null);
+  const kept = key ? await cachedSpeech(key) : null;
+  if (kept) return kept;
   try {
     const res = await callProxy('ai-speech', {
       text,
@@ -103,7 +110,9 @@ export async function aiSpeech(text: string, settings: Partial<Settings>): Promi
     if (!res?.data) throw new ProxyError(`${service} voice: no audio came back`, 502);
     const { bytes, type } = audioBytes(res.data, res.mimeType, res.sampleRate);
     logUsage({ service, task: 'speech', ok: true, model });
-    return new Blob([bytes as BlobPart], { type });
+    const blob = new Blob([bytes as BlobPart], { type });
+    if (key) saveSpeech(key, blob);
+    return blob;
   } catch (error) {
     logUsage({ service, task: 'speech', ok: false, model, status: error instanceof ProxyError ? error.status : undefined, error: (error as Error)?.message });
     throw error;

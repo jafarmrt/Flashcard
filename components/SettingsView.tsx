@@ -8,6 +8,7 @@ import { AI_PROVIDERS, providerInfo, providerKey, providerList, providerOptions,
 import { testAiConnection } from '../services/geminiService';
 import { fa, Icon } from './common/ui';
 import { ModelPicker } from './ModelPicker';
+import { clearSpeechCache, speechCacheSize } from '../services/speechCache';
 import { AI_VOICES, aiSpeech, DEFAULT_OPENROUTER_SPEECH_MODEL, DEFAULT_SPEECH_MODEL, listSpeechModels, speechModel, speechProvider, speechVoice, type SpeechModel } from '../services/aiSpeech';
 
 interface SettingsViewProps {
@@ -450,7 +451,7 @@ const ReadAloudSettings: React.FC<{ settings: Settings; onUpdateSettings: (s: Pa
         }
         const p = player.current;
         try {
-            const blob = await aiSpeech('Reading every day is the easiest way to learn new words.', settings);
+            const blob = await aiSpeech('Reading every day is the easiest way to learn new words.', settings, true);
             if (p.url) URL.revokeObjectURL(p.url);
             p.url = URL.createObjectURL(blob);
             p.audio.src = p.url;
@@ -462,6 +463,14 @@ const ReadAloudSettings: React.FC<{ settings: Settings; onUpdateSettings: (s: Pa
     };
     useEffect(() => () => { player.current?.audio.pause(); if (player.current?.url) URL.revokeObjectURL(player.current.url); }, []);
     const select = 'min-h-[40px] px-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm';
+    // AI audio kept on this device (services/speechCache).
+    const [kept, setKept] = useState<{ pieces: number; bytes: number } | null>(null);
+    useEffect(() => { speechCacheSize().then(setKept); }, []);
+    const clearKept = async () => {
+        if (!confirm('صداهای ذخیره‌شده پاک شوند؟ دفعهٔ بعد دوباره ساخته می‌شوند.')) return;
+        await clearSpeechCache().catch(() => undefined);
+        setKept(await speechCacheSize());
+    };
     return (
         <>
             <Row title="صدای خواندن بلند" hint="صدای دستگاه رایگان و بی‌اینترنت است؛ صدای هوش مصنوعی طبیعی‌تر است. اگر جواب ندهد، صدای دستگاه ادامه می‌دهد.">
@@ -524,6 +533,13 @@ const ReadAloudSettings: React.FC<{ settings: Settings; onUpdateSettings: (s: Pa
                 )}
                 {test.ok && <p className="text-sm text-emerald-700 dark:text-emerald-300">صدا کار می‌کند (<bdi dir="ltr" className="font-en">{speechModel(settings)}</bdi>).</p>}
                 {test.error && <p role="alert" className="text-sm text-red-700 dark:text-red-300">صدا ساخته نشد: <bdi dir="ltr" className="font-en">{test.error}</bdi></p>}
+                <div className="flex flex-wrap items-center gap-3 text-sm text-ink-muted dark:text-slate-400">
+                    <span className="flex-1 min-w-[12rem]">
+                        هر تکه‌ای که با هوش مصنوعی خوانده شود روی همین دستگاه ذخیره می‌شود و دفعهٔ بعد بی‌اینترنت و بی‌هزینه پخش می‌شود.
+                        {kept && kept.pieces > 0 && <> الان {fa(kept.pieces)} تکه، حدود {fa(Math.max(1, Math.round(kept.bytes / 1024 / 1024)))} مگابایت.</>}
+                    </span>
+                    {kept && kept.pieces > 0 && <button type="button" onClick={clearKept} className={button}>پاک کردن صداهای ذخیره‌شده</button>}
+                </div>
             </div>
         </>
     );
