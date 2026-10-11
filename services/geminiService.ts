@@ -7,6 +7,7 @@ import { callProxy } from './apiService';
 import { aiGenerate, providerFields } from './aiClient';
 import { aiOrigin } from './aiSettings';
 import { ruleForName } from './grammarPatterns';
+import { cleanEvaluation, Evaluation, PRONUNCIATION_SCHEMA, pronunciationPrompt, SpeechKind } from './speechPractice';
 import { EXTRAS_SCHEMA_PROPERTIES, extrasPromptLines, hasExtras, parseExtras } from './cardExtras';
 
 export { providerFields };
@@ -17,11 +18,8 @@ export interface PersianDetails {
   origin?: CardOrigin; // the service that answered
 }
 
-export interface PronunciationResult {
-  score: number; // 0-100
-  feedback: string; // Persian feedback
-  correction?: string; // Optional IPA or phonetic correction
-}
+// Score 0-100, Persian feedback, IPA correction, and each problem heard.
+export type PronunciationResult = Evaluation;
 
 export interface AiRequestOptions {
   aiProvider?: 'gemini' | 'openai-compatible';
@@ -135,10 +133,11 @@ export const getPronunciationFeedback = async (
 };
 
 export const evaluatePronunciation = async (
-  word: string,
+  target: string,
   audioBase64: string,
   mimeType: string,
-  options?: AiRequestOptions
+  options?: AiRequestOptions,
+  how: { kind?: SpeechKind; weak?: string[] } = {},
 ): Promise<PronunciationResult> => {
   try {
     const audioPart = {
@@ -147,31 +146,17 @@ export const evaluatePronunciation = async (
         data: audioBase64,
       },
     };
-    const textPart = {
-      text: `I am a Persian speaker learning English. This is my attempt at pronouncing the word "${word}".
-      Please listen to the audio and evaluate it. Return a JSON object with:
-      1. "score": A number between 0 and 100.
-      2. "feedback": Concise, encouraging feedback in Persian.
-      3. "correction": Optional IPA correction if needed.`
-    };
+    const textPart = { text: pronunciationPrompt(target, how.kind || 'word', how.weak) };
     // Only Gemini hears audio: the other services are not asked.
     const response = await aiGenerate({ ...options, aiProvider: 'gemini', fallbacks: undefined }, {
       contents: { parts: [textPart, audioPart] },
       config: {
         responseMimeType: "application/json",
-        responseSchema: {
-          type: 'OBJECT',
-          properties: {
-            score: { type: 'INTEGER' },
-            feedback: { type: 'STRING' },
-            correction: { type: 'STRING' }
-          },
-          required: ["score", "feedback"]
-        }
+        responseSchema: PRONUNCIATION_SCHEMA,
       }
     }, 'pronunciation');
-    
-    return parseJsonFromAiResponse(response.text);
+
+    return cleanEvaluation(parseJsonFromAiResponse(response.text));
   } catch (error) {
     console.error("Error evaluating pronunciation:", error);
     throw error;

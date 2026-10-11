@@ -86,7 +86,7 @@ const App: React.FC = () => {
         activeSourceId, activeChapterId, activeChunk, startQuickReview, openStudySetup,
         handleAddSource, handleOpenSource, handleOpenChapter, handleOpenChunk, handleDeleteSource,
         handleCompleteChunk, loadChapterText, handleSaveReaderCards,
-        knownWords, sectionReview, handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview, handleCheckCards,
+        knownWords, speechAttempts, handleSaveSpeechAttempt, sectionReview, handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview, handleCheckCards,
         handleStartSourceReview, handleReviewCards, handlePrestudyChapter,
         overlayEdit, openCardEditor, closeCardEditor, saveOverlayEdit,
         handleFillExtras, handleStopFillExtras, extrasProgress, handleSaveCardContent, handleApplyImprovements,
@@ -218,7 +218,7 @@ const App: React.FC = () => {
                     onSaveCard={handleSaveCardContent}
                 />;
             case 'PRACTICE':
-                return <PracticeView cards={visibleFlashcards} aiOptions={aiRequestOptions(settings)} audioOptions={geminiAudioOptions(settings)} awardXP={userProfile ? (points) => handleGoalUpdate('QUIZ', points, true) : () => {}} onQuizComplete={(score) => {
+                return <PracticeView cards={visibleFlashcards} speechAttempts={speechAttempts} onSaveSpeechAttempt={handleSaveSpeechAttempt} aiOptions={aiRequestOptions(settings)} audioOptions={geminiAudioOptions(settings)} awardXP={userProfile ? (points) => handleGoalUpdate('QUIZ', points, true) : () => {}} onQuizComplete={(score) => {
                     handleCheckAchievements(score);
                     handleGoalUpdate('QUIZ', 1);
                 }} />;

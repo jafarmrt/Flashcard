@@ -1,6 +1,8 @@
-import React, { useState, useRef } from 'react';
-import { Flashcard } from '../types';
-import { AiRequestOptions, generateInstructionalQuiz, InstructionalQuizQuestion, blobToBase64, evaluatePronunciation, PronunciationResult } from '../services/geminiService';
+import React, { useMemo, useState } from 'react';
+import { Flashcard, SpeechAttempt } from '../types';
+import { AiRequestOptions, generateInstructionalQuiz, InstructionalQuizQuestion } from '../services/geminiService';
+import { soundInfo, SpeechKind, weakCardIds, weakSounds } from '../services/speechPractice';
+import { CardChoice, MicIcon, pickSpeakingCards, SpeakingMode, SpeechProgress, speakingTarget } from './practice/SpeakingPractice';
 import { fa, Icon } from './common/ui';
 
 interface PracticeViewProps {
@@ -9,6 +11,8 @@ interface PracticeViewProps {
   onQuizComplete: (score: { score: number, total: number }) => void;
   aiOptions?: AiRequestOptions;
   audioOptions?: AiRequestOptions;
+  speechAttempts: SpeechAttempt[];
+  onSaveSpeechAttempt: (attempt: SpeechAttempt) => Promise<void> | void;
 }
 
 // Fix: Make the shuffle function specific to Flashcard[] to avoid generic type inference issues.
@@ -21,14 +25,6 @@ const MIN_CARDS = 4;
 const panel = 'bg-white dark:bg-slate-800 rounded-3xl p-5 sm:p-8';
 const primaryButton = 'inline-flex items-center justify-center gap-2 min-h-[52px] px-8 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold transition-colors disabled:opacity-50';
 const secondaryButton = 'min-h-[44px] px-5 rounded-xl text-sm font-bold text-ink dark:text-slate-200 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors';
-
-const MicIcon = ({ recording, size = 28 }: { recording: boolean; size?: number }) => (
-    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={recording ? 'text-red-600 dark:text-red-400' : 'text-brand-600 dark:text-brand-200'}>
-        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-        <line x1="12" y1="19" x2="12" y2="22" />
-    </svg>
-);
 
 // The page frame: right to left, Persian font. English words inside it set
 // their own direction.
@@ -46,126 +42,9 @@ const StepBar: React.FC<{ label: string; value: number; total: number }> = ({ la
     </div>
 );
 
-const SpeakingMode: React.FC<{ cards: Flashcard[]; onFinish: (avgScore: number) => void; audioOptions?: AiRequestOptions }> = ({ cards, onFinish, audioOptions }) => {
-    const [currentIndex, setCurrentIndex] = useState(0);
-    const [scores, setScores] = useState<number[]>([]);
-    const [isRecording, setIsRecording] = useState(false);
-    const [isAnalyzing, setIsAnalyzing] = useState(false);
-    const [feedback, setFeedback] = useState<PronunciationResult | null>(null);
-    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-    const audioChunksRef = useRef<Blob[]>([]);
-
-    // Use 5 cards for the session
-    const sessionCards = useRef(shuffleArray(cards).slice(0, 5)).current;
-    const currentCard = sessionCards[currentIndex];
-
-    const handleToggleRecording = async () => {
-        if (isRecording) {
-            mediaRecorderRef.current?.stop();
-            setIsRecording(false);
-        } else {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                mediaRecorderRef.current = new MediaRecorder(stream);
-                audioChunksRef.current = [];
-
-                mediaRecorderRef.current.ondataavailable = event => {
-                    audioChunksRef.current.push(event.data);
-                };
-
-                mediaRecorderRef.current.onstop = async () => {
-                    const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-                    setIsAnalyzing(true);
-                    try {
-                        const base64Audio = await blobToBase64(audioBlob);
-                        const result = await evaluatePronunciation(currentCard.front, base64Audio, audioBlob.type, audioOptions);
-                        setFeedback(result);
-                        setScores(prev => [...prev, result.score]);
-                    } catch (err) {
-                        alert('صدا بررسی نشد. دوباره امتحان کن.');
-                    } finally {
-                        setIsAnalyzing(false);
-                        stream.getTracks().forEach(track => track.stop());
-                    }
-                };
-
-                mediaRecorderRef.current.start();
-                setIsRecording(true);
-            } catch (error) {
-                console.error("Error accessing microphone:", error);
-                alert('برای این تمرین باید به میکروفون اجازه بدهی.');
-            }
-        }
-    };
-
-    const handleNext = () => {
-        if (currentIndex < sessionCards.length - 1) {
-            setCurrentIndex(prev => prev + 1);
-            setFeedback(null);
-        } else {
-            const totalScore = scores.reduce((a, b) => a + b, 0);
-            const avgScore = scores.length > 0 ? Math.round(totalScore / scores.length) : 0;
-            onFinish(avgScore);
-        }
-    };
-
-    const isLast = currentIndex >= sessionCards.length - 1;
-
-    return (
-        <Shell>
-            <div className="max-w-xl mx-auto w-full flex flex-col gap-5">
-                <StepBar label="کارت" value={currentIndex + 1} total={sessionCards.length} />
-
-                <section className={`${panel} min-h-[200px] flex flex-col justify-center items-center gap-2 text-center`}>
-                    <p className="text-sm text-ink-muted dark:text-slate-400">این واژه را بلند بخوان</p>
-                    <h2 dir="ltr" className="font-en text-4xl md:text-5xl font-bold tracking-tight text-ink dark:text-white break-words max-w-full">{currentCard.front}</h2>
-                    {currentCard.pronunciation && <p dir="ltr" className="text-ink-muted dark:text-slate-400">{currentCard.pronunciation}</p>}
-                </section>
-
-                {!feedback ? (
-                    <div className="flex flex-col items-center gap-4">
-                        <button
-                            type="button"
-                            onClick={handleToggleRecording}
-                            disabled={isAnalyzing}
-                            aria-pressed={isRecording}
-                            aria-label={isRecording ? 'توقف ضبط' : 'شروع ضبط'}
-                            className={`w-20 h-20 rounded-full flex items-center justify-center shadow-lg transition-all disabled:opacity-50 ${isRecording ? 'bg-red-100 dark:bg-red-900/50 ring-4 ring-red-500 scale-110' : 'bg-brand-100 dark:bg-brand-900/50 hover:bg-brand-200 dark:hover:bg-brand-800'}`}
-                        >
-                            <MicIcon recording={isRecording} />
-                        </button>
-                        <p role="status" className="text-sm font-medium text-ink-muted dark:text-slate-300">
-                            {isRecording ? 'برای توقف ضبط بزن' : isAnalyzing ? 'در حال بررسی تلفظ…' : 'بزن، واژه را بگو و دوباره بزن'}
-                        </p>
-                    </div>
-                ) : (
-                    <div className="w-full flex flex-col items-center gap-5 animate-flip-in">
-                        <div className={`w-full p-5 rounded-3xl border-2 text-center ${feedback.score >= 80 ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : feedback.score >= 60 ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20' : 'border-red-500 bg-red-50 dark:bg-red-900/20'}`}>
-                            <p className="text-ink dark:text-white">
-                                <span className="text-4xl font-extrabold">{fa(feedback.score)}</span>
-                                <span className="text-base font-bold text-ink-muted dark:text-slate-400 ms-1.5">از {fa(100)}</span>
-                            </p>
-                            <p className="mt-2 text-ink dark:text-slate-200 leading-relaxed">{feedback.feedback}</p>
-                            {feedback.correction && (
-                                <p className="text-sm text-ink-muted dark:text-slate-400 mt-2">
-                                    تلفظ درست: <bdi dir="ltr" className="font-en font-bold">{feedback.correction}</bdi>
-                                </p>
-                            )}
-                        </div>
-                        <button type="button" onClick={handleNext} className={primaryButton}>
-                            {isLast ? 'پایان' : 'کارت بعدی'}
-                        </button>
-                    </div>
-                )}
-            </div>
-        </Shell>
-    );
-};
-
-
-export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQuizComplete, aiOptions, audioOptions }) => {
+export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQuizComplete, aiOptions, audioOptions, speechAttempts, onSaveSpeechAttempt }) => {
   type PracticeState = 'idle' | 'generating' | 'active' | 'finished';
-  type Mode = 'quiz' | 'speaking';
+  type Mode = 'quiz' | 'speaking' | 'progress';
 
   const [mode, setMode] = useState<Mode>('quiz');
   const [practiceState, setPracticeState] = useState<PracticeState>('idle');
@@ -175,10 +54,37 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
   const [isAnswered, setIsAnswered] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [speakKind, setSpeakKind] = useState<SpeechKind>('word');
+  const [cardChoice, setCardChoice] = useState<CardChoice>('mixed');
+  const [speakingCards, setSpeakingCards] = useState<Flashcard[]>([]);
+  const [sessionTries, setSessionTries] = useState<SpeechAttempt[]>([]);
+
+  const liveCards = useMemo(() => cards.filter(c => !c.isDeleted && c.kind !== 'grammar'), [cards]);
+  const sentenceCount = useMemo(() => liveCards.filter(c => speakingTarget(c, 'sentence')).length, [liveCards]);
+  const weakCount = useMemo(() => {
+    const ids = new Set(liveCards.filter(c => speakingTarget(c, speakKind)).map(c => c.id));
+    return weakCardIds(speechAttempts.filter(a => a.kind === speakKind)).filter(id => ids.has(id)).length;
+  }, [liveCards, speechAttempts, speakKind]);
+
+  const startSpeaking = (kind: SpeechKind = speakKind, choice: CardChoice = cardChoice) => {
+    setErrorMessage(null);
+    const picked = pickSpeakingCards(cards, speechAttempts, kind, choice);
+    if (picked.length === 0) {
+      setErrorMessage(kind === 'sentence' ? 'هیچ کارتی جملهٔ نمونه ندارد.' : choice === 'weak' ? 'واژهٔ ضعیفی نمانده؛ آفرین!' : 'کارتی برای تمرین نیست.');
+      return;
+    }
+    setSpeakKind(kind);
+    setCardChoice(choice);
+    setSpeakingCards(picked);
+    setSessionTries([]);
+    setMode('speaking');
+    setPracticeState('active');
+  };
 
 
   const startPractice = async () => {
     setErrorMessage(null);
+    if (mode === 'speaking') { startSpeaking(); return; }
 
     // Tier 1: Prefer new cards
     let practicePool = cards.filter(c => c.repetition === 0);
@@ -201,10 +107,6 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
         return;
     }
 
-    if (mode === 'speaking') {
-        setPracticeState('active');
-        return;
-    }
 
     // Quiz Mode Logic
     setPracticeState('generating');
@@ -245,7 +147,9 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
     }
   };
 
-  const handleSpeakingFinish = (avgScore: number) => {
+  const handleSpeakingFinish = ({ average: avgScore, tried }: { average: number; tried: SpeechAttempt[] }) => {
+      setSessionTries(tried);
+      if (tried.length === 0) { setPracticeState('idle'); return; }
       setScore(avgScore); // Reuse score state for avg
       setPracticeState('finished');
       const xp = Math.round(avgScore / 2); // e.g. 80 score -> 40 XP
@@ -277,6 +181,29 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
       );
   }
 
+  const tab = (value: Mode, label: string) => (
+      <button
+        type="button"
+        onClick={() => { setMode(value); setErrorMessage(null); }}
+        aria-pressed={mode === value}
+        className={`min-h-[40px] px-4 rounded-lg text-sm transition-all ${mode === value ? 'bg-white dark:bg-slate-700 shadow-sm font-bold text-brand-700 dark:text-white' : 'text-ink-muted dark:text-slate-400 hover:text-ink dark:hover:text-slate-200'}`}
+      >
+          {label}
+      </button>
+  );
+
+  const choice = <T extends string>(current: T, value: T, set: (v: T) => void, label: React.ReactNode, disabled = false) => (
+      <button
+        type="button"
+        onClick={() => set(value)}
+        aria-pressed={current === value}
+        disabled={disabled}
+        className={`min-h-[40px] px-4 rounded-xl text-sm border transition-colors disabled:opacity-40 ${current === value ? 'border-brand-500 bg-brand-50 dark:bg-brand-900/40 font-bold text-brand-700 dark:text-white' : 'border-slate-200 dark:border-slate-600 text-ink dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
+      >
+          {label}
+      </button>
+  );
+
   if (practiceState === 'idle') {
     return (
       <Shell>
@@ -285,26 +212,15 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
               <p className="text-sm text-ink-muted dark:text-slate-400 mt-1">واژه‌های تازه‌ات را در جمله بیازما یا تلفظشان را تمرین کن.</p>
           </header>
 
-          {/* Mode Selection Tabs */}
           <div role="group" aria-label="نوع تمرین" className="self-start flex flex-wrap gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
-              <button
-                type="button"
-                onClick={() => setMode('quiz')}
-                aria-pressed={mode === 'quiz'}
-                className={`min-h-[40px] px-4 rounded-lg text-sm transition-all ${mode === 'quiz' ? 'bg-white dark:bg-slate-700 shadow-sm font-bold text-brand-700 dark:text-white' : 'text-ink-muted dark:text-slate-400 hover:text-ink dark:hover:text-slate-200'}`}
-              >
-                  آزمون چندگزینه‌ای
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode('speaking')}
-                aria-pressed={mode === 'speaking'}
-                className={`min-h-[40px] px-4 rounded-lg text-sm transition-all ${mode === 'speaking' ? 'bg-white dark:bg-slate-700 shadow-sm font-bold text-brand-700 dark:text-white' : 'text-ink-muted dark:text-slate-400 hover:text-ink dark:hover:text-slate-200'}`}
-              >
-                  تمرین تلفظ
-              </button>
+              {tab('quiz', 'آزمون چندگزینه‌ای')}
+              {tab('speaking', 'تمرین تلفظ')}
+              {tab('progress', 'پیشرفت تلفظ')}
           </div>
 
+          {mode === 'progress' ? (
+              <SpeechProgress attempts={speechAttempts} weakCount={weakCount} onPracticeWeak={() => startSpeaking(speakKind, 'weak')} />
+          ) : (
           <section className={`${panel} flex flex-col items-center text-center gap-3`}>
             <span className="w-14 h-14 rounded-2xl bg-brand-100 text-brand-600 dark:bg-brand-900/60 dark:text-brand-200 flex items-center justify-center">
                 {mode === 'quiz' ? <Icon.Chat size={26} /> : <MicIcon recording={false} size={26} />}
@@ -315,8 +231,20 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
             <p className="text-ink-muted dark:text-slate-400 max-w-md leading-relaxed">
                 {mode === 'quiz'
                     ? 'هوش مصنوعی با چند واژهٔ تازه‌ات جمله می‌سازد و جای واژه را خالی می‌گذارد؛ از میان چهار گزینه، واژهٔ درست را انتخاب کن.'
-                    : 'واژه را بلند بخوان؛ هوش مصنوعی صدایت را می‌شنود، از ۱۰۰ نمره می‌دهد و به فارسی راهنمایی‌ات می‌کند.'}
+                    : 'بلند بخوان؛ Gemini صدایت را می‌شنود، از ۱۰۰ نمره می‌دهد و می‌گوید کدام صدا را در کدام واژه اشتباه گفتی و چطور درستش کنی. هر تلاش در «پیشرفت تلفظ» می‌ماند.'}
             </p>
+            {mode === 'speaking' && (
+                <div className="flex flex-col gap-3 items-center mt-1">
+                    <div role="group" aria-label="چه بخوانم" className="flex flex-wrap justify-center gap-2">
+                        {choice<SpeechKind>(speakKind, 'word', setSpeakKind, 'واژه')}
+                        {choice<SpeechKind>(speakKind, 'sentence', setSpeakKind, <>جملهٔ نمونه ({fa(sentenceCount)})</>, sentenceCount === 0)}
+                    </div>
+                    <div role="group" aria-label="کدام کارت‌ها" className="flex flex-wrap justify-center gap-2">
+                        {choice<CardChoice>(cardChoice, 'mixed', setCardChoice, 'کارت‌های تازه و رسیده')}
+                        {choice<CardChoice>(cardChoice, 'weak', setCardChoice, <>واژه‌های ضعیف ({fa(weakCount)})</>, weakCount === 0)}
+                    </div>
+                </div>
+            )}
             {errorMessage && (
                 <p role="alert" className="mt-1 px-4 py-3 rounded-2xl bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 text-sm">
                     {errorMessage}
@@ -326,11 +254,15 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
                 {mode === 'quiz' ? 'شروع آزمون' : 'شروع تمرین'}
             </button>
           </section>
+          )}
       </Shell>
     );
   }
 
   if (practiceState === 'finished') {
+       // What still went wrong in each card's last try of the session.
+       const lastTries = Array.from(new Map<string, SpeechAttempt>(sessionTries.map(t => [t.cardId || t.target, t])).values());
+       const sessionSounds = mode === 'speaking' ? weakSounds(lastTries, lastTries.length) : [];
        return (
         <Shell>
             <section className={`${panel} text-center py-12 flex flex-col items-center gap-2`}>
@@ -339,10 +271,30 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
                     <span className="text-6xl font-extrabold text-brand-500 dark:text-brand-300">{fa(score)}</span>
                     <span className="text-xl text-ink-muted dark:text-slate-400 ms-2">از {fa(mode === 'quiz' ? questions.length : 100)}</span>
                 </p>
-                <p className="text-ink-muted dark:text-slate-400 mb-6">{mode === 'quiz' ? 'جواب درست' : 'میانگین نمرهٔ تلفظ'}</p>
-                <button type="button" onClick={() => setPracticeState('idle')} className={secondaryButton}>
-                    بازگشت به تمرین‌ها
-                </button>
+                <p className="text-ink-muted dark:text-slate-400 mb-4">{mode === 'quiz' ? 'جواب درست' : 'میانگین نمرهٔ تلفظ'}</p>
+                {sessionSounds.length > 0 && (
+                    <div className="w-full max-w-md text-right mb-4">
+                        <p className="text-sm font-bold text-ink dark:text-white mb-2">در این تمرین بیشتر روی این‌ها کار کن:</p>
+                        <ul className="flex flex-col gap-1.5">
+                            {sessionSounds.slice(0, 4).map(w => (
+                                <li key={w.sound} className="px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-700/40 text-sm text-ink dark:text-slate-200">
+                                    <span className="font-bold">{soundInfo(w.sound).label}</span>
+                                    {w.words.length > 0 && <> در <bdi dir="ltr" className="font-en">{w.words.join(', ')}</bdi></>}
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
+                <div className="flex flex-wrap justify-center gap-2">
+                    {mode === 'speaking' && (
+                        <button type="button" onClick={() => { setMode('progress'); setPracticeState('idle'); }} className={secondaryButton}>
+                            دیدن پیشرفت تلفظ
+                        </button>
+                    )}
+                    <button type="button" onClick={() => setPracticeState('idle')} className={secondaryButton}>
+                        بازگشت به تمرین‌ها
+                    </button>
+                </div>
             </section>
         </Shell>
      );
@@ -350,7 +302,7 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
 
   // Render Speaking Mode
   if (mode === 'speaking' && practiceState === 'active') {
-      return <SpeakingMode cards={cards} onFinish={handleSpeakingFinish} audioOptions={audioOptions} />;
+      return <Shell><SpeakingMode sessionCards={speakingCards} kind={speakKind} attempts={speechAttempts} onSaveAttempt={onSaveSpeechAttempt} onFinish={handleSpeakingFinish} audioOptions={audioOptions} /></Shell>;
   }
 
   // Render Quiz Mode

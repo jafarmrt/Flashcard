@@ -6,10 +6,10 @@
 // batches small enough for Vercel's request limit, plus the last server rev it
 // saw; the server answers with what other devices changed after that rev.
 
-import type { Chapter, Deck, Flashcard, KnownWord, Occurrence, Source, StudyLog, UserAchievement, UserProfile } from '../types';
+import type { Chapter, Deck, Flashcard, KnownWord, Occurrence, Source, SpeechAttempt, StudyLog, UserAchievement, UserProfile } from '../types';
 import { cardStamp, deckStamp, profileStamp } from './syncState.js';
 
-export const SYNC_TABLES = ['decks', 'cards', 'sources', 'chapters', 'occurrences', 'knownWords'] as const;
+export const SYNC_TABLES = ['decks', 'cards', 'sources', 'chapters', 'occurrences', 'knownWords', 'speechAttempts'] as const;
 export type SyncTable = (typeof SYNC_TABLES)[number];
 
 type Stamped = { id: string; updatedAt?: string; isDeleted?: boolean };
@@ -87,6 +87,7 @@ export interface LocalData {
   chapters: Chapter[];
   occurrences: Occurrence[];
   knownWords: KnownWord[];
+  speechAttempts: SpeechAttempt[];
   logs: StudyLog[];
   profile?: UserProfile | null;
   achievements: UserAchievement[];
