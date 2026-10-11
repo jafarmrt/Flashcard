@@ -198,12 +198,21 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                     <StopIcon /> توقف ({fa(autoFixProgress.current)} از {fa(autoFixProgress.total)})
                  </button>
             ) : (
-                <button onClick={onAutoFixAll} disabled={!!extrasProgress} title="جزئیات ناقص همهٔ کارت‌ها پر شود"
+                <button onClick={onAutoFixAll} disabled={!!extrasProgress} title="فقط جاهای خالی کارت‌ها پر می‌شود"
                     className="inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 transition-colors shrink-0">
                     <MagicWandIcon /> تکمیل خودکار همه
                 </button>
             )}
         </header>
+
+        <details className="rounded-2xl bg-white dark:bg-slate-800 px-4 py-3 text-sm text-ink dark:text-slate-200">
+            <summary className="cursor-pointer font-bold min-h-[28px]">دکمه‌های تکمیل چه می‌کنند؟</summary>
+            <ul className="mt-2 flex flex-col gap-1.5 leading-7 list-disc pr-5">
+                <li><span className="font-bold">فقط جاهای خالی پر می‌شوند.</span> هر چه کارت دارد، حتی چیزی که دستی نوشته‌ای، عوض نمی‌شود. برای عوض کردن یک بخش پر، کارت را ویرایش کن و «پرکردن دوباره از منبع دیگر» را بزن.</li>
+                <li><span className="font-bold">«تکمیل خودکار همه» و دکمهٔ تکمیل هر کارت:</span> تلفظ، نقش دستوری، تعریف، مثال، صدا و ترکیب‌ها از دیکشنری‌های رایگان، به ترتیبی که در تنظیمات چیده‌ای. معنی فارسی و یادداشت از هوش مصنوعی با کلیدهای خودت، و اگر هوش مصنوعی جواب ندهد، معنی از ترجمهٔ رایگان.</li>
+                <li><span className="font-bold">«افزودن با هوش مصنوعی»:</span> هم‌معنی‌ها، اشتباه رایج، سبک و خانوادهٔ واژه را فقط با هوش مصنوعی می‌سازد، برای کارت‌هایی که هیچ‌کدام را ندارند.</li>
+            </ul>
+        </details>
 
         {onFillExtras && (extrasProgress || missingExtras.length > 0) && (
             <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-white dark:bg-slate-800 p-4">
@@ -294,7 +303,7 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                                     {playingAudioUrl === card.audioSrc ? <LoadingIcon /> : <Icon.Speaker size={16} />}
                                 </button>
                             )}
-                            <button onClick={() => handleComplete(card.id)} disabled={completingCardId === card.id || !!autoFixProgress} aria-label={`تکمیل جزئیات ${card.front}`} title="تکمیل جزئیات" className={`${actionButtonClasses} text-brand-600 hover:text-brand-800 dark:text-brand-300 dark:hover:text-brand-200 disabled:opacity-50 disabled:cursor-wait`}>
+                            <button onClick={() => handleComplete(card.id)} disabled={completingCardId === card.id || !!autoFixProgress} aria-label={`تکمیل جاهای خالی ${card.front}`} title="تکمیل جاهای خالی (از دیکشنری‌ها و هوش مصنوعی)" className={`${actionButtonClasses} text-brand-600 hover:text-brand-800 dark:text-brand-300 dark:hover:text-brand-200 disabled:opacity-50 disabled:cursor-wait`}>
                                 {completingCardId === card.id ? <LoadingIcon /> : <CompleteIcon />}
                             </button>
                             <button onClick={() => onEdit(card)} aria-label={`ویرایش ${card.front}`} title="ویرایش" className={`${actionButtonClasses} text-brand-600 hover:text-brand-800 dark:text-brand-300 dark:hover:text-brand-200`}><EditIcon /></button>
