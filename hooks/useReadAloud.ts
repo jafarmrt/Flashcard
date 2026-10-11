@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Settings } from '../types';
-import { aiSpeech, speechModel, speechVoice } from '../services/aiSpeech';
+import { aiSpeech, speechModel, speechProvider, speechVoice } from '../services/aiSpeech';
 import { pieceAt, ReadAloudPlayer, type AudioLike, type Piece, type PlayerState, type ReadAloudVoice } from '../services/readAloud';
 import { splitSentences } from '../services/textChunker';
 import { isSpeechSupported, speakText, stopSpeech } from '../services/ttsService';
@@ -45,7 +45,7 @@ export const useReadAloud = ({ pieces, textKey, voice, settings, rate = 0.95, ai
       revoke: url => URL.revokeObjectURL(url),
       newAudio: () => new Audio() as unknown as AudioLike,
       audioRate: () => latest.current.aiRate,
-      cacheKey: () => `${speechModel(latest.current.settings)}/${speechVoice(latest.current.settings)}`,
+      cacheKey: () => `${speechProvider(latest.current.settings)}/${speechModel(latest.current.settings)}/${speechVoice(latest.current.settings)}`,
       onChange: setState,
       onAiFailed: error => latest.current.onAiFailed(error),
     }, voice);

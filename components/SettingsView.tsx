@@ -8,7 +8,7 @@ import { AI_PROVIDERS, providerInfo, providerKey, providerList, providerOptions,
 import { testAiConnection } from '../services/geminiService';
 import { fa, Icon } from './common/ui';
 import { ModelPicker } from './ModelPicker';
-import { AI_VOICES, aiSpeech, DEFAULT_SPEECH_MODEL, speechModel, speechVoice } from '../services/aiSpeech';
+import { AI_VOICES, aiSpeech, DEFAULT_OPENROUTER_SPEECH_MODEL, DEFAULT_SPEECH_MODEL, listSpeechModels, speechModel, speechProvider, speechVoice, type SpeechModel } from '../services/aiSpeech';
 
 interface SettingsViewProps {
     settings: Settings;
@@ -362,12 +362,83 @@ const LEVELS: { value: NonNullable<Settings['userLevel']>; label: string }[] = [
     { value: 'TOEFL', label: 'TOEFL' },
 ];
 
-// Reading aloud: the device's voice, or an AI voice (Gemini; its key or the
-// server's). The voice can be heard before it is chosen.
+// OpenRouter's speech models, read live with the OpenRouter key: tap one to
+// use it. Their voices come with them when OpenRouter lists them.
+const SpeechModelList: React.FC<{ settings: Settings; value: string; onPick: (m: SpeechModel) => void }> = ({ settings, value, onPick }) => {
+    const [open, setOpen] = useState(false);
+    const [models, setModels] = useState<SpeechModel[] | null>(null);
+    const [error, setError] = useState('');
+    const [freeOnly, setFreeOnly] = useState(false);
+    const load = () => {
+        setOpen(true);
+        setError('');
+        setModels(null);
+        listSpeechModels(settings).then(setModels).catch((e: Error) => setError(e?.message || 'فهرست گرفته نشد.'));
+    };
+    if (!open) {
+        return <button type="button" onClick={load} className="self-start min-h-[36px] px-3 rounded-xl text-sm text-brand-600 dark:text-brand-300 hover:bg-brand-50 dark:hover:bg-slate-700">دیدن مدل‌های صدای OpenRouter</button>;
+    }
+    const shown = (models || []).filter(m => !freeOnly || m.free);
+    return (
+        <div className="flex flex-col gap-2 rounded-2xl bg-slate-50 dark:bg-slate-900/50 p-3">
+            <div className="flex items-center gap-2">
+                <span className="font-bold text-ink dark:text-white text-sm flex-1">مدل‌های صدای OpenRouter</span>
+                {models?.some(m => m.free) && (
+                    <label className="flex items-center gap-1.5 text-sm text-ink dark:text-slate-100 cursor-pointer">
+                        <input type="checkbox" checked={freeOnly} onChange={e => setFreeOnly(e.target.checked)} className="w-4 h-4 accent-brand-500" />فقط رایگان‌ها
+                    </label>
+                )}
+                <button type="button" onClick={() => setOpen(false)} aria-label="بستن فهرست مدل‌ها" className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-slate-200 dark:hover:bg-slate-700"><Icon.Close size={16} /></button>
+            </div>
+            {error ? (
+                <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm text-red-700 dark:text-red-300"><bdi dir="auto">{error}</bdi></p>
+                    <button type="button" onClick={load} className="text-sm text-brand-600 dark:text-brand-300 hover:underline">دوباره</button>
+                </div>
+            ) : models === null ? (
+                <p className="text-sm text-ink-muted dark:text-slate-400" role="status">در حال گرفتن فهرست…</p>
+            ) : (
+                <>
+                    <p className="text-xs text-ink-muted dark:text-slate-400">{fa(shown.length)} مدل؛ قیمت به دلار برای هر یک میلیون (نویسه یا توکن، هرطور OpenRouter حساب می‌کند). روی هر مدل بزنی انتخاب می‌شود.</p>
+                    <ul className="flex flex-col gap-1 max-h-72 overflow-y-auto" dir="ltr">
+                        {shown.map(m => {
+                            const chosen = m.id === value;
+                            return (
+                                <li key={m.id}>
+                                    <button type="button" onClick={() => onPick(m)} aria-pressed={chosen}
+                                        className={`w-full text-left rounded-xl px-3 py-2 flex items-center gap-2 ${chosen ? 'bg-brand-100 dark:bg-brand-900/50 ring-1 ring-brand-400' : 'bg-white dark:bg-slate-800 hover:bg-brand-50 dark:hover:bg-slate-700'}`}>
+                                        <span className="flex-1 min-w-0">
+                                            <span className="block font-en text-sm font-bold text-ink dark:text-white truncate">{m.id}</span>
+                                            {(m.name || m.voices) && <span className="block font-en text-xs text-ink-muted dark:text-slate-400 truncate">{[m.name, m.voices ? `${m.voices.length} voices` : ''].filter(Boolean).join(' · ')}</span>}
+                                        </span>
+                                        {m.free ? <span dir="rtl" className="shrink-0 text-xs font-bold rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200 px-2 py-0.5">رایگان</span>
+                                            : m.price !== undefined ? <span className="shrink-0 text-xs font-en text-ink dark:text-slate-200">${m.price}</span> : null}
+                                        {chosen && <Icon.Check size={16} className="shrink-0 text-brand-600 dark:text-brand-300" />}
+                                    </button>
+                                </li>
+                            );
+                        })}
+                    </ul>
+                </>
+            )}
+        </div>
+    );
+};
+
+// Reading aloud: the device's voice, or an AI voice from Gemini (its key or
+// the server's) or from a speech model on OpenRouter (the OpenRouter key).
+// The voice can be heard before it is chosen.
 const ReadAloudSettings: React.FC<{ settings: Settings; onUpdateSettings: (s: Partial<Settings>) => void }> = ({ settings, onUpdateSettings }) => {
-    const [model, setModel] = useState(settings.aiSpeechModel || '');
+    const provider = speechProvider(settings);
+    const modelField = provider === 'openrouter' ? 'orSpeechModel' : 'aiSpeechModel';
+    const [model, setModel] = useState(settings[modelField] || '');
+    useEffect(() => { setModel(settings[modelField] || ''); }, [modelField]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Voices of the OpenRouter model, when its list said.
+    const [voices, setVoices] = useState<string[] | null>(null);
     const [test, setTest] = useState<{ busy?: boolean; error?: string; ok?: boolean }>({});
     const player = useRef<{ audio: HTMLAudioElement; url?: string } | null>(null);
+    const noKey = provider === 'openrouter' && !providerKey(settings, 'openrouter');
+    const change = (changes: Partial<Settings>) => { onUpdateSettings(changes); setTest({}); };
     const listen = async () => {
         setTest({ busy: true });
         // Made and started inside the tap, so phones let it play once the
@@ -390,33 +461,67 @@ const ReadAloudSettings: React.FC<{ settings: Settings; onUpdateSettings: (s: Pa
         }
     };
     useEffect(() => () => { player.current?.audio.pause(); if (player.current?.url) URL.revokeObjectURL(player.current.url); }, []);
+    const select = 'min-h-[40px] px-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm';
     return (
         <>
-            <Row title="صدای خواندن بلند" hint="صدای دستگاه رایگان و بی‌اینترنت است؛ صدای هوش مصنوعی (Gemini) طبیعی‌تر است و با کلید Gemini تو (یا کلید سرور) کار می‌کند. اگر جواب ندهد، صدای دستگاه ادامه می‌دهد.">
+            <Row title="صدای خواندن بلند" hint="صدای دستگاه رایگان و بی‌اینترنت است؛ صدای هوش مصنوعی طبیعی‌تر است. اگر جواب ندهد، صدای دستگاه ادامه می‌دهد.">
                 <Segmented label="صدای خواندن بلند" value={settings.readAloudVoice === 'ai' ? 'ai' : 'device'} onChange={v => onUpdateSettings({ readAloudVoice: v })}
                     options={[{ value: 'device', label: 'صدای دستگاه' }, { value: 'ai', label: 'هوش مصنوعی' }]} />
             </Row>
             <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-700 flex flex-col gap-3">
-                <h3 className="font-bold text-ink dark:text-white">صدای هوش مصنوعی</h3>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <h3 className="font-bold text-ink dark:text-white">صدای هوش مصنوعی</h3>
+                    <Segmented label="سرویس صدای هوش مصنوعی" value={provider} onChange={v => { change({ aiSpeechProvider: v }); setVoices(null); }}
+                        options={[{ value: 'gemini', label: 'Gemini' }, { value: 'openrouter', label: 'OpenRouter' }]} />
+                </div>
+                <p className="text-sm text-ink-muted dark:text-slate-400">
+                    {provider === 'gemini'
+                        ? 'با کلید Gemini تو (یا کلید سرور). مدل پیش‌فرض سهمیهٔ رایگان دارد.'
+                        : 'با کلید OpenRouter تو؛ هزینه از اعتبار OpenRouter کم می‌شود. مدل پیش‌فرض (Kokoro) برای هر بخش خیلی کمتر از یک سنت است.'}
+                </p>
+                {noKey && <p role="alert" className="text-sm text-amber-800 dark:text-amber-200">کلید OpenRouter وارد نشده؛ آن را در «سرویس‌های هوش مصنوعی» پایین همین صفحه وارد کن.</p>}
                 <div className="flex flex-wrap items-end gap-3">
-                    <label className="flex flex-col gap-1 text-sm">
-                        <span className="text-ink-muted dark:text-slate-400">گوینده</span>
-                        <select value={speechVoice(settings)} onChange={e => { onUpdateSettings({ aiSpeechVoice: e.target.value }); setTest({}); }}
-                            className="min-h-[40px] px-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm">
-                            {AI_VOICES.map(v => <option key={v.id} value={v.id}>{v.id} · {v.label}</option>)}
-                        </select>
-                    </label>
+                    {provider === 'gemini' ? (
+                        <label className="flex flex-col gap-1 text-sm">
+                            <span className="text-ink-muted dark:text-slate-400">گوینده</span>
+                            <select value={speechVoice(settings)} onChange={e => change({ aiSpeechVoice: e.target.value })} className={select}>
+                                {AI_VOICES.map(v => <option key={v.id} value={v.id}>{v.id} · {v.label}</option>)}
+                            </select>
+                        </label>
+                    ) : voices && voices.length > 0 ? (
+                        <label className="flex flex-col gap-1 text-sm">
+                            <span className="text-ink-muted dark:text-slate-400">گوینده</span>
+                            <select dir="ltr" value={settings.orSpeechVoice || ''} onChange={e => change({ orSpeechVoice: e.target.value || undefined })} className={`${select} font-en max-w-[14rem]`}>
+                                <option value="">(default)</option>
+                                {voices.map(v => <option key={v} value={v}>{v}</option>)}
+                            </select>
+                        </label>
+                    ) : (
+                        <label className="flex flex-col gap-1 text-sm">
+                            <span className="text-ink-muted dark:text-slate-400">گوینده (خالی: پیش‌فرض مدل)</span>
+                            <input dir="ltr" key={settings.orSpeechModel || 'default'} defaultValue={settings.orSpeechVoice || ''} placeholder="default" aria-label="گوینده"
+                                onBlur={e => { const v = e.target.value.trim(); if (v !== (settings.orSpeechVoice || '')) change({ orSpeechVoice: v || undefined }); }}
+                                className={`${input} max-w-[14rem]`} />
+                        </label>
+                    )}
                     <label className="flex flex-col gap-1 text-sm flex-1 min-w-[12rem]">
                         <span className="text-ink-muted dark:text-slate-400">مدل</span>
-                        <input dir="ltr" value={model} placeholder={DEFAULT_SPEECH_MODEL} aria-label="مدل صدای هوش مصنوعی"
+                        <input dir="ltr" value={model} placeholder={provider === 'openrouter' ? DEFAULT_OPENROUTER_SPEECH_MODEL : DEFAULT_SPEECH_MODEL} aria-label="مدل صدای هوش مصنوعی"
                             onChange={e => setModel(e.target.value)}
-                            onBlur={() => { if (model.trim() !== (settings.aiSpeechModel || '')) { onUpdateSettings({ aiSpeechModel: model.trim() || undefined }); setTest({}); } }}
+                            onBlur={() => { if (model.trim() !== (settings[modelField] || '')) change({ [modelField]: model.trim() || undefined, ...(provider === 'openrouter' ? { orSpeechVoice: undefined } : {}) }); }}
                             className={input} />
                     </label>
-                    <button type="button" onClick={listen} disabled={test.busy} className={`${button} inline-flex items-center gap-2 disabled:opacity-60`}>
+                    <button type="button" onClick={listen} disabled={test.busy || noKey} className={`${button} inline-flex items-center gap-2 disabled:opacity-60`}>
                         <Icon.Speaker size={16} />{test.busy ? 'در حال ساختن صدا…' : 'شنیدن نمونه'}
                     </button>
                 </div>
+                {provider === 'openrouter' && !noKey && (
+                    <SpeechModelList settings={settings} value={speechModel(settings)} onPick={m => {
+                        setModel(m.id);
+                        setVoices(m.voices || null);
+                        change({ orSpeechModel: m.id, orSpeechVoice: undefined });
+                    }} />
+                )}
                 {test.ok && <p className="text-sm text-emerald-700 dark:text-emerald-300">صدا کار می‌کند (<bdi dir="ltr" className="font-en">{speechModel(settings)}</bdi>).</p>}
                 {test.error && <p role="alert" className="text-sm text-red-700 dark:text-red-300">صدا ساخته نشد: <bdi dir="ltr" className="font-en">{test.error}</bdi></p>}
             </div>

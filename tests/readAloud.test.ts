@@ -4,7 +4,7 @@ import { readerSection } from '../services/readerText';
 import { pieceAt, piecesOf, ReadAloudPlayer, type AudioLike, type PlayerDeps, type PlayerState } from '../services/readAloud';
 import { audioBytes, wavFromPcm } from '../services/aiSpeech';
 import { cleanAiTranslation, freeBatches } from '../services/translate';
-import { cleanSpeechName, findAudio, generateSpeech, SpeechError } from '../server/speech';
+import { cleanOpenRouterName, cleanSpeechName, findAudio, generateSpeech, openRouterSpeech, speechModels, SpeechError } from '../server/speech';
 
 const TEXT = 'The rain stopped. We walked to the old bridge and waited.\n\nThen the boat came. It was late.';
 
@@ -266,4 +266,52 @@ test('the same pieces again keep the place, even after an AI failure', async () 
   p.setPieces(['One.', 'Two.']);
   assert.equal(p.state.index, 1);
   assert.equal(p.state.status, 'paused');
+});
+
+// --- OpenRouter voices ---
+
+const audioReply = (type: string, bytes: number[]) => ({
+  ok: true, status: 200, json: async () => ({}), text: async () => '',
+  arrayBuffer: async () => new Uint8Array(bytes).buffer, headers: { get: (h: string) => (h.toLowerCase() === 'content-type' ? type : null) },
+});
+
+test('OpenRouter voice: MP3 asked for, voice only when chosen', async () => {
+  let sent: any;
+  const audio = await openRouterSpeech('key', 'Hello.', 'hexgrad/kokoro-82m', undefined, async (url: string, init: any) => {
+    assert.equal(url, 'https://openrouter.ai/api/v1/audio/speech');
+    assert.equal(init.headers.Authorization, 'Bearer key');
+    sent = JSON.parse(init.body);
+    return audioReply('audio/mpeg', [1, 2, 3]);
+  });
+  assert.deepEqual(sent, { model: 'hexgrad/kokoro-82m', input: 'Hello.', response_format: 'mp3' });
+  assert.deepEqual(audio, { data: 'AQID', mimeType: 'audio/mpeg' });
+});
+
+test('OpenRouter voice: a model without MP3 is asked for PCM; a wrong key is not asked twice', async () => {
+  const formats: string[] = [];
+  const audio = await openRouterSpeech('key', 'Hi.', 'x/y', 'eve', async (_url: string, init: any) => {
+    const body = JSON.parse(init.body);
+    formats.push(body.response_format);
+    assert.equal(body.voice, 'eve');
+    return body.response_format === 'mp3' ? reply(400, { error: { message: 'mp3 not supported' } }) : audioReply('audio/pcm', [0, 0]);
+  });
+  assert.deepEqual(formats, ['mp3', 'pcm']);
+  assert.equal(audio.mimeType, 'audio/pcm');
+
+  let n = 0;
+  await assert.rejects(openRouterSpeech('bad', 'Hi.', 'x/y', undefined, async () => { n++; return reply(401, { error: { message: 'no auth' } }); }),
+    (e: unknown) => e instanceof SpeechError && e.status === 401 && /OpenRouter voice/.test(e.message));
+  assert.equal(n, 1);
+});
+
+test('OpenRouter speech models: prices, free ones and voices', () => {
+  const models = speechModels({ data: [
+    { id: 'hexgrad/kokoro-82m', name: 'Kokoro', pricing: { prompt: '0.00000062' }, supported_voices: ['af_heart', { id: 'am_adam' }] },
+    { id: 'fish-audio/s2.1-pro-free:free', pricing: { prompt: '0' }, supported_voices: null },
+  ] });
+  assert.deepEqual(models[0], { id: 'hexgrad/kokoro-82m', name: 'Kokoro', price: 0.62, voices: ['af_heart', 'am_adam'] });
+  assert.equal(models[1].free, true);
+  assert.equal(models[1].voices, undefined);
+  assert.equal(cleanOpenRouterName('fish-audio/s2.1-pro-free:free', 'x'), 'fish-audio/s2.1-pro-free:free');
+  assert.equal(cleanOpenRouterName('a b', 'x'), 'x');
 });
