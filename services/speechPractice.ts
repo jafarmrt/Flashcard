@@ -76,9 +76,18 @@ export const speechWords = (text: string): string[] => text.match(SPEECH_WORD) |
 
 // Where a card's term stands in a sentence, in any form ("took … into
 // account" for "take into account"): the indexes of its words, or none.
+// Where a placeholder stood ("take something into account") a longer object
+// is allowed too ("took the cost of the journey into account").
 export const focusIndexes = (sentence: string, term: string): number[] => {
   const words = speechWords(sentence);
-  const { words: wanted, gaps } = termPattern(term);
+  const pattern = termPattern(term);
+  const found = findTerm(words, pattern.words, pattern.gaps);
+  return found.length || !pattern.gaps.some(g => g > 1)
+    ? found
+    : findTerm(words, pattern.words, pattern.gaps.map(g => (g > 1 ? 8 : g)));
+};
+
+const findTerm = (words: string[], wanted: string[], gaps: number[]): number[] => {
   if (wanted.length === 0) return [];
   for (let start = 0; start < words.length; start++) {
     if (!isFormOf(words[start], wanted[0])) continue;

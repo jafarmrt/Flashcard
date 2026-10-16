@@ -153,6 +153,8 @@ test("the card's term is found in its sentence in any form, phrases with a word 
   assert.deepEqual(focusIndexes('She thought about it.', 'think'), [1]);
   assert.deepEqual(focusIndexes('They took the cost into account.', 'take something into account'), [1, 4, 5]);
   assert.deepEqual(focusIndexes('He gave it up at last.', 'give up'), [1, 3]);
+  assert.deepEqual(focusIndexes('They took the cost of the journey into account.', 'take something into account'), [1, 7, 8], 'a long object where the placeholder stood');
+  assert.deepEqual(focusIndexes('He gave the old red book to me and then up we went.', 'give up'), [], 'no placeholder: no long gap');
   assert.deepEqual(focusIndexes('Nothing here.', 'think'), []);
 });
 
