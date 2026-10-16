@@ -239,6 +239,32 @@ test('chapter texts are kept compressed, and older plain ones are still read', a
   assert.deepEqual((await call({ action: 'chapter-get', id: 's1-c1' }, 'jafar')).body.chunks, chunks);
 });
 
+test('an edited text replaces the old one on the server, and a late older edit does not undo it', async () => {
+  setupServer();
+  await call({ action: 'auth-register', username: 'jafar', password: 'long-enough-password' });
+  await call({ action: 'chapter-put', id: 's1-c1', sourceId: 's1', chunks: ['Original text.'] }, 'jafar');
+  await call({ action: 'chapter-put', id: 's1-c1', sourceId: 's1', chunks: ['Second edit.'], editedAt: '2026-10-16T10:00:02.000Z' }, 'jafar');
+  const late = await call({ action: 'chapter-put', id: 's1-c1', sourceId: 's1', chunks: ['First edit, sent late.'], editedAt: '2026-10-16T10:00:01.000Z' }, 'jafar');
+  assert.equal(late.status, 200);
+  const got = (await call({ action: 'chapter-get', id: 's1-c1' }, 'jafar')).body;
+  assert.deepEqual([got.chunks, got.editedAt], [['Second edit.'], '2026-10-16T10:00:02.000Z']);
+  await call({ action: 'chapter-put', id: 's1-c1', sourceId: 's1', chunks: ['No date: an old app.'] }, 'jafar');
+  assert.deepEqual((await call({ action: 'chapter-get', id: 's1-c1' }, 'jafar')).body.chunks, ['Second edit.'], 'an undated copy does not undo an edit');
+});
+
+test('notes and kept translations sync between devices, a deleted one stays deleted', async () => {
+  setupServer();
+  await call({ action: 'auth-register', username: 'jafar', password: 'long-enough-password' });
+  const n = { id: 'n1', sourceId: 's1', chapterId: 's1-c1', chunk: 0, kind: 'comment', from: 1, to: 2, quote: 'two words', text: 'یادداشت', createdAt: T0, updatedAt: T0 };
+  const laptop = await call({ action: 'sync', since: 0, changes: { notes: [n] } }, 'jafar');
+  assert.equal(laptop.status, 200);
+  const phone = await call({ action: 'sync', since: 0, changes: {} }, 'jafar');
+  assert.deepEqual(phone.body.changes.notes.map((x: any) => [x.id, x.text]), [['n1', 'یادداشت']]);
+  await call({ action: 'sync', since: phone.body.rev, storeId: phone.body.storeId, changes: { notes: [{ ...n, isDeleted: true, updatedAt: '2026-10-16T11:00:00.000Z' }] } }, 'jafar');
+  const later = await call({ action: 'sync', since: laptop.body.rev, storeId: laptop.body.storeId, changes: { notes: [{ ...n, text: 'old edit', updatedAt: '2026-10-16T10:30:00.000Z' }] } }, 'jafar');
+  assert.equal(later.body.changes.notes[0].isDeleted, true, 'an older edit does not bring it back');
+});
+
 test('only public web pages are fetched for articles', async () => {
   for (const ip of ['127.0.0.1', '10.1.2.3', '169.254.169.254', '192.168.1.5', '172.20.0.1', '::1', 'fd00::1', '::ffff:127.0.0.1', '100.100.1.1']) {
     assert.equal(isPrivateAddress(ip), true, ip);

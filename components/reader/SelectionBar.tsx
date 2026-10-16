@@ -23,7 +23,15 @@ interface SelectionBarProps {
   onTranslate: () => void;
   onOpenStructure: (uid: string) => void;
   onClose: () => void;
+  floating?: boolean; // always a sheet over the page (book mode), never in the side column
+  extra?: React.ReactNode; // more actions (notes, saving a translation)
 }
+
+// A sheet at the bottom of the screen, or (on wide screens beside a
+// scrolling text) a card in the side column.
+export const sheetClass = (floating?: boolean) => floating
+  ? 'fixed z-30 inset-x-3 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] md:inset-x-auto md:right-6 md:w-[27rem] max-h-[52vh] overflow-y-auto shadow-2xl ring-1 ring-slate-200 dark:ring-slate-700 bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col animate-reveal'
+  : 'fixed z-30 inset-x-3 bottom-[calc(5rem+env(safe-area-inset-bottom))] md:bottom-5 md:left-6 md:right-[17.5rem] max-h-[52vh] overflow-y-auto shadow-2xl ring-1 ring-slate-200 dark:ring-slate-700 xl:static xl:max-h-none xl:shadow-none xl:ring-0 bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col animate-reveal';
 
 const chip = 'min-h-[36px] px-3 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-40';
 const action = 'min-h-[44px] px-4 rounded-xl font-bold disabled:opacity-50';
@@ -33,8 +41,7 @@ const action = 'min-h-[44px] px-4 rounded-xl font-bold disabled:opacity-50';
 export const SelectionBar: React.FC<SelectionBarProps> = props => {
   const { text, words, maxMeaningWords, busy } = props;
   return (
-    <section aria-label="عبارت انتخاب‌شده"
-      className="fixed z-30 inset-x-3 bottom-[calc(5rem+env(safe-area-inset-bottom))] md:bottom-5 md:left-6 md:right-[17.5rem] max-h-[52vh] overflow-y-auto shadow-2xl ring-1 ring-slate-200 dark:ring-slate-700 xl:static xl:max-h-none xl:shadow-none xl:ring-0 bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-3 animate-reveal">
+    <section aria-label="عبارت انتخاب‌شده" className={`${sheetClass(props.floating)} gap-3`}>
       <div className="flex items-start gap-2">
         <p dir="ltr" lang="en" className="flex-1 font-read text-[17px] text-ink dark:text-white line-clamp-4 text-left">{text}</p>
         <button type="button" onClick={props.onClose} aria-label="لغو انتخاب" className="w-9 h-9 -m-1.5 shrink-0 rounded-xl flex items-center justify-center text-ink-muted hover:bg-slate-100 dark:hover:bg-slate-700"><Icon.Close size={18} /></button>
@@ -71,6 +78,7 @@ export const SelectionBar: React.FC<SelectionBarProps> = props => {
         </div>
       )}
       {props.translation && <p className="rounded-xl bg-slate-50 dark:bg-slate-900/50 px-3 py-2 text-ink dark:text-slate-100">{props.translation}</p>}
+      {props.extra}
       {props.structures && props.structures.length > 0 && (
         <div className="flex flex-col gap-1.5">
           <p className="text-sm text-ink-muted dark:text-slate-400">ساختارهای این جمله به فهرست اضافه شد؛ برای توضیح و تمرین بزن:</p>

@@ -9,6 +9,15 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.6.0] - 2026-10-16 - Reading Like a Book: Pages, Your Own Text, Notes and Kept Translations
+- **Pages:** Books now open as pages that fill the screen, with nothing around them but a thin bar: one page on a phone, two facing pages with a spine on a wide screen. Turn pages by swiping, by tapping the edge of the page, or with the arrow keys; the footer shows the page and how far into the chapter you are. The old scrolling page is still there (Aa › continuous).
+- **One continuous book:** Turning past the last page of a section finishes it (the same XP and progress as before) and the next section follows; paging back from the first page opens the previous section on its last page. A chapter ends on a page of its own, with a review of its words and the next chapter.
+- **The page as you like it:** Type size (the place on the page is kept when it changes), cream, white or night paper, justified text, and paragraphs indented as in print. Punctuation no longer starts a line. Reading aloud starts from the page in view and turns the pages as it goes; where you stopped on the page is kept on the device.
+- **Edit the text:** Correct a section's text, cut out a paragraph that does not belong (page numbers, footnotes), or empty a whole section, which reading then passes over without a reward. The edited text reaches every device; a device with the old copy fetches the new one.
+- **Notes:** Write a note on a word, a phrase or a passage (pick it, then ✎). Noted words are green; a tap opens the note to read, edit or delete it, and still offers the word's meaning.
+- **Kept translations:** A sentence's or a whole paragraph's translation can be saved («ترجمهٔ کل پاراگراف», then «ذخیرهٔ این ترجمه»). Its words turn blue and a tap shows it; in the scrolling page it shows under its paragraph every time.
+- **Your notes, everywhere:** Notes and kept translations sync between devices, are found again after the text is edited, and are listed per chapter (in «واژه‌ها»), each taking you to its place in the book.
+
 ## [7.5.1] - 2026-10-16 - Claude Models, and a Listener That Really Hears
 - **Claude:** Newer Claude models refused every request ("`temperature` is deprecated for this model"); the app no longer sends a temperature to Claude.
 - **A listener that did not hear:** When the listener answers without having heard a recording that has a voice in it (it heard nothing, or wrote about the recording itself, like "leaked audio" or "[inaudible]"), the answer is not saved as a score. The same recording can be sent again with one tap, and after two such answers the app suggests another listener.

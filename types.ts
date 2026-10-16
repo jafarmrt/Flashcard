@@ -190,6 +190,10 @@ export interface Settings {
     aiSpeechModel?: string; // the Gemini text-to-speech model
     orSpeechModel?: string; // the OpenRouter speech model
     orSpeechVoice?: string; // its voice; unset: the model's own default
+    readerMode?: 'book' | 'scroll'; // book pages (default) or one scrolling page per section
+    readerPaper?: 'cream' | 'white' | 'night'; // the page colour in book mode; unset: cream, night in the dark theme
+    readerFontSize?: number; // step 0-4 in book mode (READER_FONT_SIZES)
+    readerJustify?: boolean; // justified text in book mode (default on)
     pronunciationService?: 'auto' | 'gemini' | 'openrouter'; // who listens in pronunciation practice; auto: Gemini, then OpenRouter
     orAudioModel?: string; // the OpenRouter model that listens (one that takes audio)
     updatedAt?: string; // when settings last changed; the newest wins across devices
@@ -222,6 +226,7 @@ export interface Chapter {
   chunkCount: number; // sections of at most 300 words
   wordCount: number;
   completed: number[]; // indexes of finished sections
+  textEditedAt?: string; // when the reader last edited its text: devices with an older copy fetch it again
   createdAt: string;
   updatedAt: string;
   isDeleted?: boolean;
@@ -232,6 +237,7 @@ export interface ChapterText {
   sourceId: string;
   chunks: string[];
   uploaded?: boolean; // this device: the server has a copy
+  editedAt?: string; // the edit this copy holds (Chapter.textEditedAt)
 }
 
 // Where a card's term was met: one row per card and chapter.
@@ -242,6 +248,25 @@ export interface Occurrence {
   chapterId: string;
   chunk: number; // section index within the chapter
   sentence?: string;
+  createdAt: string;
+  updatedAt: string;
+  isDeleted?: boolean;
+}
+
+// The reader's own note on a passage of a book: a comment, or a Persian
+// translation kept for it. It points at the section's words, and keeps the
+// words themselves, so it is found again after the text is edited.
+export interface TextNote {
+  id: string;
+  sourceId: string;
+  chapterId: string;
+  chunk: number; // section within the chapter
+  kind: 'comment' | 'translation';
+  from: number; // first and last word of the passage, in the section
+  to: number;
+  quote: string; // the passage as written
+  text: string; // the comment, or the translation
+  by?: string; // a translation: the service that made it ("Gemini", "MyMemory")
   createdAt: string;
   updatedAt: string;
   isDeleted?: boolean;

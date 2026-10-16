@@ -10,6 +10,8 @@ interface ReaderTextProps {
   onTap: (index: number) => void;
   onSelect: (range: Range) => void;
   paragraphFooter?: (paragraph: number) => React.ReactNode; // shown under each paragraph (reading aloud, translation)
+  // Book pages: the type the reader chose, paragraphs indented as in print.
+  book?: { fontSize: number; justify: boolean };
 }
 
 // A touch must rest this long on a word before dragging selects instead of
@@ -27,7 +29,7 @@ const wordAt = (x: number, y: number): number | null => {
 // The section's text, each word a button. A tap looks a word up; dragging
 // over several words (with a mouse at once, with a finger after resting on
 // the first word), or shift-clicking, picks a phrase or a sentence.
-export const ReaderText: React.FC<ReaderTextProps> = ({ section, selection, classFor, onTap, onSelect, paragraphFooter }) => {
+export const ReaderText: React.FC<ReaderTextProps> = ({ section, selection, classFor, onTap, onSelect, paragraphFooter, book }) => {
   const [drag, setDrag] = useState<Range | null>(null);
   // `last`: the last word the pointer was over, for a release on a space or
   // a full stop.
@@ -122,28 +124,44 @@ export const ReaderText: React.FC<ReaderTextProps> = ({ section, selection, clas
     <div ref={box} dir="ltr" lang="en"
       onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={end}
       onContextMenu={e => { if ((e.target as HTMLElement).closest('[data-wi]')) e.preventDefault(); }}
-      className="font-read text-[17px] md:text-[19px] leading-[2] text-slate-800 dark:text-slate-100 max-w-[68ch] select-none [-webkit-touch-callout:none]">
+      style={book ? { fontSize: book.fontSize, textAlign: book.justify ? 'justify' : 'left', hyphens: book.justify ? 'auto' : 'manual', WebkitHyphens: book.justify ? 'auto' : 'manual' } : undefined}
+      className={book
+        ? 'font-read leading-[1.75] select-none [-webkit-touch-callout:none]'
+        : 'font-read text-[17px] md:text-[19px] leading-[2] text-slate-800 dark:text-slate-100 max-w-[68ch] select-none [-webkit-touch-callout:none]'}>
       {section.paragraphs.map((p, pi) => {
         const parts: React.ReactNode[] = [];
         let cursor = p.start;
-        for (const w of p.words) {
-          if (w.start > cursor) parts.push(section.text.slice(cursor, w.start));
+        p.words.forEach((w, k) => {
+          // Punctuation touching a word stays on its line ("war." never
+          // breaks before the full stop, "“Yes" never after the quote).
+          let lead = section.text.slice(cursor, w.start);
+          const prefix = /\S+$/.exec(lead)?.[0] || '';
+          if (prefix) lead = lead.slice(0, -prefix.length);
+          if (lead) parts.push(lead);
+          const tail = section.text.slice(w.end, k + 1 < p.words.length ? p.words[k + 1].start : p.end);
+          const suffix = /^\S+/.exec(tail)?.[0] || '';
           const picked = inShown(w.i);
           // Spaces between picked words are tinted too, so a phrase reads as one.
           parts.push(
-            <button key={w.i} type="button" data-wi={w.i} onClick={e => onClick(e, w.i)}
-              className={`inline rounded px-0.5 -mx-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${picked ? 'bg-brand-500 text-white dark:bg-brand-500' : `hover:bg-brand-100 dark:hover:bg-slate-700 ${classFor(w.i)}`}`}>
-              {w.text}
-            </button>,
+            <span key={w.i} className="whitespace-nowrap">
+              {prefix}
+              <button type="button" data-wi={w.i} onClick={e => onClick(e, w.i)}
+                className={`inline rounded px-0.5 -mx-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${picked ? 'bg-brand-500 text-white dark:bg-brand-500' : `hover:bg-brand-100 dark:hover:bg-slate-700 ${classFor(w.i)}`}`}>
+                {w.text}
+              </button>
+              {suffix}
+            </span>,
           );
-          cursor = w.end;
-          const next = p.words[w.i - p.words[0].i + 1];
+          cursor = w.end + suffix.length;
+          const next = p.words[k + 1];
           if (picked && next && inShown(next.i) && next.start > cursor) {
             parts.push(<span key={`g${w.i}`} className="bg-brand-500/25">{section.text.slice(cursor, next.start)}</span>);
             cursor = next.start;
           }
-        }
+        });
         if (cursor < p.end) parts.push(section.text.slice(cursor, p.end));
+        // In a book, paragraphs are indented and not spaced; the first is not indented.
+        if (book) return <p key={pi} className={`m-0 [orphans:2] [widows:2] ${pi === 0 ? '' : 'indent-[1.5em]'}`}>{parts}</p>;
         if (!paragraphFooter) return <p key={pi} className="mb-4 last:mb-0">{parts}</p>;
         return (
           <div key={pi} className="mb-4 last:mb-0">

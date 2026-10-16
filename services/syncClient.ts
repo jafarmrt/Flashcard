@@ -6,10 +6,10 @@
 // batches small enough for Vercel's request limit, plus the last server rev it
 // saw; the server answers with what other devices changed after that rev.
 
-import type { Chapter, Deck, Flashcard, KnownWord, Occurrence, Source, SpeechAttempt, StudyLog, UserAchievement, UserProfile } from '../types';
+import type { Chapter, Deck, Flashcard, KnownWord, Occurrence, Source, SpeechAttempt, StudyLog, TextNote, UserAchievement, UserProfile } from '../types';
 import { cardStamp, deckStamp, profileStamp } from './syncState.js';
 
-export const SYNC_TABLES = ['decks', 'cards', 'sources', 'chapters', 'occurrences', 'knownWords', 'speechAttempts'] as const;
+export const SYNC_TABLES = ['decks', 'cards', 'sources', 'chapters', 'occurrences', 'knownWords', 'speechAttempts', 'notes'] as const;
 export type SyncTable = (typeof SYNC_TABLES)[number];
 
 type Stamped = { id: string; updatedAt?: string; isDeleted?: boolean };
@@ -63,7 +63,7 @@ export const usableSyncState = (saved: SyncState | undefined, user: string, now 
 export const markAllSynced = (state: SyncState, local: LocalData): SyncState => {
   const stamps = { ...state.stamps };
   for (const table of SYNC_TABLES) {
-    stamps[table] = Object.fromEntries((local[table] as Stamped[]).map(r => [r.id, rowStamp(table, r)]));
+    stamps[table] = Object.fromEntries(((local[table] || []) as Stamped[]).map(r => [r.id, rowStamp(table, r)]));
   }
   return {
     ...state,
@@ -88,6 +88,7 @@ export interface LocalData {
   occurrences: Occurrence[];
   knownWords: KnownWord[];
   speechAttempts: SpeechAttempt[];
+  notes?: TextNote[]; // optional: rows from before notes existed read as none
   logs: StudyLog[];
   profile?: UserProfile | null;
   achievements: UserAchievement[];
@@ -124,7 +125,7 @@ export const nextOutgoing = (local: LocalData, state: SyncState): Outgoing => {
   let room = ROWS_PER_REQUEST;
   let remaining = 0;
   for (const table of SYNC_TABLES) {
-    const rows = local[table] as Stamped[];
+    const rows = (local[table] || []) as Stamped[];
     const known = state.stamps[table] || {};
     for (const row of rows) {
       const stamp = rowStamp(table, row);

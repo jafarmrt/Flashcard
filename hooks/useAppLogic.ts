@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile, UserAchievement, ExtractedWordCard, StudyLog, Source, Chapter, ChapterText, Occurrence, KnownWord, SpeechAttempt } from '../types';
+import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile, UserAchievement, ExtractedWordCard, StudyLog, Source, Chapter, ChapterText, Occurrence, KnownWord, SpeechAttempt, TextNote } from '../types';
 import { clearAccountData, db } from '../services/localDBService';
 import { belongsToAnother, localOwner, OWNER_KEY } from '../services/localOwner';
 import { APP_VERSION, RELEASES } from '../services/appVersion';
@@ -8,7 +8,7 @@ import { calculateLevel, calculateStreak, checkAndAwardAchievements } from '../s
 import { generateNewDailyGoals, updateGoalProgress, reviewGoalId } from '../services/dailyGoalsService';
 import { availableFreezes, dayString, daysToFreeze, MAX_HELD_FREEZES } from '../services/streakService';
 import { DEFAULT_DAILY_REVIEW_GOAL, isChestSection, SECTION_GOAL_REVIEWS } from '../services/xpRules';
-import { buildSource, cardIndex, cardsInText, chaptersOf, findCard, markChunkDone, migrateTexts, newOccurrence, sectionReward, SourceInput } from '../services/library';
+import { buildSource, cardIndex, cardsInText, chaptersOf, cleanEditedText, findCard, markChunkDone, migrateTexts, newOccurrence, sectionReward, SourceInput } from '../services/library';
 import { cardsOfSource, pickBookReview } from '../services/readingStats';
 import { normalizeTerm } from '../services/vocabMerge';
 import { forgetRows, newKnownWord } from '../services/knownWords';
@@ -165,6 +165,7 @@ export const useAppLogic = () => {
   const [occurrences, setOccurrences] = useState<Occurrence[]>([]);
   const [knownWords, setKnownWords] = useState<KnownWord[]>([]);
   const [speechAttempts, setSpeechAttempts] = useState<SpeechAttempt[]>([]);
+  const [notes, setNotes] = useState<TextNote[]>([]);
   // A section just finished: its cards, offered for a short review.
   const [sectionReview, setSectionReview] = useState<{ sourceId: string; chapterId: string; chunk: number; cardIds: string[] } | null>(null);
   const [activeSourceId, setActiveSourceId] = useState<string | null>(null);
@@ -330,11 +331,13 @@ export const useAppLogic = () => {
     const allOccurrences = await db.occurrences.toArray();
     const allKnown = await db.knownWords.toArray();
     const allSpeech = await db.speechAttempts.toArray();
+    const allNotes = await db.notes.toArray();
     setSources(allSources);
     setChapters(allChapters);
     setOccurrences(allOccurrences);
     setKnownWords(allKnown);
     setSpeechAttempts(allSpeech);
+    setNotes(allNotes);
     setFlashcards(allCards);
     setDecks(allDecks);
     setEarnedAchievements(allAchievements);
@@ -371,7 +374,7 @@ export const useAppLogic = () => {
     
     return {
       cards: allCards, decks: allDecks, sources: allSources, chapters: allChapters, occurrences: allOccurrences,
-      knownWords: allKnown, speechAttempts: allSpeech, logs: allLogs, profile, achievements: allAchievements,
+      knownWords: allKnown, speechAttempts: allSpeech, notes: allNotes, logs: allLogs, profile, achievements: allAchievements,
     };
   };
   
@@ -508,7 +511,7 @@ export const useAppLogic = () => {
   const rememberSynced = (fresh: Awaited<ReturnType<typeof fetchData>>) => {
     lastSyncedFingerprint.current = syncFingerprint({
       cards: fresh.cards, decks: fresh.decks, sources: fresh.sources, chapters: fresh.chapters, occurrences: fresh.occurrences,
-      knownWords: fresh.knownWords, speechAttempts: fresh.speechAttempts, profile: fresh.profile, achievements: fresh.achievements, settingsUpdatedAt: readSavedSettings().updatedAt,
+      knownWords: fresh.knownWords, speechAttempts: fresh.speechAttempts, notes: fresh.notes, profile: fresh.profile, achievements: fresh.achievements, settingsUpdatedAt: readSavedSettings().updatedAt,
     });
   };
 
@@ -520,6 +523,7 @@ export const useAppLogic = () => {
     occurrences: await db.occurrences.toArray(),
     knownWords: await db.knownWords.toArray(),
     speechAttempts: await db.speechAttempts.toArray(),
+    notes: await db.notes.toArray(),
     logs: await db.studyHistory.toArray(),
     profile: await db.userProfile.get(1),
     achievements: await db.userAchievements.toArray(),
@@ -528,7 +532,7 @@ export const useAppLogic = () => {
 
   const SYNC_DB_TABLES: Record<SyncTable, any> = {
     decks: db.decks, cards: db.flashcards, sources: db.sources, chapters: db.chapters, occurrences: db.occurrences,
-    knownWords: db.knownWords, speechAttempts: db.speechAttempts,
+    knownWords: db.knownWords, speechAttempts: db.speechAttempts, notes: db.notes,
   };
   const stampOf = (table: SyncTable) => (table === 'decks' ? deckStamp : cardStamp) as (row: any) => string;
 
@@ -540,7 +544,7 @@ export const useAppLogic = () => {
     const live = new Set((await db.chapters.toArray()).filter(c => !c.isDeleted).map(c => c.id));
     for (const text of pending.filter(t => live.has(t.id)).slice(0, 20)) {
       try {
-        await callProxy('chapter-put', { id: text.id, sourceId: text.sourceId, chunks: text.chunks });
+        await callProxy('chapter-put', { id: text.id, sourceId: text.sourceId, chunks: text.chunks, ...(text.editedAt ? { editedAt: text.editedAt } : {}) });
         await db.chapterTexts.update(text.id, { uploaded: true });
       } catch (error) {
         if (isNetworkError(error)) throw error;
@@ -588,7 +592,7 @@ export const useAppLogic = () => {
 
             let maxBefore = 0;
             let maxAfter = 0;
-            await (db as any).transaction('rw', [db.decks, db.flashcards, db.sources, db.chapters, db.occurrences, db.knownWords, db.speechAttempts, db.studyHistory, db.userProfile, db.userAchievements], async () => {
+            await (db as any).transaction('rw', [db.decks, db.flashcards, db.sources, db.chapters, db.occurrences, db.knownWords, db.speechAttempts, db.notes, db.studyHistory, db.userProfile, db.userAchievements], async () => {
                 for (const table of SYNC_TABLES) {
                     const incoming = changes[table];
                     if (!Array.isArray(incoming) || incoming.length === 0) continue;
@@ -758,13 +762,13 @@ export const useAppLogic = () => {
     }
 
     const fingerprint = syncFingerprint({
-        cards: flashcards, decks, sources, chapters, occurrences, knownWords, speechAttempts, profile: userProfile, achievements: earnedAchievements, settingsUpdatedAt: settings.updatedAt,
+        cards: flashcards, decks, sources, chapters, occurrences, knownWords, speechAttempts, notes, profile: userProfile, achievements: earnedAchievements, settingsUpdatedAt: settings.updatedAt,
     });
     if (fingerprint === lastSyncedFingerprint.current) return;
 
     const handler = setTimeout(() => handleSync(), 2000);
     return () => clearTimeout(handler);
-  }, [flashcards, decks, userProfile, earnedAchievements, sources, chapters, occurrences, knownWords, speechAttempts, isLoggedIn, autoFixProgress, settings.updatedAt]);
+  }, [flashcards, decks, userProfile, earnedAchievements, sources, chapters, occurrences, knownWords, speechAttempts, notes, isLoggedIn, autoFixProgress, settings.updatedAt]);
 
 
   const updateSettings = (changes: Partial<Settings>) => {
@@ -1281,11 +1285,18 @@ export const useAppLogic = () => {
   // Finishing a section also notes the cards met in it again: a card with no
   // place in this book yet gets this sentence, so it shows in how many books
   // the word was seen.
-  const handleCompleteChunk = async (chapterId: string, index: number) => {
+  // `then`: back to the book (the default), straight on to the next section
+  // (reading page after page in book mode), or stay (the chapter's end page).
+  const handleCompleteChunk = async (chapterId: string, index: number, then: 'library' | 'next' | 'stay' = 'library') => {
     const chapter = await db.chapters.get(chapterId);
     if (!chapter) return;
-    if (!markChunkDone(chapter, index).firstTime) {
+    const goOn = (current: Chapter) => {
+      if (then === 'stay') return;
+      if (then === 'next' && index + 1 < current.chunkCount) { handleOpenChunk(current, index + 1); return; }
       setView('TEXTS');
+    };
+    if (!markChunkDone(chapter, index).firstTime) {
+      goOn(chapter);
       return;
     }
     const offerReview = (placed: Occurrence[]) => {
@@ -1309,10 +1320,16 @@ export const useAppLogic = () => {
       return done.chapter;
     });
     if (!updated) {
-      setView('TEXTS');
+      goOn(chapter);
       return;
     }
     setChapters(prev => prev.map(c => (c.id === updated.id ? updated : c)));
+    // A section left with no text (cut out by the reader) is passed over
+    // without a reward.
+    if (!text.trim()) {
+      goOn(updated);
+      return;
+    }
     if (seenAgain.length) setOccurrences(prev => [...prev.filter(o => !seenAgain.some(s => s.id === o.id)), ...seenAgain]);
     offerReview(await db.occurrences.where('chapterId').equals(chapterId).toArray());
     // The last section of a chapter, or of a book, earns a bonus on top.
@@ -1334,18 +1351,45 @@ export const useAppLogic = () => {
         setTimeout(() => showToast('صندوق جایزه: یک محافظ زنجیره گرفتی.'), 1200);
       }
     }
-    setView('TEXTS');
+    goOn(updated);
   };
 
   // A chapter's text: from this browser, or from the server the first time
   // the chapter is opened on this device.
+  // A copy older than the chapter's last edit (made on another device) is
+  // fetched again; offline, the old copy is read meanwhile.
   const loadChapterText = async (chapterId: string): Promise<ChapterText> => {
     const local = await db.chapterTexts.get(chapterId);
-    if (local) return local;
-    const remote = await callProxy('chapter-get', { id: chapterId });
-    const text: ChapterText = { id: remote.id, sourceId: remote.sourceId, chunks: remote.chunks, uploaded: true };
-    await db.chapterTexts.put(text);
-    return text;
+    const edited = (await db.chapters.get(chapterId))?.textEditedAt;
+    if (local && (!edited || (local.editedAt || '') >= edited)) return local;
+    try {
+      const remote = await callProxy('chapter-get', { id: chapterId });
+      if (local && (remote.editedAt || '') <= (local.editedAt || '')) return local;
+      const text: ChapterText = { id: remote.id, sourceId: remote.sourceId, chunks: remote.chunks, uploaded: true, ...(remote.editedAt ? { editedAt: remote.editedAt } : {}) };
+      await db.chapterTexts.put(text);
+      return text;
+    } catch (error) {
+      if (local) return local;
+      throw error;
+    }
+  };
+
+  // The reader corrected or cut the text of a section. The new text goes to
+  // the server with the next sync, and the chapter says so, so every device
+  // takes it. Sections keep their numbers: an emptied one is passed over.
+  const handleEditChunk = async (chapterId: string, index: number, edited: string): Promise<string[]> => {
+    const text = await loadChapterText(chapterId);
+    const chapter = await db.chapters.get(chapterId);
+    if (!chapter || index < 0 || index >= text.chunks.length) throw new Error('This section is not here any more.');
+    const now = new Date().toISOString();
+    const chunks = text.chunks.map((c, i) => (i === index ? cleanEditedText(edited) : c));
+    const updated: Chapter = { ...chapter, textEditedAt: now, wordCount: chunks.reduce((n, c) => n + (c.match(/\S+/g)?.length || 0), 0), updatedAt: now };
+    await (db as any).transaction('rw', [db.chapterTexts, db.chapters], async () => {
+      await db.chapterTexts.put({ ...text, chunks, editedAt: now, uploaded: false });
+      await db.chapters.put(updated);
+    });
+    setChapters(prev => prev.map(c => (c.id === chapterId ? updated : c)));
+    return chunks;
   };
 
   // Cards picked while reading. A term that already has a card, in any deck
@@ -1416,6 +1460,14 @@ export const useAppLogic = () => {
     const compacted = compactAttempts(await db.speechAttempts.toArray());
     if (compacted.length) await db.speechAttempts.bulkPut(compacted);
     setSpeechAttempts(await db.speechAttempts.toArray());
+  };
+
+  // A note or a kept translation on a book: added, changed, or removed
+  // (isDeleted); it syncs like the rest of the account.
+  const handleSaveNote = async (note: TextNote) => {
+    const row = { ...note, updatedAt: new Date().toISOString() };
+    await db.notes.put(row);
+    setNotes(prev => [...prev.filter(n => n.id !== row.id), row]);
   };
 
   const handleUnmarkKnown = async (term: string) => {
@@ -1847,7 +1899,7 @@ export const useAppLogic = () => {
       // State
       flashcards, decks, view, editingCard, toastMessage, isLoggedIn, currentUser, authLoading, appLoading,
       syncStatus, studyDeckId, studyCards, studySessionId, isStudySetupModalOpen, studyMode, studySourceId, studyLogs, dbStatus, apiStatus,
-      sources, chapters, occurrences, activeSourceId, activeChapterId, activeChunk, knownWords, speechAttempts, handleSaveSpeechAttempt, sectionReview,
+      sources, chapters, occurrences, activeSourceId, activeChapterId, activeChunk, knownWords, speechAttempts, handleSaveSpeechAttempt, notes, handleSaveNote, sectionReview,
       freeDictApiStatus, mwDictApiStatus, settings, userProfile, streak, earnedAchievements,
       previousViewRef, autoFixProgress, autoFixReport, extrasProgress,
       overlayEdit, openCardEditor, closeCardEditor, saveOverlayEdit,
@@ -1859,7 +1911,7 @@ export const useAppLogic = () => {
       updateSettings, handleCheckAchievements, handleGoalUpdate, handleCompleteCardDetails,
       handleAutoFixCards, handleStopAutoFix, handleCloseAutoFixReport, handleSaveExtractedCards,
       startQuickReview, openStudySetup, setStudyMode, handleAddSource, handleOpenSource, handleOpenChapter, handleOpenChunk,
-      handleDeleteSource, handleCompleteChunk, loadChapterText, handleSaveReaderCards,
+      handleDeleteSource, handleCompleteChunk, loadChapterText, handleEditChunk, handleSaveReaderCards,
       handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview: () => setSectionReview(null),
       handleCheckCards, handleStartSourceReview, handleReviewCards, handlePrestudyChapter,
       handleFillExtras, handleStopFillExtras, handleSaveCardContent, handleApplyImprovements,

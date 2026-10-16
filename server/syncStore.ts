@@ -12,7 +12,7 @@ import { newerSettings } from '../services/settingsSync.js';
 import { studyLogKey } from '../services/syncState.js';
 
 export const STORE_VERSION = 2;
-export const ROW_TABLES = ['decks', 'cards', 'sources', 'chapters', 'occurrences', 'knownWords', 'speechAttempts'] as const;
+export const ROW_TABLES = ['decks', 'cards', 'sources', 'chapters', 'occurrences', 'knownWords', 'speechAttempts', 'notes'] as const;
 export type RowTable = (typeof ROW_TABLES)[number];
 
 type Row = { id: string; updatedAt?: string; isDeleted?: boolean; _rev?: number; [key: string]: any };
@@ -28,6 +28,7 @@ export interface StoreData {
   occurrences: Row[];
   knownWords: Row[];
   speechAttempts: Row[];
+  notes: Row[];
   studyHistory: any[];
   userProfile: any | null;
   userAchievements: any[];
@@ -43,6 +44,7 @@ export interface SyncChanges {
   occurrences?: Row[];
   knownWords?: Row[];
   speechAttempts?: Row[];
+  notes?: Row[];
   studyHistory?: any[];
   userProfile?: any;
   userAchievements?: any[];
@@ -60,7 +62,7 @@ const withoutLocalAudio = (card: Row): Row => {
 
 const emptyStore = (storeId: string): StoreData => ({
   version: STORE_VERSION, storeId, rev: 0,
-  decks: [], cards: [], sources: [], chapters: [], occurrences: [], knownWords: [], speechAttempts: [],
+  decks: [], cards: [], sources: [], chapters: [], occurrences: [], knownWords: [], speechAttempts: [], notes: [],
   studyHistory: [], userProfile: null, userAchievements: [],
 });
 

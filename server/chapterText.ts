@@ -10,16 +10,21 @@ export interface StoredChapter {
   sourceId: string;
   gz?: string; // base64 of the gzipped JSON list of sections
   chunks?: string[]; // texts saved before compression
+  editedAt?: string; // the reader's last edit of the text
 }
 
-export const packChapter = (text: { id: string; sourceId: string; chunks: string[] }): StoredChapter => ({
+type PlainChapter = { id: string; sourceId: string; chunks: string[]; editedAt?: string };
+
+export const packChapter = (text: PlainChapter): StoredChapter => ({
   id: text.id,
   sourceId: text.sourceId,
   gz: gzipSync(JSON.stringify(text.chunks), { level: 9 }).toString('base64'),
+  ...(text.editedAt ? { editedAt: text.editedAt } : {}),
 });
 
-export const unpackChapter = (stored: StoredChapter): { id: string; sourceId: string; chunks: string[] } => ({
+export const unpackChapter = (stored: StoredChapter): PlainChapter => ({
   id: stored.id,
   sourceId: stored.sourceId,
   chunks: stored.gz ? JSON.parse(gunzipSync(Buffer.from(stored.gz, 'base64')).toString('utf-8')) : stored.chunks || [],
+  ...(stored.editedAt ? { editedAt: stored.editedAt } : {}),
 });

@@ -16,7 +16,7 @@ import { Sidebar, BottomTabs, AddFab } from './components/layout/Navigation';
 import { TodayView } from './components/TodayView';
 import { MeView } from './components/MeView';
 import { LibraryView } from './components/LibraryView';
-import { chaptersOf, placesByCard } from './services/library';
+import { chaptersOf, currentChunkOf, placesByCard } from './services/library';
 import { knownTermSet } from './services/knownWords';
 import { isDue, isNewCard } from './services/srsService';
 import { dayString } from './services/streakService';
@@ -85,8 +85,8 @@ const App: React.FC = () => {
         syncStatus, studyMode, studySourceId, studyLogs, studySessionId, sources, chapters, occurrences,
         activeSourceId, activeChapterId, activeChunk, startQuickReview, openStudySetup,
         handleAddSource, handleOpenSource, handleOpenChapter, handleOpenChunk, handleDeleteSource,
-        handleCompleteChunk, loadChapterText, handleSaveReaderCards,
-        knownWords, speechAttempts, handleSaveSpeechAttempt, sectionReview, handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview, handleCheckCards,
+        handleCompleteChunk, loadChapterText, handleEditChunk, handleSaveReaderCards,
+        knownWords, speechAttempts, handleSaveSpeechAttempt, notes, handleSaveNote, sectionReview, handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview, handleCheckCards,
         handleStartSourceReview, handleReviewCards, handlePrestudyChapter,
         overlayEdit, openCardEditor, closeCardEditor, saveOverlayEdit,
         handleFillExtras, handleStopFillExtras, extrasProgress, handleSaveCardContent, handleApplyImprovements,
@@ -184,6 +184,9 @@ const App: React.FC = () => {
                 />;
             case 'READER':
                 if (!activeSource || !activeChapter) return null;
+                {
+                const bookChapters = chaptersOf(activeSource.id, chapters);
+                const following = bookChapters[bookChapters.findIndex(c => c.id === activeChapter.id) + 1];
                 return <ReaderScreen
                     source={activeSource}
                     chapter={activeChapter}
@@ -197,11 +200,17 @@ const App: React.FC = () => {
                     onUnmarkKnown={handleUnmarkKnown}
                     onUpdateSettings={updateSettings}
                     onSaveCards={cards => handleSaveReaderCards(cards, activeChapter.id, activeChunk)}
-                    onComplete={() => handleCompleteChunk(activeChapter.id, activeChunk)}
+                    onComplete={then => handleCompleteChunk(activeChapter.id, activeChunk, then)}
+                    onEditChunk={(i, text) => handleEditChunk(activeChapter.id, i, text)}
+                    notes={notes.filter(n => n.chapterId === activeChapter.id)}
+                    onSaveNote={handleSaveNote}
                     onBack={() => handleOpenChapter(activeChapter.id)}
                     onOpenChunk={i => handleOpenChunk(activeChapter, i)}
+                    onReviewChapter={() => handleStartSourceReview(activeSource.id, bookChapters.length > 1 ? activeChapter.id : undefined)}
+                    nextChapter={following ? { title: following.title, open: () => handleOpenChunk(following, currentChunkOf(following)) } : undefined}
                     showToast={showToast}
                 />;
+                }
             case 'STUDY':
                 return <StudyView
                     key={studySessionId}
@@ -346,10 +355,13 @@ const App: React.FC = () => {
     // English, left-to-right layout inside the same shell.
     const PERSIAN_VIEWS = ['TODAY', 'ME', 'TEXTS', 'READER', 'STUDY', 'SETTINGS', 'USAGE', 'DECKS', 'LIST', 'FORM', 'BULK_ADD', 'ACHIEVEMENTS', 'STATS', 'PROFILE', 'PRACTICE', 'AI_EXTRACT', 'CHANGELOG'];
     const isStudy = view === 'STUDY';
+    // Reading a book in pages fills the screen: no menus around the page.
+    const bookReading = view === 'READER' && settings.readerMode !== 'scroll';
+    const fullScreen = isStudy || bookReading;
 
     return (
         <div dir="rtl" className="min-h-screen flex bg-[#F5F6FA] dark:bg-slate-950 font-fa">
-            {!isStudy && (
+            {!fullScreen && (
                 <Sidebar
                     view={view}
                     dueCount={dueCards.length}
@@ -407,7 +419,7 @@ const App: React.FC = () => {
             )}
 
             {['TODAY', 'LIST', 'DECKS'].includes(view) && <AddFab onClick={handleAddCard} />}
-            {!isStudy && <BottomTabs view={view} onNavigate={handleNavigate} />}
+            {!fullScreen && <BottomTabs view={view} onNavigate={handleNavigate} />}
 
             {toastMessage && <Toast message={toastMessage} />}
         </div>
