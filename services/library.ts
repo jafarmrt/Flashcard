@@ -94,6 +94,15 @@ export const sectionReward = (chapter: Chapter, source: Pick<Source, 'id' | 'kin
   return { chapterDone, bookDone, xp };
 };
 
+// A section's text as the reader edited it: one blank line between
+// paragraphs, lines inside a paragraph kept, no stray spaces at the ends.
+export const cleanEditedText = (text: string): string =>
+  text.replace(/\r\n?/g, '\n')
+    .split(/\n\s*\n/)
+    .map(p => p.split('\n').map(line => line.replace(/[ \t]+/g, ' ').trim()).filter(Boolean).join('\n'))
+    .filter(Boolean)
+    .join('\n\n');
+
 // The first section not finished yet, or the last one when all are done.
 export const currentChunkOf = (c: Chapter): number => {
   for (let i = 0; i < c.chunkCount; i++) if (!c.completed.includes(i)) return i;

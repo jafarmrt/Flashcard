@@ -31,6 +31,20 @@ hand) and where its word was met: book, chapter, section and sentence. A word
 met in another book gets that sentence added to its card instead of a second
 card, and each book has a word list by chapter with search and CSV export.
 
+## Reading like a book
+
+- A book opens as pages (CSS columns as tall as the screen): one page on a
+  phone, two facing pages on a wide screen. Swipe, tap the page's edge or use
+  the arrow keys to turn. Turning past a section's last page finishes it and
+  the next section follows; a chapter ends on its own page. Aa sets the type
+  size, the paper (cream, white, night) and justified text; the scrolling page
+  is still there.
+- Aa › «ویرایش یا حذف متن این بخش» corrects a section's text or cuts out
+  passages. The edit is uploaded with the next sync and the chapter's
+  `textEditedAt` makes other devices fetch it again.
+- Notes and kept translations (table `notes`, synced) point at a passage's
+  words and keep the words themselves, so they are found again after an edit.
+
 ## Reading a section
 
 - Tap a word: the free dictionary answers at once. With the AI source on, the

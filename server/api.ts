@@ -798,16 +798,20 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         return res.status(200).json({ keys });
       }
 
-      // A chapter's text is saved once under its own key, compressed; it
-      // never changes.
+      // A chapter's text is saved under its own key, compressed: when it is
+      // added, and again when the reader edits it (`editedAt`).
       case 'chapter-put': {
         const { id, sourceId, chunks } = payload;
+        const editedAt = typeof payload.editedAt === 'string' && !Number.isNaN(Date.parse(payload.editedAt)) ? payload.editedAt : undefined;
         if (typeof id !== 'string' || !CHAPTER_ID.test(id) || typeof sourceId !== 'string' || !CHAPTER_ID.test(sourceId)) {
           return res.status(400).json({ error: 'A chapter id and source id are required.' });
         }
         if (!Array.isArray(chunks) || chunks.some((c: unknown) => typeof c !== 'string')) return res.status(400).json({ error: 'chunks must be a list of texts.' });
         if (chunks.reduce((n: number, c: string) => n + c.length, 0) > MAX_CHAPTER_CHARS) return res.status(413).json({ error: 'This chapter is too long to save.' });
-        await setKey(chapterKey(signedInUser!, id), packChapter({ id, sourceId, chunks }));
+        // An older edit arriving late does not replace a newer one.
+        const stored = await getKey(chapterKey(signedInUser!, id));
+        if (stored?.editedAt && (!editedAt || editedAt < stored.editedAt)) return res.status(200).json({ ok: true, kept: stored.editedAt });
+        await setKey(chapterKey(signedInUser!, id), packChapter({ id, sourceId, chunks, editedAt }));
         return res.status(200).json({ ok: true });
       }
 

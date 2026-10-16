@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { extractKinds, KIND_LABEL } from '../services/cardKinds';
-import { Chapter, ChapterText, ExtractedWordCard, Flashcard, Settings, Source } from '../types';
+import { Chapter, ChapterText, ExtractedWordCard, Flashcard, Settings, Source, TextNote } from '../types';
+import { newNote, noteQuote, notesAtWords, notesOfSection, savedTranslation } from '../services/notes';
 import { ProxyError } from '../services/apiService';
 import { aiOrigin, aiRequestOptions } from '../services/aiSettings';
 import { extractFromLongText, ExtractionSource, isPermanentAiError } from '../services/extractionPipeline';
@@ -22,7 +23,9 @@ import { useReadAloud } from '../hooks/useReadAloud';
 import { CHUNK_COMPLETE_XP, isChestSection } from '../services/xpRules';
 import { fa, Icon } from './common/ui';
 import { Range, ReaderText } from './reader/ReaderText';
-import { SelectionBar, SelectionTask } from './reader/SelectionBar';
+import { SelectionBar, SelectionTask, sheetClass } from './reader/SelectionBar';
+import { PageColumns, usePagination } from './reader/BookPages';
+import { TextEditor } from './reader/TextEditor';
 
 interface ChunkReaderViewProps {
   source: Source;
@@ -34,14 +37,42 @@ interface ChunkReaderViewProps {
   cards: Flashcard[]; // every card not deleted
   knownTerms: string[]; // the "I know it" list
   onSaveCards: (cards: ExtractedWordCard[]) => Promise<void>;
-  onComplete: () => void;
+  // Finishing a section; then back to the book (default), on to the next
+  // section (reading on in book mode), or stay (the chapter's last page).
+  onComplete: (then?: CompleteThen) => void | Promise<void>;
   onBack: () => void;
-  onOpenChunk: (index: number) => void;
+  onOpenChunk: (index: number, entry?: ReaderEntry) => void;
+  entry?: ReaderEntry; // where in the section to open (book mode)
+  onReviewChapter?: () => void;
+  nextChapter?: { title: string; open: () => void };
+  onEditText?: (text: string) => Promise<void>; // the reader corrected or cut the section's text
+  notes?: TextNote[]; // the reader's notes and kept translations in this chapter
+  onSaveNote?: (note: TextNote) => Promise<void> | void; // added, changed or removed (isDeleted)
   onMarkKnown: (term: string) => void;
   onUnmarkKnown: (term: string) => void;
   onUpdateSettings: (changes: Partial<Settings>) => void;
   showToast: (message: string) => void;
 }
+
+export type CompleteThen = 'library' | 'next' | 'stay';
+// Where a section opens: its first page, its last (paging back from the next
+// section), the page of a word, or where the reader left it on this device.
+export type ReaderEntry = { kind: 'start' | 'end' | 'resume' } | { kind: 'word'; word: number };
+
+// Book mode: type sizes, and the paper (night is the dark theme's paper).
+export const READER_FONT_SIZES = [16, 18, 20, 22, 25];
+const DEFAULT_FONT_STEP = 1;
+type Paper = NonNullable<Settings['readerPaper']>;
+const PAPER: Record<Paper, { label: string; page: string; swatch: string }> = {
+  cream: { label: 'کرم', page: 'bg-[#FBF6EC] text-[#2E2A24]', swatch: 'bg-[#FBF6EC]' },
+  white: { label: 'سفید', page: 'bg-white text-slate-800', swatch: 'bg-white' },
+  night: { label: 'شب', page: 'dark bg-[#18191C] text-[#DAD5C8]', swatch: 'bg-[#18191C]' },
+};
+// The place on the page, kept on this device: the first word of the page.
+const placeKey = (chapterId: string, chunk: number) => `lc_reader_at:${chapterId}:${chunk}`;
+const savedPlace = (chapterId: string, chunk: number): number => {
+  try { return Math.max(0, Number(localStorage.getItem(placeKey(chapterId, chunk))) || 0); } catch { return 0; }
+};
 
 // `uid` stays with an item while its term changes (the dictionary's headword,
 // then the AI's form in this sentence); `key` is its term, normalised.
@@ -108,15 +139,22 @@ const GRAMMAR_MARK = 'border-b-2 border-dotted border-rose-400 dark:border-rose-
 // cards, then finish the section.
 export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   source: book, chapter, chunks, index, chapterCount, settings, cards, knownTerms, onSaveCards, onComplete, onBack, onOpenChunk,
-  onMarkKnown, onUnmarkKnown, onUpdateSettings, showToast,
+  onMarkKnown, onUnmarkKnown, onUpdateSettings, showToast, entry = { kind: 'resume' } as ReaderEntry, onReviewChapter, nextChapter,
+  onEditText, notes = [], onSaveNote,
 }) => {
   const chunk = chunks[index] || '';
   const section = useMemo(() => readerSection(chunk), [chunk]);
+  // The reader's notes on this section, where their words are now.
+  const placedNotes = useMemo(() => notesOfSection(section, notes, chapter.id, index), [section, notes, chapter.id, index]);
+  const notesAt = useMemo(() => notesAtWords(section.words.length, placedNotes), [section, placedNotes]);
   const [items, setItems] = useState<Item[]>([]);
   const [selectedUid, setSelectedUid] = useState<string | null>(null);
   const [selection, setSelection] = useState<Range | null>(null);
   const [busy, setBusy] = useState<SelectionTask | null>(null);
-  const [sentenceResult, setSentenceResult] = useState<{ range: Range; translation?: string; structures?: { uid: string; name: string }[] } | null>(null);
+  const [sentenceResult, setSentenceResult] = useState<{ range: Range; translation?: string; by?: string; structures?: { uid: string; name: string }[] } | null>(null);
+  // Notes: the one being written, and the word whose notes are open.
+  const [noteDraft, setNoteDraft] = useState<{ range: Range; kind: TextNote['kind']; text: string; by?: string; note?: TextNote } | null>(null);
+  const [notesOpenAt, setNotesOpenAt] = useState<number | null>(null);
   const [source, setSource] = useState<ExtractionSource>(settings.extractionSource || 'ai');
   const [loading, setLoading] = useState(false);
   const [preRead, setPreRead] = useState<{ state: 'loading' | 'shown' | 'closed'; uids: string[] } | null>(null);
@@ -395,6 +433,14 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   const tapWord = (i: number) => {
     setSentenceResult(null);
     setSelection(null);
+    // A word with a note opens the note; the note offers the word's meaning.
+    if (notesAt[i]?.length) {
+      setSelectedUid(null);
+      setNoteDraft(null);
+      setNotesOpenAt(i);
+      return;
+    }
+    setNotesOpenAt(null);
     const rules = showGrammar ? grammarFound.at[i] : [];
     if (rules.length > 0 && isFunctionWord(section.words[i].text)) {
       openRule(rules[0], i);
@@ -419,6 +465,8 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   const pick = (range: Range) => {
     setSelection(range);
     setSelectedUid(null);
+    setNotesOpenAt(null);
+    setNoteDraft(null);
     setSentenceResult(r => (r && r.range.from === range.from && r.range.to === range.to ? r : null));
   };
 
@@ -433,16 +481,17 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     pick({ from: first, to: last });
   };
 
-  const translateSelection = async () => {
-    if (!selection) return;
-    const range = selection;
+  const translateSelection = async (picked: Range | null = selection) => {
+    if (!picked) return;
+    const range = picked;
     setBusy('translate');
     try {
       const result = await translateText(sentencesOf(range), useAi && !aiOff.current, aiOptions);
       if (result.aiError && result.text) aiFailed(new Error(result.aiError), 'translate');
       const translation = result.text;
+      const by = result.by === 'ai' ? result.service || 'AI' : 'MyMemory';
       if (!translation) showToast('ترجمه نیامد. کمی بعد دوباره امتحان کن.');
-      else setSentenceResult(r => ({ ...(r?.range.from === range.from && r.range.to === range.to ? r : {}), range, translation }));
+      else setSentenceResult(r => ({ ...(r?.range.from === range.from && r.range.to === range.to ? r : {}), range, translation, by }));
     } catch (error) {
       console.error('Translation failed:', error);
       showToast('ترجمه ناموفق بود. اتصال را بررسی کن.');
@@ -538,7 +587,10 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     setPreRead({ state: 'shown', uids: found.filter(it => !it.alreadyInDeck && it.kind !== 'grammar').slice(0, PRE_READ_WORDS).map(it => it.uid) });
   };
   useEffect(() => {
-    if (settings.preReadAuto && !done) runPreRead();
+    if (!settings.preReadAuto || done || section.words.length === 0) return;
+    runPreRead();
+    // In book mode the hard words open beside the page.
+    if (settings.readerMode !== 'scroll') setPanel('words');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -571,12 +623,148 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
 
   const finish = () => {
     if (toSave.length > 0 && !window.confirm(`${fa(toSave.length)} واژهٔ انتخاب‌شده هنوز کارت نشده‌اند. بدون ساختن کارت تمام شود؟`)) return;
-    onComplete();
+    onComplete('library');
   };
+
+  // --- Book mode: the section as pages ---
+  const bookMode = settings.readerMode !== 'scroll';
+  const fontStep = Math.max(0, Math.min(READER_FONT_SIZES.length - 1, settings.readerFontSize ?? DEFAULT_FONT_STEP));
+  const justify = settings.readerJustify !== false;
+  const appDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+  const paper: Paper = appDark ? 'night' : settings.readerPaper || 'cream';
+  const room = useRef<HTMLDivElement>(null);
+  const pageText = useRef<HTMLDivElement>(null);
+  const firstAnchor = useMemo(() => (entry.kind === 'start' ? 0
+    : entry.kind === 'end' ? Math.max(0, section.words.length - 1)
+    : entry.kind === 'word' ? entry.word
+    : savedPlace(chapter.id, index)), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const pagination = usePagination(room, pageText, firstAnchor, `${bookMode}|${fontStep}|${justify}|${chunk.length}`);
+  const { layout, pages, page } = pagination;
+  // The chapter's last section ends on a page of its own.
+  const [endPage, setEndPage] = useState(false);
+  const [panel, setPanel] = useState<'type' | 'words' | null>(null);
+  const [editing, setEditing] = useState(false);
+  const editor = editing && onEditText && (
+    <TextEditor title={`${chapterCount > 1 ? `${chapter.title}، ` : ''}بخش ${fa(index + 1)} از ${fa(chunks.length)}`} text={chunk}
+      unsavedPicks={items.filter(it => it.selected && !it.alreadyInDeck).length}
+      onClose={() => setEditing(false)}
+      onSave={async text => {
+        try {
+          await onEditText(text);
+          showToast(text.trim() ? 'متن این بخش ذخیره شد.' : 'متن این بخش حذف شد.');
+        } catch (error) {
+          console.error('Saving the text failed:', error);
+          showToast('ذخیرهٔ متن ناموفق بود.');
+        }
+      }} />
+  );
+  const isLastSection = index >= chunks.length - 1;
+  const sectionEmpty = section.words.length === 0;
+
+  const turnTo = (p: number) => {
+    pagination.turnTo(p);
+    setSelection(null);
+  };
+  // The place on the page is kept for the next time this section opens here.
+  useEffect(() => {
+    if (!bookMode || !layout) return;
+    try { localStorage.setItem(placeKey(chapter.id, index), String(pagination.firstWordOn(page))); } catch { /* private mode */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, layout]);
+
+  // Leaving a section with words picked but not saved: they are saved, or
+  // left, as the reader says; turning the page is never blocked.
+  const leaveSection = async () => {
+    if (toSave.length === 0) return;
+    if (window.confirm(`${fa(toSave.length)} واژهٔ انتخاب‌شده هنوز کارت نشده. کارتشان ساخته شود؟\n(لغو: بی‌کارت ادامه بده)`)) await save();
+  };
+  const turning = useRef(false);
+  const nextPage = async () => {
+    if (endPage || turning.current) return;
+    if (page < pages - 1) { turnTo(page + 1); return; }
+    turning.current = true;
+    try {
+      await leaveSection();
+      readAloud.stop();
+      if (isLastSection) {
+        if (!done) await onComplete('stay');
+        setEndPage(true);
+      } else if (!done) {
+        await onComplete('next');
+      } else {
+        onOpenChunk(index + 1, { kind: 'start' });
+      }
+    } finally {
+      turning.current = false;
+    }
+  };
+  const prevPage = () => {
+    if (endPage) { setEndPage(false); return; }
+    if (page > 0) { turnTo(page - 1); return; }
+    if (index > 0) { readAloud.stop(); onOpenChunk(index - 1, { kind: 'end' }); }
+  };
+  const atStart = !endPage && page === 0 && index === 0;
+
+  // Arrow keys and Page Up/Down turn pages, as in an e-book.
+  useEffect(() => {
+    if (!bookMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.closest('input, textarea, select, [contenteditable="true"]') || e.altKey || e.ctrlKey || e.metaKey)) return;
+      if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); nextPage(); }
+      else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); prevPage(); }
+      else if (e.key === 'Escape') { setPanel(null); setSelection(null); setSelectedUid(null); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
+  // A swipe with a finger turns the page; a tap on a word still looks it up.
+  const swipe = useRef<{ id: number; x: number; y: number; t: number } | null>(null);
+  const swiped = useRef(false);
+  const onSwipeStart = (e: React.PointerEvent) => {
+    if (e.pointerType === 'mouse') return;
+    swipe.current = { id: e.pointerId, x: e.clientX, y: e.clientY, t: Date.now() };
+    swiped.current = false;
+  };
+  const onSwipeEnd = (e: React.PointerEvent) => {
+    const s = swipe.current;
+    swipe.current = null;
+    if (!s || s.id !== e.pointerId) return;
+    const dx = e.clientX - s.x;
+    const dy = e.clientY - s.y;
+    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.4 || Date.now() - s.t > 800) return;
+    swiped.current = true;
+    if (dx < 0) nextPage(); else prevPage();
+  };
+
+  // Reading aloud starts on the page in view, and the pages follow it.
+  const readFromPage = () => {
+    if (readAloud.status !== 'idle') { readAloud.toggle(); return; }
+    const first = pagination.firstWordOn(page);
+    const from = pieces.findIndex(p => p.to >= first);
+    readAloud.play(from >= 0 ? from : 0);
+  };
+  useEffect(() => {
+    if (!bookMode || !readAloud.active || !readingPiece || !layout) return;
+    const p = pagination.pageOfWord(readingPiece.from);
+    if (p !== page) pagination.turnTo(p);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readAloud.index, readAloud.active]);
+
+  // A word opened from the list is brought into view.
+  useEffect(() => {
+    if (!bookMode || !detail || !layout) return;
+    const place = placeOf(detail);
+    if (!place) return;
+    const p = pagination.pageOfWord(place.from);
+    if (p !== page) pagination.turnTo(p);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedUid]);
 
   // Keeps the piece being read in view.
   useEffect(() => {
-    if (!readAloud.active || !readingPiece) return;
+    if (bookMode || !readAloud.active || !readingPiece) return;
     const el = document.querySelector(`[data-wi="${readingPiece.from}"]`);
     if (!el) return;
     const box = el.getBoundingClientRect();
@@ -585,7 +773,9 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   }, [readAloud.index, readAloud.active]);
 
   const translateParagraph = async (pi: number) => {
-    const now = translations[pi];
+    const range = paragraphRange(pi);
+    const kept = range ? savedTranslation(placedNotes, range) : undefined;
+    const now = translations[pi] || (kept ? { result: { text: kept.text, by: 'ai' as const, service: kept.by }, open: true } : undefined);
     if (now?.loading) return;
     if (now?.result) { setTranslations(t => ({ ...t, [pi]: { ...now, open: !now.open } })); return; }
     const p = section.paragraphs[pi];
@@ -610,9 +800,12 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   };
 
   const paragraphFooter = (pi: number) => {
-    const t = translations[pi];
     const firstPiece = pieces.findIndex(p => p.paragraph === pi);
     const readingHere = !!readingPiece && readingPiece.paragraph === pi;
+    const range = paragraphRange(pi);
+    const kept = range ? savedTranslation(placedNotes, range) : undefined;
+    // A translation kept for the paragraph shows under it, open, every time.
+    const t = translations[pi] || (kept ? { result: { text: kept.text, by: 'ai' as const, service: kept.by }, open: true } : undefined);
     return (
       <div dir="rtl" lang="fa" className="font-fa mt-1 flex flex-col gap-2">
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
@@ -631,8 +824,16 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
         {t?.result && t.open && (
           <div className="rounded-xl bg-slate-50 dark:bg-slate-900/50 px-4 py-3 flex flex-col gap-1 select-text">
             <p className="text-[15px] md:text-base leading-8 text-ink dark:text-slate-100 whitespace-pre-line">{t.result.text}</p>
-            <span className="text-[11px] text-ink-muted dark:text-slate-400">
-              {t.result.by === 'ai' ? <>ترجمهٔ هوش مصنوعی ({ltr(t.result.service || 'AI')})</> : 'ترجمهٔ رایگان (MyMemory)؛ ممکن است دقیق نباشد.'}
+            <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink-muted dark:text-slate-400">
+              <span>
+                {kept ? <>ترجمهٔ ذخیره‌شده{kept.by ? ` (${ltr(kept.by)})` : ''}</>
+                  : t.result.by === 'ai' ? <>ترجمهٔ هوش مصنوعی ({ltr(t.result.service || 'AI')})</> : 'ترجمهٔ رایگان (MyMemory)؛ ممکن است دقیق نباشد.'}
+              </span>
+              {onSaveNote && range && !kept && (
+                <button type="button" onClick={() => keepTranslation(range, t.result!.text, t.result!.by === 'ai' ? t.result!.service || 'AI' : 'MyMemory')}
+                  className="font-bold text-brand-700 dark:text-brand-300 hover:underline">ذخیرهٔ ترجمه</button>
+              )}
+              {kept && <button type="button" onClick={() => removeNote(kept)} className="text-red-700 dark:text-red-300 hover:underline">حذف ترجمهٔ ذخیره‌شده</button>}
             </span>
           </div>
         )}
@@ -650,8 +851,157 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     if (uid !== undefined && pendingUids.has(uid)) return `bg-amber-100 dark:bg-amber-900/50${grammar}`;
     const m = masteryAt[i];
     const read = readingPiece && i >= readingPiece.from && i <= readingPiece.to ? ' bg-yellow-100 dark:bg-yellow-900/40' : '';
-    return `${m ? MASTERY[m].underline : ''}${grammar}${read}`;
+    // The reader's own notes: green for a comment, blue for a kept translation.
+    const noted = read || !notesAt[i]?.length ? ''
+      : notesAt[i].some(n => n.kind === 'comment') ? ' bg-lime-100 dark:bg-lime-900/40' : ' bg-sky-100/70 dark:bg-sky-900/40';
+    return `${m ? MASTERY[m].underline : ''}${grammar}${read}${noted}`;
   };
+
+  // --- Notes and kept translations ---
+  const paragraphRange = (pi: number): Range | null => {
+    const words = section.paragraphs[pi]?.words;
+    return words?.length ? { from: words[0].i, to: words[words.length - 1].i } : null;
+  };
+  const paragraphOf = (wordIndex: number) => section.paragraphs.findIndex(p => p.words.some(w => w.i === wordIndex));
+  const startNote = (range: Range, kind: TextNote['kind'] = 'comment', text = '', by?: string) => {
+    setSelectedUid(null);
+    setNotesOpenAt(null);
+    setNoteDraft({ range, kind, text, ...(by ? { by } : {}) });
+  };
+  const keepNote = async (draft: NonNullable<typeof noteDraft>) => {
+    if (!onSaveNote || !draft.text.trim()) return;
+    const note = draft.note
+      ? { ...draft.note, text: draft.text.trim() }
+      : newNote({ sourceId: book.id, chapterId: chapter.id, chunk: index, kind: draft.kind, from: draft.range.from, to: draft.range.to, quote: noteQuote(section, draft.range), text: draft.text, by: draft.by });
+    await onSaveNote(note);
+    setNoteDraft(null);
+    setSelection(null);
+    showToast(draft.kind === 'translation' ? 'ترجمه ذخیره شد؛ روی واژه‌های آبی بزن تا ببینی‌اش.' : 'یادداشت ذخیره شد.');
+  };
+  const removeNote = async (note: TextNote) => {
+    if (!onSaveNote || !window.confirm(note.kind === 'translation' ? 'این ترجمهٔ ذخیره‌شده حذف شود؟' : 'این یادداشت حذف شود؟')) return;
+    await onSaveNote({ ...note, isDeleted: true });
+    setNotesOpenAt(null);
+    setNoteDraft(null);
+  };
+  const keepTranslation = (range: Range, text: string, by?: string) =>
+    keepNote({ range, kind: 'translation', text, ...(by ? { by } : {}) });
+
+  // Under the picked words: a note on them, the translation kept, or the
+  // whole paragraph translated.
+  const selectionExtra = (range: Range, found: typeof sentenceResult) => {
+    if (!onSaveNote) return null;
+    const kept = savedTranslation(placedNotes, range);
+    const paragraph = paragraphRange(paragraphOf(range.from));
+    const isParagraph = !!paragraph && paragraph.from === range.from && paragraph.to === range.to;
+    const chip = 'min-h-[36px] px-3 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-40';
+    return (
+      <div className="flex flex-col gap-2">
+        {kept && !found?.translation && (
+          <div className="rounded-xl bg-sky-50 dark:bg-sky-900/30 px-3 py-2 flex flex-col gap-1">
+            <p className="text-ink dark:text-slate-100 whitespace-pre-line">{kept.text}</p>
+            <span className="text-[11px] text-ink-muted dark:text-slate-400">ترجمهٔ ذخیره‌شده{kept.by ? ` (${ltr(kept.by)})` : ''}</span>
+          </div>
+        )}
+        <div className="flex flex-wrap gap-1.5">
+          <button type="button" className={chip} onClick={() => startNote(range)}>✎ یادداشت</button>
+          {found?.translation && !kept && <button type="button" className={chip} onClick={() => keepTranslation(range, found.translation!, found.by)}>ذخیرهٔ این ترجمه</button>}
+          {kept && <button type="button" className={chip} onClick={() => removeNote(kept)}>حذف ترجمهٔ ذخیره‌شده</button>}
+          {paragraph && !isParagraph && (
+            <button type="button" className={chip} disabled={!!busy} onClick={() => { pick(paragraph); if (!savedTranslation(placedNotes, paragraph)) translateSelection(paragraph); }}>
+              ترجمهٔ کل پاراگراف
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // A note being written or changed.
+  const noteEditor = (floating: boolean) => noteDraft && (
+    <section aria-label="یادداشت" className={`${sheetClass(floating)} gap-3`}>
+      <div className="flex items-start gap-2">
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-bold text-ink dark:text-white">{noteDraft.kind === 'translation' ? 'ترجمهٔ این بخش از متن' : noteDraft.note ? 'ویرایش یادداشت' : 'یادداشت روی این بخش از متن'}</p>
+          <p dir="ltr" lang="en" className="font-read text-[15px] text-ink-muted dark:text-slate-400 line-clamp-3 text-left">{noteQuote(section, noteDraft.range)}</p>
+        </div>
+        <button type="button" onClick={() => setNoteDraft(null)} aria-label="بستن" className="w-9 h-9 -m-1.5 shrink-0 rounded-xl flex items-center justify-center text-ink-muted hover:bg-slate-100 dark:hover:bg-slate-700"><Icon.Close size={18} /></button>
+      </div>
+      <textarea dir="auto" value={noteDraft.text} autoFocus rows={4} onChange={e => setNoteDraft(d => d && { ...d, text: e.target.value })}
+        placeholder="هر چه می‌خواهی بنویس: معنی، نکته، سؤال، ارتباط با جای دیگر کتاب…"
+        className="w-full rounded-2xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-ink dark:text-slate-100 focus:outline-none focus:border-brand-500" />
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" onClick={() => keepNote(noteDraft)} disabled={!noteDraft.text.trim()} className="min-h-[44px] px-5 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-bold disabled:opacity-50">ذخیره</button>
+        <button type="button" onClick={() => setNoteDraft(null)} className="min-h-[44px] px-4 rounded-xl text-sm border border-slate-200 dark:border-slate-600">لغو</button>
+        <span className="flex-1" />
+        {noteDraft.note && <button type="button" onClick={() => removeNote(noteDraft.note!)} className="min-h-[44px] px-3 rounded-xl text-sm text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/30">حذف</button>}
+      </div>
+    </section>
+  );
+
+  // The notes on a tapped word.
+  const noteViewer = (floating: boolean) => {
+    if (notesOpenAt === null) return null;
+    const here = notesAt[notesOpenAt] || [];
+    if (here.length === 0) return null;
+    const at = notesOpenAt;
+    return (
+      <section aria-label="یادداشت‌های این واژه" className={`${sheetClass(floating)} gap-3`}>
+        <div className="flex items-center gap-2">
+          <p className="flex-1 font-bold text-ink dark:text-white">{here.length > 1 ? `${fa(here.length)} یادداشت روی این واژه` : here[0].kind === 'translation' ? 'ترجمهٔ ذخیره‌شده' : 'یادداشت تو'}</p>
+          <button type="button" onClick={() => setNotesOpenAt(null)} aria-label="بستن" className="w-9 h-9 -m-1.5 shrink-0 rounded-xl flex items-center justify-center text-ink-muted hover:bg-slate-100 dark:hover:bg-slate-700"><Icon.Close size={18} /></button>
+        </div>
+        {here.map(n => {
+          const range = placedNotes.find(p => p.note.id === n.id)?.range;
+          return (
+            <div key={n.id} className={`rounded-2xl px-3 py-2.5 flex flex-col gap-1.5 ${n.kind === 'translation' ? 'bg-sky-50 dark:bg-sky-900/30' : 'bg-lime-50 dark:bg-lime-900/30'}`}>
+              <p dir="ltr" lang="en" className="font-read text-sm text-ink-muted dark:text-slate-400 line-clamp-2 text-left">{n.quote}</p>
+              <p dir="auto" className="text-ink dark:text-slate-100 whitespace-pre-line">{n.text}</p>
+              <div className="flex flex-wrap items-center gap-3 text-xs">
+                <span className="text-ink-muted dark:text-slate-400">{n.kind === 'translation' ? `ترجمه${n.by ? ` (${ltr(n.by)})` : ''}` : 'یادداشت'} · {new Date(n.updatedAt).toLocaleDateString('fa-IR')}</span>
+                <span className="flex-1" />
+                {range && <button type="button" onClick={() => { setNotesOpenAt(null); setNoteDraft({ range, kind: n.kind, text: n.text, note: n, ...(n.by ? { by: n.by } : {}) }); }} className="text-brand-700 dark:text-brand-300 hover:underline">ویرایش</button>}
+                <button type="button" onClick={() => removeNote(n)} className="text-red-700 dark:text-red-300 hover:underline">حذف</button>
+              </div>
+            </div>
+          );
+        })}
+        <div className="flex flex-wrap gap-1.5">
+          <button type="button" onClick={() => { setNotesOpenAt(null); lookUp(at, at); }} className="min-h-[40px] px-3 rounded-xl text-sm font-bold bg-brand-500 hover:bg-brand-600 text-white">معنی این واژه</button>
+          <button type="button" onClick={() => pick({ from: at, to: at })} className="min-h-[40px] px-3 rounded-xl text-sm bg-slate-100 dark:bg-slate-700">انتخاب برای عبارت یا جمله</button>
+        </div>
+      </section>
+    );
+  };
+
+  // Every note and kept translation of the chapter, to go back to.
+  const notesList = onSaveNote && notes.some(n => !n.isDeleted) && (
+    <section className="bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-2">
+      <h2 className="font-bold text-ink dark:text-white">یادداشت‌ها و ترجمه‌های {chapterCount > 1 ? 'این فصل' : 'این متن'}</h2>
+      <ul className="flex flex-col gap-1.5 max-h-[22rem] overflow-y-auto -mx-1 px-1">
+        {notes.filter(n => !n.isDeleted).sort((a, b) => a.chunk - b.chunk || a.from - b.from).map(n => (
+          <li key={n.id}>
+            <button type="button" onClick={() => {
+              setPanel(null);
+              if (n.chunk === index) {
+                const range = placedNotes.find(p => p.note.id === n.id)?.range;
+                if (!range) { showToast('واژه‌های این یادداشت در متن ویرایش‌شده پیدا نشد.'); return; }
+                if (bookMode) pagination.turnTo(pagination.pageOfWord(range.from));
+                setSelectedUid(null);
+                setNotesOpenAt(range.from);
+              } else {
+                onOpenChunk(n.chunk, { kind: 'word', word: n.from });
+              }
+            }} className="w-full text-right rounded-xl px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-700/50 flex flex-col gap-0.5">
+              <span className="text-[11px] text-ink-muted dark:text-slate-400">بخش {fa(n.chunk + 1)} · {n.kind === 'translation' ? 'ترجمه' : 'یادداشت'}</span>
+              <span dir="ltr" lang="en" className="font-read text-sm text-ink-muted dark:text-slate-400 truncate text-left">{n.quote}</span>
+              <span dir="auto" className="text-sm text-ink dark:text-slate-100 line-clamp-2">{n.text}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
 
   // Where an item is in the text, to widen it into a phrase or a sentence.
   const placeOf = (it: Item): Range | null => {
@@ -697,48 +1047,9 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     ? grammarFound.at[detailPlace.from].map(id => ruleById(id)).filter(Boolean) as { id: string; name: string }[]
     : [];
 
-  return (
-    <div dir="rtl" className="font-fa flex flex-col gap-5 w-full">
-      <header className="flex flex-wrap items-center gap-3">
-        <button type="button" onClick={onBack} aria-label="برگشت به مسیر" className="w-11 h-11 rounded-xl flex items-center justify-center hover:bg-white dark:hover:bg-slate-800"><Icon.Back /></button>
-        <div className="flex-1 min-w-0">
-          <p className="text-xs text-ink-muted dark:text-slate-400 truncate">
-            {chapterCount > 1 && <><bdi dir="auto">{chapter.title}</bdi>، </>}بخش {fa(index + 1)} از {fa(chunks.length)}
-          </p>
-          <h1 dir="auto" className="font-en font-bold text-lg text-ink dark:text-white truncate text-right">{book.title}</h1>
-        </div>
-        {chunks.length <= MAX_SECTION_BUTTONS ? (
-          <nav aria-label="بخش‌ها" className="flex flex-wrap gap-1.5">
-            {chunks.map((_, i) => {
-              const isDone = chapter.completed.includes(i);
-              return (
-                <button key={i} type="button" disabled={!isChunkOpen(chapter, i) && i !== index} onClick={() => onOpenChunk(i)} aria-current={i === index ? 'page' : undefined}
-                  className={`w-9 h-9 rounded-[10px] text-sm font-bold ${i === index ? 'bg-brand-500 text-white ring-4 ring-brand-200 dark:ring-brand-900' : isDone ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400'} disabled:opacity-50`}>
-                  {fa(i + 1)}
-                </button>
-              );
-            })}
-          </nav>
-        ) : (
-          <nav aria-label="بخش‌ها" className="flex items-center gap-1.5">
-            <button type="button" disabled={index === 0} onClick={() => onOpenChunk(index - 1)} aria-label="بخش قبلی"
-              className="w-9 h-9 rounded-[10px] flex items-center justify-center bg-white dark:bg-slate-800 disabled:opacity-40"><Icon.Back size={18} /></button>
-            <select value={index} onChange={e => onOpenChunk(Number(e.target.value))} aria-label="رفتن به بخش"
-              className="h-9 rounded-[10px] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 px-2 text-sm">
-              {chunks.map((_, i) => (
-                <option key={i} value={i} disabled={!isChunkOpen(chapter, i) && i !== index}>
-                  {chapter.completed.includes(i) ? '✓ ' : ''}بخش {fa(i + 1)}
-                </option>
-              ))}
-            </select>
-            <button type="button" disabled={!isChunkOpen(chapter, index + 1) || index + 1 >= chunks.length} onClick={() => onOpenChunk(index + 1)} aria-label="بخش بعدی"
-              className="w-9 h-9 rounded-[10px] flex items-center justify-center bg-white dark:bg-slate-800 disabled:opacity-40"><Icon.Back size={18} className="rotate-180" /></button>
-          </nav>
-        )}
-      </header>
-
-      <div className="flex flex-wrap gap-5 items-start">
-        <article className="flex-[999_1_30rem] min-w-0 bg-white dark:bg-slate-800 rounded-3xl p-5 md:p-9 flex flex-col gap-4">
+  // Parts shared by the two layouts.
+  const preReadBlock = (
+    <>
           {!done && !preRead && items.length === 0 && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl bg-brand-50 dark:bg-brand-900/30 px-4 py-3 text-sm">
               <span className="flex-1 min-w-[12rem] text-ink dark:text-slate-100">پیش از خواندن، واژه‌های سخت این بخش را یک بار ببین.</span>
@@ -781,6 +1092,399 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
               )}
             </section>
           )}
+    </>
+  );
+  const wordList = (
+          <section className="bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-3">
+            <div className="flex justify-between items-center gap-2">
+              <h2 className="font-bold text-ink dark:text-white">{items.length > 0 ? `${fa(items.length)} واژه و عبارت` : 'واژه‌های سخت'}</h2>
+              <span className="text-xs text-ink-muted dark:text-slate-400">{toSave.length > 0 ? `${fa(toSave.length)} انتخاب شده` : ''}</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-ink-muted dark:text-slate-400">منبع:</span>
+              {(['ai', 'free'] as ExtractionSource[]).map(s => (
+                <button key={s} type="button" onClick={() => setSource(s)} aria-pressed={source === s}
+                  className={`rounded-full px-3 py-1 ${source === s ? 'bg-brand-100 text-brand-700 font-bold dark:bg-brand-900/60 dark:text-brand-200' : 'border border-slate-200 dark:border-slate-600'}`}>
+                  {s === 'ai' ? 'هوش مصنوعی' : 'دیکشنری رایگان'}
+                </button>
+              ))}
+            </div>
+            <button type="button" onClick={() => extract(12, true)} disabled={loading}
+              className="min-h-[44px] rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 font-bold disabled:opacity-60">
+              {loading ? 'در حال پیدا کردن…' : items.length > 0 ? 'پیدا کردن واژه‌های بیشتر' : 'پیدا کردن واژه‌های سخت این بخش'}
+            </button>
+            {items.length > 0 && (
+              <ul className="flex flex-col gap-1 max-h-[22rem] overflow-y-auto -mx-1 px-1">
+                {items.map(it => (
+                  <li key={it.uid}>
+                    <div className={`flex items-center gap-2 min-h-[44px] px-2.5 rounded-xl ${detail?.uid === it.uid ? 'bg-brand-50 dark:bg-brand-900/40' : ''}`}>
+                      <input type="checkbox" checked={!!it.selected && !it.alreadyInDeck} disabled={it.alreadyInDeck || it.loading}
+                        onChange={() => toggle(it.uid)} aria-label={`انتخاب ${it.front}`} className="w-[18px] h-[18px] accent-brand-500" />
+                      <button type="button" onClick={() => { setSelection(null); setSelectedUid(it.uid); }} className="flex-1 min-w-0 flex items-center gap-2 text-right">
+                        <span dir="ltr" className="font-en font-medium text-ink dark:text-white truncate">{it.front}</span>
+                        {it.kind && it.kind !== 'word' && <span className="shrink-0 text-[11px] rounded-full bg-slate-100 dark:bg-slate-700 px-2">{KIND_LABEL[it.kind]}</span>}
+                        {it.level && <span className="shrink-0 font-en text-[11px] rounded-full bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-100 px-1.5" title="سطح واژه">{it.level}</span>}
+                        <span className="flex-1" />
+                        <span className="text-xs text-ink-muted dark:text-slate-400 truncate max-w-[45%]">
+                          {it.loading ? 'در حال جست‌وجو…' : it.alreadyInDeck ? 'کارت دارد' : it.senseLoading ? 'معنی در همین جمله…' : it.back}
+                        </span>
+                      </button>
+                      {!it.loading && !it.alreadyInDeck && it.kind !== 'grammar' && (
+                        <button type="button" onClick={() => markKnown(it)} title="بلدم: دیگر پیشنهاد نشود" aria-label={`بلدم: ${it.front}`}
+                          className="shrink-0 min-h-[32px] px-2 rounded-lg text-xs text-emerald-800 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/40">بلدم</button>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+  );
+  // The picked words, or the open word: a sheet over the page (book mode,
+  // small screens), or a card in the side column of a wide scrolling page.
+  const sheets = (floating: boolean) => {
+    const wide = floating ? '' : 'xl:hidden';
+    if (noteDraft) return noteEditor(floating);
+    if (notesOpenAt !== null && notesAt[notesOpenAt]?.length) return noteViewer(floating);
+    return (
+          selection ? (
+            <SelectionBar
+              floating={floating}
+              text={selectionText}
+              words={selectionWords}
+              maxMeaningWords={MAX_PHRASE_WORDS}
+              canGrowBack={selection.from > 0}
+              canGrowForward={selection.to < section.words.length - 1}
+              wholeSentence={selectionIsSentence}
+              aiNote={aiNote}
+              busy={busy}
+              translation={result?.translation}
+              structures={result?.structures}
+              rules={selectionRules}
+              onOpenRule={(id: string) => { const r = selectionRules.find(x => x.id === id); openRule(id, r?.at); }}
+              onGrow={grow}
+              onWholeSentence={() => wholeSentence(selection)}
+              onMeaning={() => { const r = selection; lookUp(r.from, r.to); }}
+              onGrammar={analyzeSelection}
+              onTranslate={() => translateSelection()}
+              extra={selectionExtra(selection, result)}
+              onOpenStructure={uid => { setSelection(null); setSelectedUid(uid); }}
+              onClose={() => setSelection(null)}
+            />
+          ) : detail && !detail.loading && (
+            // Below xl the list sits under the text, so the tapped word opens
+            // as a sheet at the bottom of the screen, where the reader is.
+            <section aria-label="جزئیات واژه"
+              className={`${sheetClass(floating)} gap-2.5`}>
+              <div dir="ltr" className="flex items-baseline gap-2.5 flex-wrap">
+                <span className="font-en font-bold text-2xl text-ink dark:text-white">{detail.front}</span>
+                {detail.pronunciation && <span className="text-ink-muted dark:text-slate-400">{detail.pronunciation}</span>}
+                {detail.level && <span className="font-en text-xs rounded-full bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-100 px-2 py-0.5" title="سطح واژه">{detail.level}</span>}
+                {isSpeechSupported() && detail.kind !== 'grammar' && (
+                  <button type="button" onClick={() => { readAloud.pause(); speakText(detail.front, { rate: 0.9 }); }} aria-label="پخش تلفظ" className="text-brand-500 dark:text-brand-300"><Icon.Speaker size={18} /></button>
+                )}
+                <span className="flex-1" />
+                <button type="button" onClick={() => setSelectedUid(null)} aria-label="بستن" className={`${wide} w-9 h-9 -m-1.5 rounded-xl flex items-center justify-center text-ink-muted hover:bg-slate-100 dark:hover:bg-slate-700`}><Icon.Close size={18} /></button>
+              </div>
+              <p className="text-ink dark:text-white">{detail.back}</p>
+              {(detail.inContext || detail.senseLoading) && (
+                <p className={`self-start text-xs rounded-full px-2.5 py-0.5 ${detail.inContext ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200' : 'bg-slate-100 text-ink-muted dark:bg-slate-700 dark:text-slate-300'}`}>
+                  {detail.kind === 'grammar'
+                    ? (detail.inContext ? 'توضیح برای همین جمله' : 'در حال نوشتن توضیح برای همین جمله…')
+                    : (detail.inContext ? 'معنی در همین جمله' : 'در حال پیدا کردن معنی در همین جمله…')}
+                </p>
+              )}
+              {detailRules.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 text-sm">
+                  <span className="text-ink-muted dark:text-slate-400">بخشی از ساختار:</span>
+                  {detailRules.map(r => (
+                    <button key={r.id} type="button" dir="ltr" onClick={() => openRule(r.id, detailPlace!.from)}
+                      className="min-h-[32px] px-2.5 rounded-full border border-rose-300 dark:border-rose-700 text-rose-800 dark:text-rose-200 font-en text-[13px]">{r.name}</button>
+                  ))}
+                </div>
+              )}
+              {detail.grammarPattern && <p dir="ltr" className="font-mono text-sm text-rose-700 dark:text-rose-300">{detail.grammarPattern}</p>}
+              {detail.definition && detail.definition[0] && <p dir="ltr" className="text-sm text-ink-muted dark:text-slate-400">{detail.definition[0]}</p>}
+              {detail.collocations && detail.collocations.length > 0 && (
+                <div dir="ltr" className="flex flex-wrap gap-1.5">
+                  {detail.collocations.slice(0, 5).map((c, i) => (
+                    <span key={i} className="rounded-full border border-slate-200 dark:border-slate-600 px-2.5 py-0.5 text-[13px]">{c.phrase}</span>
+                  ))}
+                </div>
+              )}
+              {detail.notes && <p className="text-sm text-ink dark:text-slate-200">{detail.notes}</p>}
+              {detail.practicePrompt && (
+                <p className="text-sm rounded-xl bg-rose-50 dark:bg-rose-900/30 text-rose-900 dark:text-rose-100 px-3 py-2">تمرین: {detail.practicePrompt}</p>
+              )}
+              {detail.exampleSentenceTarget?.[0] && detail.kind === 'grammar' && <p dir="ltr" className="text-sm text-ink dark:text-slate-200">{detail.exampleSentenceTarget[0]}</p>}
+              {detail.sourceSentence && <p dir="ltr" className="font-read text-sm italic text-ink-muted dark:text-slate-400 border-t border-slate-100 dark:border-slate-700 pt-2">“{detail.sourceSentence}”</p>}
+              {detailPlace && detail.kind !== 'grammar' && (
+                <div className="flex flex-wrap gap-1.5">
+                  <button type="button" disabled={detailPlace.from === 0} onClick={() => pick({ ...detailPlace, from: detailPlace.from - 1 })}
+                    className="min-h-[36px] px-3 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-40">+ واژهٔ قبل</button>
+                  <button type="button" disabled={detailPlace.to >= section.words.length - 1} onClick={() => pick({ ...detailPlace, to: detailPlace.to + 1 })}
+                    className="min-h-[36px] px-3 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-40">واژهٔ بعد +</button>
+                  <button type="button" onClick={() => wholeSentence(detailPlace)}
+                    className="min-h-[36px] px-3 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600">کل جمله</button>
+                  {onSaveNote && (
+                    <button type="button" onClick={() => startNote(detailPlace)}
+                      className="min-h-[36px] px-3 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600">✎ یادداشت</button>
+                  )}
+                </div>
+              )}
+              <div className="flex flex-wrap items-center gap-3 pt-1">
+                {!detail.alreadyInDeck && (
+                  <label className={`${wide} flex items-center gap-2 text-sm`}>
+                    <input type="checkbox" checked={!!detail.selected} onChange={() => toggle(detail.uid)} className="w-[18px] h-[18px] accent-brand-500" />
+                    کارت ساخته شود
+                  </label>
+                )}
+                {detail.kind !== 'grammar' && (detailKnownAs
+                  ? <button type="button" onClick={() => onUnmarkKnown(detailKnownAs)} className="min-h-[40px] px-3 rounded-xl text-sm border border-slate-200 dark:border-slate-600">در فهرست «بلدم» است؛ بردار</button>
+                  : !detail.alreadyInDeck && <button type="button" onClick={() => markKnown(detail)} className="min-h-[40px] px-3 rounded-xl text-sm font-bold bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-900/40 dark:text-emerald-200">بلدم</button>)}
+                <span className="flex-1" />
+                {toSave.length > 0 && (
+                  <button type="button" onClick={save} disabled={saving} className={`${wide} min-h-[44px] px-4 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-bold disabled:opacity-60`}>
+                    {saving ? 'در حال ساخت…' : `ساخت ${fa(toSave.length)} کارت`}
+                  </button>
+                )}
+              </div>
+            </section>
+          )
+    );
+  };
+
+  // Book mode: the page fills the screen; the tools sit in a thin bar above
+  // it and open in panels, so nothing but the text is on the page.
+  const renderBook = () => {
+    const chapterShare = Math.round((100 * (index + (endPage ? 1 : sectionEmpty ? 1 : (page + 1) / Math.max(1, pages)))) / Math.max(1, chunks.length));
+    const sideZone = layout ? Math.max(20, (layout.roomWidth - layout.width) / 2) : 20;
+    const toolButton = 'inline-flex items-center justify-center gap-1.5 min-h-[40px] min-w-[40px] px-2.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10';
+    const pageButton = 'w-11 h-11 rounded-full flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-25';
+    return (
+      <div dir="rtl" className={`font-fa fixed inset-0 z-20 flex flex-col ${PAPER[paper].page}`}>
+        <header className="shrink-0 flex items-center gap-1.5 px-2 md:px-5 h-14 border-b border-black/[0.06] dark:border-white/10">
+          <button type="button" onClick={onBack} aria-label="برگشت به کتاب" title="برگشت به کتاب" className={toolButton}><Icon.Back /></button>
+          <div className="flex-1 min-w-0 px-1">
+            <h1 dir="auto" className="font-en font-bold text-[15px] truncate text-right">{book.title}</h1>
+            <p className="text-[11px] opacity-60 truncate">{chapterCount > 1 && <><bdi dir="auto">{chapter.title}</bdi> · </>}بخش {fa(index + 1)} از {fa(chunks.length)}</p>
+          </div>
+          <button type="button" onClick={readFromPage} disabled={sectionEmpty || endPage} aria-label={readAloud.active ? 'مکث خواندن' : 'خواندن بلند از همین صفحه'} title="خواندن بلند"
+            className={`${toolButton} ${readAloud.active ? 'text-amber-700 dark:text-amber-300' : ''} disabled:opacity-30`}>
+            {readAloud.active ? <Icon.Pause size={18} /> : <Icon.Speaker size={18} />}
+            <span className="hidden md:inline text-sm">{readAloud.status === 'loading' ? 'آماده کردن…' : readAloud.status === 'playing' ? 'مکث' : readAloud.status === 'paused' ? 'ادامه' : 'خواندن'}</span>
+          </button>
+          <button type="button" onClick={() => setPanel(panel === 'words' ? null : 'words')} aria-expanded={panel === 'words'} title="واژه‌های این بخش" className={`${toolButton} relative`}>
+            <Icon.List size={18} /><span className="hidden md:inline text-sm">واژه‌ها</span>
+            {(toSave.length > 0 || loading) && <span className="absolute -top-0.5 -left-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-brand-500 text-white text-[11px] font-bold flex items-center justify-center">{loading ? '…' : fa(toSave.length)}</span>}
+          </button>
+          <button type="button" onClick={() => setPanel(panel === 'type' ? null : 'type')} aria-expanded={panel === 'type'} title="ظاهر صفحه" className={`${toolButton} font-en font-bold`}>Aa</button>
+        </header>
+
+        <div className="relative flex-1 min-h-0 px-5 md:px-12 py-5 md:py-8" style={{ touchAction: 'pan-y' }}
+          onPointerDown={onSwipeStart} onPointerUp={onSwipeEnd} onPointerCancel={() => { swipe.current = null; }}
+          onClickCapture={e => { if (swiped.current) { swiped.current = false; e.stopPropagation(); e.preventDefault(); } }}>
+          <div ref={room} className="h-full w-full">
+            {endPage ? (
+              <section aria-label="پایان فصل" className="h-full flex flex-col items-center justify-center gap-4 text-center max-w-md mx-auto">
+                <p className="text-sm opacity-60">پایان</p>
+                <h2 dir="auto" className="font-read text-3xl font-bold">{chapterCount > 1 ? chapter.title : book.title}</h2>
+                <p className="opacity-75">{fa(chunks.length)} بخش خوانده شد.{nextChapter ? '' : chapterCount > 1 ? ' این آخرین فصل کتاب بود.' : ''}</p>
+                <div className="flex flex-col gap-2 w-full mt-2">
+                  {onReviewChapter && <button type="button" onClick={onReviewChapter} className="min-h-[48px] rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-bold">مرور واژه‌های {chapterCount > 1 ? 'این فصل' : 'این متن'}</button>}
+                  {nextChapter && <button type="button" onClick={nextChapter.open} className="min-h-[48px] rounded-2xl border-2 border-current/20 font-bold hover:bg-black/5 dark:hover:bg-white/10">فصل بعد: <bdi dir="auto">{nextChapter.title}</bdi></button>}
+                  <button type="button" onClick={onBack} className="min-h-[44px] rounded-2xl font-bold opacity-80 hover:bg-black/5 dark:hover:bg-white/10">برگشت به کتاب</button>
+                </div>
+              </section>
+            ) : sectionEmpty ? (
+              <div className="h-full flex flex-col items-center justify-center gap-2 text-center opacity-70">
+                <p>این بخش متنی ندارد.</p>
+                <p className="text-sm">با صفحهٔ بعد ادامه بده.</p>
+              </div>
+            ) : layout && (
+              <PageColumns layout={layout} page={page} contentRef={pageText}>
+                <ReaderText section={section} selection={selection} classFor={classFor} onTap={tapWord} onSelect={pick}
+                  book={{ fontSize: READER_FONT_SIZES[fontStep], justify }} />
+              </PageColumns>
+            )}
+          </div>
+          {/* The margins beside the page turn it, like the edge of a paper page. */}
+          <button type="button" onClick={prevPage} disabled={atStart} aria-label="صفحهٔ قبل" tabIndex={-1}
+            className="absolute inset-y-0 left-0 cursor-w-resize disabled:cursor-default" style={{ width: sideZone }} />
+          <button type="button" onClick={nextPage} disabled={endPage} aria-label="صفحهٔ بعد" tabIndex={-1}
+            className="absolute inset-y-0 right-0 cursor-e-resize disabled:cursor-default" style={{ width: sideZone }} />
+        </div>
+
+        <footer dir="ltr" className="shrink-0 flex items-center gap-2 px-2 md:px-5 h-14 border-t border-black/[0.06] dark:border-white/10 pb-[env(safe-area-inset-bottom)]">
+          <button type="button" onClick={prevPage} disabled={atStart} aria-label="صفحهٔ قبل" className={pageButton}><Icon.Back size={22} className="rotate-180" /></button>
+          <div className="flex-1 flex flex-col items-center gap-1 min-w-0">
+            <div className="w-full max-w-md h-1 rounded-full bg-black/10 dark:bg-white/15 overflow-hidden" role="progressbar" aria-valuenow={chapterShare} aria-valuemin={0} aria-valuemax={100} aria-label="پیشرفت در فصل">
+              <div className="h-full bg-brand-500 rounded-full" style={{ width: `${chapterShare}%` }} />
+            </div>
+            <span dir="rtl" className="text-xs opacity-60 flex gap-2">
+              <bdi>{endPage ? 'پایان فصل' : sectionEmpty ? 'بخش خالی' : `صفحهٔ ${fa(page + 1)} از ${fa(pages)}`}</bdi>
+              <span aria-hidden>·</span>
+              <bdi>{`${fa(chapterShare)}٪ ${chapterCount > 1 ? 'فصل' : 'متن'}`}</bdi>
+            </span>
+          </div>
+          <button type="button" onClick={nextPage} disabled={endPage} aria-label={!endPage && page >= pages - 1 && !done ? 'پایان این بخش و رفتن به بعدی' : 'صفحهٔ بعد'} className={pageButton}><Icon.Back size={22} /></button>
+        </footer>
+
+        {panel === 'type' && (
+          <div className="fixed inset-0 z-40" onClick={() => setPanel(null)}>
+            <section aria-label="ظاهر صفحه" onClick={e => e.stopPropagation()}
+              className="absolute top-14 left-2 md:left-5 w-[min(22rem,calc(100vw-1rem))] max-h-[calc(100vh-5rem)] overflow-y-auto rounded-3xl bg-white dark:bg-slate-800 text-ink dark:text-slate-100 shadow-2xl ring-1 ring-black/5 p-5 flex flex-col gap-4 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-bold">اندازهٔ قلم</span>
+                <div dir="ltr" className="flex items-center gap-1">
+                  <button type="button" onClick={() => onUpdateSettings({ readerFontSize: fontStep - 1 })} disabled={fontStep === 0} aria-label="قلم کوچک‌تر" className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-700 font-read text-sm disabled:opacity-40">A</button>
+                  <span className="w-12 text-center font-en">{READER_FONT_SIZES[fontStep]}</span>
+                  <button type="button" onClick={() => onUpdateSettings({ readerFontSize: fontStep + 1 })} disabled={fontStep === READER_FONT_SIZES.length - 1} aria-label="قلم بزرگ‌تر" className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-700 font-read text-xl disabled:opacity-40">A</button>
+                </div>
+              </div>
+              <div className="flex flex-col gap-2">
+                <span className="font-bold">رنگ کاغذ</span>
+                <div className="flex gap-2">
+                  {(Object.keys(PAPER) as Paper[]).map(p => (
+                    <button key={p} type="button" onClick={() => onUpdateSettings({ readerPaper: p })} disabled={appDark && p !== 'night'} aria-pressed={paper === p}
+                      className={`flex-1 flex flex-col items-center gap-1 rounded-xl p-2 ${paper === p ? 'ring-2 ring-brand-500' : 'ring-1 ring-slate-200 dark:ring-slate-600'} disabled:opacity-40`}>
+                      <span className={`w-full h-8 rounded-lg ring-1 ring-black/10 ${PAPER[p].swatch}`} />
+                      {PAPER[p].label}
+                    </button>
+                  ))}
+                </div>
+                {appDark && <p className="text-xs text-ink-muted dark:text-slate-400">در حالت تیرهٔ برنامه، کاغذ شب است؛ برای کرم یا سفید، ظاهر برنامه را در تنظیمات روشن کن.</p>}
+              </div>
+              <label className="flex items-center justify-between gap-2 cursor-pointer">
+                <span className="font-bold">تراز دو طرف (مثل کتاب چاپی)</span>
+                <input type="checkbox" checked={justify} onChange={e => onUpdateSettings({ readerJustify: e.target.checked })} className="w-5 h-5 accent-brand-500" />
+              </label>
+              <label className="flex items-center justify-between gap-2 cursor-pointer">
+                <span className={`font-bold px-0.5 ${GRAMMAR_MARK}`}>نشان دادن ساختارهای دستوری</span>
+                <input type="checkbox" checked={showGrammar} onChange={e => onUpdateSettings({ hideGrammar: !e.target.checked })} className="w-5 h-5 accent-rose-500" />
+              </label>
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-bold">صدای خواندن</span>
+                <div className="flex p-1 rounded-xl bg-slate-100 dark:bg-slate-700">
+                  {(['device', 'ai'] as ReadAloudVoice[]).map(v => (
+                    <button key={v} type="button" aria-pressed={voice === v} onClick={() => onUpdateSettings({ readAloudVoice: v })} disabled={v === 'device' && !isSpeechSupported()}
+                      className={`min-h-[32px] px-3 rounded-lg text-xs disabled:opacity-40 ${voice === v ? 'bg-white dark:bg-slate-600 shadow-sm font-bold' : 'opacity-70'}`}>
+                      {v === 'device' ? 'دستگاه' : 'هوش مصنوعی'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {masteryShown.size > 0 && (
+                <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted dark:text-slate-400">
+                  <span>زیرخط واژه‌های کارت‌دار:</span>
+                  {(['new', 'learning', 'learned'] as Mastery[]).filter(m => masteryShown.has(m)).map(m => (
+                    <span key={m} className="inline-flex items-center gap-1"><span className={`w-2.5 h-2.5 rounded-full ${MASTERY[m].dot}`} />{MASTERY[m].label}</span>
+                  ))}
+                </p>
+              )}
+              <p className="text-xs text-ink-muted dark:text-slate-400 leading-relaxed">
+                ورق زدن: کشیدن انگشت به چپ و راست، زدن کنارهٔ صفحه، یا کلیدهای ← و →. روی واژه بزن تا معنی‌اش بیاید؛ برای عبارت، انگشت را روی واژهٔ اول نگه دار و بکش.
+              </p>
+              {onEditText && (
+                <button type="button" onClick={() => { setPanel(null); setEditing(true); }} className="min-h-[40px] rounded-xl border border-slate-200 dark:border-slate-600 font-bold">
+                  ویرایش یا حذف متن این بخش
+                </button>
+              )}
+              <button type="button" onClick={() => { setPanel(null); onUpdateSettings({ readerMode: 'scroll' }); }} className="min-h-[40px] rounded-xl border border-slate-200 dark:border-slate-600 font-bold">
+                خواندن به‌صورت پیوسته (اسکرول)
+              </button>
+            </section>
+          </div>
+        )}
+
+        {panel === 'words' && (
+          <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setPanel(null)}>
+            <aside aria-label="واژه‌های این بخش" onClick={e => e.stopPropagation()}
+              className="absolute inset-y-0 right-0 w-full sm:w-[25rem] overflow-y-auto bg-[#F5F6FA] dark:bg-slate-900 text-ink dark:text-slate-100 shadow-2xl p-4 flex flex-col gap-4">
+              <div className="flex items-center gap-2">
+                <h2 className="flex-1 font-extrabold text-lg">واژه‌های بخش {fa(index + 1)}</h2>
+                <button type="button" onClick={() => setPanel(null)} aria-label="بستن" className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10"><Icon.Close size={20} /></button>
+              </div>
+              {preReadBlock}
+              {wordList}
+              {notesList}
+              {toSave.length > 0 && (
+                <button type="button" onClick={save} disabled={saving} className="min-h-[52px] rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold disabled:opacity-60">
+                  {saving ? 'در حال ساخت…' : `ساخت ${fa(toSave.length)} کارت`}
+                </button>
+              )}
+              {waiting > 0 && <p className="text-center text-xs text-ink-muted dark:text-slate-400">معنی {fa(waiting)} واژه در همین جمله هنوز در راه است.</p>}
+              {saved && <p className="text-center text-sm text-emerald-700 dark:text-emerald-300">کارت‌ها ساخته شد و در مرور بعدی می‌آیند.</p>}
+              <p className="text-xs text-ink-muted dark:text-slate-400 leading-relaxed">
+                با ورق زدن از صفحهٔ آخر، این بخش تمام می‌شود (+{fa(CHUNK_COMPLETE_XP)} امتیاز{isChestSection(index) ? ' و صندوق جایزه' : ''}) و بخش بعد می‌آید.
+                {!done && metAgain > 0 && <> {fa(metAgain)} واژهٔ این بخش از قبل کارت دارد؛ دیده‌شدنشان در این کتاب ثبت می‌شود.</>}
+              </p>
+            </aside>
+          </div>
+        )}
+
+        {panel !== 'words' && sheets(true)}
+        {editor}
+      </div>
+    );
+  };
+
+  if (bookMode) return renderBook();
+
+  return (
+    <div dir="rtl" className="font-fa flex flex-col gap-5 w-full">
+      <header className="flex flex-wrap items-center gap-3">
+        <button type="button" onClick={onBack} aria-label="برگشت به مسیر" className="w-11 h-11 rounded-xl flex items-center justify-center hover:bg-white dark:hover:bg-slate-800"><Icon.Back /></button>
+        <div className="flex-1 min-w-0">
+          <p className="text-xs text-ink-muted dark:text-slate-400 truncate">
+            {chapterCount > 1 && <><bdi dir="auto">{chapter.title}</bdi>، </>}بخش {fa(index + 1)} از {fa(chunks.length)}
+          </p>
+          <h1 dir="auto" className="font-en font-bold text-lg text-ink dark:text-white truncate text-right">{book.title}</h1>
+        </div>
+        {chunks.length <= MAX_SECTION_BUTTONS ? (
+          <nav aria-label="بخش‌ها" className="flex flex-wrap gap-1.5">
+            {chunks.map((_, i) => {
+              const isDone = chapter.completed.includes(i);
+              return (
+                <button key={i} type="button" disabled={!isChunkOpen(chapter, i) && i !== index} onClick={() => onOpenChunk(i)} aria-current={i === index ? 'page' : undefined}
+                  className={`w-9 h-9 rounded-[10px] text-sm font-bold ${i === index ? 'bg-brand-500 text-white ring-4 ring-brand-200 dark:ring-brand-900' : isDone ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400'} disabled:opacity-50`}>
+                  {fa(i + 1)}
+                </button>
+              );
+            })}
+          </nav>
+        ) : (
+          <nav aria-label="بخش‌ها" className="flex items-center gap-1.5">
+            <button type="button" disabled={index === 0} onClick={() => onOpenChunk(index - 1)} aria-label="بخش قبلی"
+              className="w-9 h-9 rounded-[10px] flex items-center justify-center bg-white dark:bg-slate-800 disabled:opacity-40"><Icon.Back size={18} /></button>
+            <select value={index} onChange={e => onOpenChunk(Number(e.target.value))} aria-label="رفتن به بخش"
+              className="h-9 rounded-[10px] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 px-2 text-sm">
+              {chunks.map((_, i) => (
+                <option key={i} value={i} disabled={!isChunkOpen(chapter, i) && i !== index}>
+                  {chapter.completed.includes(i) ? '✓ ' : ''}بخش {fa(i + 1)}
+                </option>
+              ))}
+            </select>
+            <button type="button" disabled={!isChunkOpen(chapter, index + 1) || index + 1 >= chunks.length} onClick={() => onOpenChunk(index + 1)} aria-label="بخش بعدی"
+              className="w-9 h-9 rounded-[10px] flex items-center justify-center bg-white dark:bg-slate-800 disabled:opacity-40"><Icon.Back size={18} className="rotate-180" /></button>
+          </nav>
+        )}
+        <button type="button" onClick={() => onUpdateSettings({ readerMode: 'book' })} title="خواندن صفحه‌به‌صفحه، مثل کتاب"
+          className="inline-flex items-center gap-1.5 min-h-[36px] px-3 rounded-xl text-sm font-bold bg-white dark:bg-slate-800 hover:bg-brand-50 dark:hover:bg-slate-700">
+          <Icon.Book size={16} />حالت کتاب
+        </button>
+        {onEditText && (
+          <button type="button" onClick={() => setEditing(true)} title="درست کردن یا حذف بخشی از متن"
+            className="min-h-[36px] px-3 rounded-xl text-sm font-bold bg-white dark:bg-slate-800 hover:bg-brand-50 dark:hover:bg-slate-700">
+            ویرایش متن
+          </button>
+        )}
+        {editor}
+      </header>
+
+      <div className="flex flex-wrap gap-5 items-start">
+        <article className="flex-[999_1_30rem] min-w-0 bg-white dark:bg-slate-800 rounded-3xl p-5 md:p-9 flex flex-col gap-4">
+          {preReadBlock}
           <div className="flex flex-wrap justify-between items-center gap-2 text-xs text-ink-muted dark:text-slate-400">
             <span>روی واژه بزن تا معنی‌اش بیاید؛ برای عبارت یا جمله، روی چند واژه بکش (در موبایل: اول انگشت را نگه دار).</span>
           </div>
@@ -827,149 +1531,9 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
         </article>
 
         <aside className="flex-[1_1_20rem] max-w-full lg:max-w-md flex flex-col gap-4 lg:sticky lg:top-6">
-          <section className="bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-3">
-            <div className="flex justify-between items-center gap-2">
-              <h2 className="font-bold text-ink dark:text-white">{items.length > 0 ? `${fa(items.length)} واژه و عبارت` : 'واژه‌های سخت'}</h2>
-              <span className="text-xs text-ink-muted dark:text-slate-400">{toSave.length > 0 ? `${fa(toSave.length)} انتخاب شده` : ''}</span>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-ink-muted dark:text-slate-400">منبع:</span>
-              {(['ai', 'free'] as ExtractionSource[]).map(s => (
-                <button key={s} type="button" onClick={() => setSource(s)} aria-pressed={source === s}
-                  className={`rounded-full px-3 py-1 ${source === s ? 'bg-brand-100 text-brand-700 font-bold dark:bg-brand-900/60 dark:text-brand-200' : 'border border-slate-200 dark:border-slate-600'}`}>
-                  {s === 'ai' ? 'هوش مصنوعی' : 'دیکشنری رایگان'}
-                </button>
-              ))}
-            </div>
-            <button type="button" onClick={() => extract(12, true)} disabled={loading}
-              className="min-h-[44px] rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 font-bold disabled:opacity-60">
-              {loading ? 'در حال پیدا کردن…' : items.length > 0 ? 'پیدا کردن واژه‌های بیشتر' : 'پیدا کردن واژه‌های سخت این بخش'}
-            </button>
-            {items.length > 0 && (
-              <ul className="flex flex-col gap-1 max-h-[22rem] overflow-y-auto -mx-1 px-1">
-                {items.map(it => (
-                  <li key={it.uid}>
-                    <div className={`flex items-center gap-2 min-h-[44px] px-2.5 rounded-xl ${detail?.uid === it.uid ? 'bg-brand-50 dark:bg-brand-900/40' : ''}`}>
-                      <input type="checkbox" checked={!!it.selected && !it.alreadyInDeck} disabled={it.alreadyInDeck || it.loading}
-                        onChange={() => toggle(it.uid)} aria-label={`انتخاب ${it.front}`} className="w-[18px] h-[18px] accent-brand-500" />
-                      <button type="button" onClick={() => { setSelection(null); setSelectedUid(it.uid); }} className="flex-1 min-w-0 flex items-center gap-2 text-right">
-                        <span dir="ltr" className="font-en font-medium text-ink dark:text-white truncate">{it.front}</span>
-                        {it.kind && it.kind !== 'word' && <span className="shrink-0 text-[11px] rounded-full bg-slate-100 dark:bg-slate-700 px-2">{KIND_LABEL[it.kind]}</span>}
-                        {it.level && <span className="shrink-0 font-en text-[11px] rounded-full bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-100 px-1.5" title="سطح واژه">{it.level}</span>}
-                        <span className="flex-1" />
-                        <span className="text-xs text-ink-muted dark:text-slate-400 truncate max-w-[45%]">
-                          {it.loading ? 'در حال جست‌وجو…' : it.alreadyInDeck ? 'کارت دارد' : it.senseLoading ? 'معنی در همین جمله…' : it.back}
-                        </span>
-                      </button>
-                      {!it.loading && !it.alreadyInDeck && it.kind !== 'grammar' && (
-                        <button type="button" onClick={() => markKnown(it)} title="بلدم: دیگر پیشنهاد نشود" aria-label={`بلدم: ${it.front}`}
-                          className="shrink-0 min-h-[32px] px-2 rounded-lg text-xs text-emerald-800 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/40">بلدم</button>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          {selection ? (
-            <SelectionBar
-              text={selectionText}
-              words={selectionWords}
-              maxMeaningWords={MAX_PHRASE_WORDS}
-              canGrowBack={selection.from > 0}
-              canGrowForward={selection.to < section.words.length - 1}
-              wholeSentence={selectionIsSentence}
-              aiNote={aiNote}
-              busy={busy}
-              translation={result?.translation}
-              structures={result?.structures}
-              rules={selectionRules}
-              onOpenRule={(id: string) => { const r = selectionRules.find(x => x.id === id); openRule(id, r?.at); }}
-              onGrow={grow}
-              onWholeSentence={() => wholeSentence(selection)}
-              onMeaning={() => { const r = selection; lookUp(r.from, r.to); }}
-              onGrammar={analyzeSelection}
-              onTranslate={translateSelection}
-              onOpenStructure={uid => { setSelection(null); setSelectedUid(uid); }}
-              onClose={() => setSelection(null)}
-            />
-          ) : detail && !detail.loading && (
-            // Below xl the list sits under the text, so the tapped word opens
-            // as a sheet at the bottom of the screen, where the reader is.
-            <section aria-label="جزئیات واژه"
-              className="fixed z-30 inset-x-3 bottom-[calc(5rem+env(safe-area-inset-bottom))] md:bottom-5 md:left-6 md:right-[17.5rem] max-h-[46vh] overflow-y-auto shadow-2xl ring-1 ring-slate-200 dark:ring-slate-700 xl:static xl:max-h-none xl:shadow-none xl:ring-0 bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-2.5 animate-reveal">
-              <div dir="ltr" className="flex items-baseline gap-2.5 flex-wrap">
-                <span className="font-en font-bold text-2xl text-ink dark:text-white">{detail.front}</span>
-                {detail.pronunciation && <span className="text-ink-muted dark:text-slate-400">{detail.pronunciation}</span>}
-                {detail.level && <span className="font-en text-xs rounded-full bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-100 px-2 py-0.5" title="سطح واژه">{detail.level}</span>}
-                {isSpeechSupported() && detail.kind !== 'grammar' && (
-                  <button type="button" onClick={() => { readAloud.pause(); speakText(detail.front, { rate: 0.9 }); }} aria-label="پخش تلفظ" className="text-brand-500 dark:text-brand-300"><Icon.Speaker size={18} /></button>
-                )}
-                <span className="flex-1" />
-                <button type="button" onClick={() => setSelectedUid(null)} aria-label="بستن" className="xl:hidden w-9 h-9 -m-1.5 rounded-xl flex items-center justify-center text-ink-muted hover:bg-slate-100 dark:hover:bg-slate-700"><Icon.Close size={18} /></button>
-              </div>
-              <p className="text-ink dark:text-white">{detail.back}</p>
-              {(detail.inContext || detail.senseLoading) && (
-                <p className={`self-start text-xs rounded-full px-2.5 py-0.5 ${detail.inContext ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200' : 'bg-slate-100 text-ink-muted dark:bg-slate-700 dark:text-slate-300'}`}>
-                  {detail.kind === 'grammar'
-                    ? (detail.inContext ? 'توضیح برای همین جمله' : 'در حال نوشتن توضیح برای همین جمله…')
-                    : (detail.inContext ? 'معنی در همین جمله' : 'در حال پیدا کردن معنی در همین جمله…')}
-                </p>
-              )}
-              {detailRules.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5 text-sm">
-                  <span className="text-ink-muted dark:text-slate-400">بخشی از ساختار:</span>
-                  {detailRules.map(r => (
-                    <button key={r.id} type="button" dir="ltr" onClick={() => openRule(r.id, detailPlace!.from)}
-                      className="min-h-[32px] px-2.5 rounded-full border border-rose-300 dark:border-rose-700 text-rose-800 dark:text-rose-200 font-en text-[13px]">{r.name}</button>
-                  ))}
-                </div>
-              )}
-              {detail.grammarPattern && <p dir="ltr" className="font-mono text-sm text-rose-700 dark:text-rose-300">{detail.grammarPattern}</p>}
-              {detail.definition && detail.definition[0] && <p dir="ltr" className="text-sm text-ink-muted dark:text-slate-400">{detail.definition[0]}</p>}
-              {detail.collocations && detail.collocations.length > 0 && (
-                <div dir="ltr" className="flex flex-wrap gap-1.5">
-                  {detail.collocations.slice(0, 5).map((c, i) => (
-                    <span key={i} className="rounded-full border border-slate-200 dark:border-slate-600 px-2.5 py-0.5 text-[13px]">{c.phrase}</span>
-                  ))}
-                </div>
-              )}
-              {detail.notes && <p className="text-sm text-ink dark:text-slate-200">{detail.notes}</p>}
-              {detail.practicePrompt && (
-                <p className="text-sm rounded-xl bg-rose-50 dark:bg-rose-900/30 text-rose-900 dark:text-rose-100 px-3 py-2">تمرین: {detail.practicePrompt}</p>
-              )}
-              {detail.exampleSentenceTarget?.[0] && detail.kind === 'grammar' && <p dir="ltr" className="text-sm text-ink dark:text-slate-200">{detail.exampleSentenceTarget[0]}</p>}
-              {detail.sourceSentence && <p dir="ltr" className="font-read text-sm italic text-ink-muted dark:text-slate-400 border-t border-slate-100 dark:border-slate-700 pt-2">“{detail.sourceSentence}”</p>}
-              {detailPlace && detail.kind !== 'grammar' && (
-                <div className="flex flex-wrap gap-1.5">
-                  <button type="button" disabled={detailPlace.from === 0} onClick={() => pick({ ...detailPlace, from: detailPlace.from - 1 })}
-                    className="min-h-[36px] px-3 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-40">+ واژهٔ قبل</button>
-                  <button type="button" disabled={detailPlace.to >= section.words.length - 1} onClick={() => pick({ ...detailPlace, to: detailPlace.to + 1 })}
-                    className="min-h-[36px] px-3 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-40">واژهٔ بعد +</button>
-                  <button type="button" onClick={() => wholeSentence(detailPlace)}
-                    className="min-h-[36px] px-3 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600">کل جمله</button>
-                </div>
-              )}
-              <div className="flex flex-wrap items-center gap-3 pt-1">
-                {!detail.alreadyInDeck && (
-                  <label className="xl:hidden flex items-center gap-2 text-sm">
-                    <input type="checkbox" checked={!!detail.selected} onChange={() => toggle(detail.uid)} className="w-[18px] h-[18px] accent-brand-500" />
-                    کارت ساخته شود
-                  </label>
-                )}
-                {detail.kind !== 'grammar' && (detailKnownAs
-                  ? <button type="button" onClick={() => onUnmarkKnown(detailKnownAs)} className="min-h-[40px] px-3 rounded-xl text-sm border border-slate-200 dark:border-slate-600">در فهرست «بلدم» است؛ بردار</button>
-                  : !detail.alreadyInDeck && <button type="button" onClick={() => markKnown(detail)} className="min-h-[40px] px-3 rounded-xl text-sm font-bold bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-900/40 dark:text-emerald-200">بلدم</button>)}
-                <span className="flex-1" />
-                {toSave.length > 0 && (
-                  <button type="button" onClick={save} disabled={saving} className="xl:hidden min-h-[44px] px-4 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-bold disabled:opacity-60">
-                    {saving ? 'در حال ساخت…' : `ساخت ${fa(toSave.length)} کارت`}
-                  </button>
-                )}
-              </div>
-            </section>
-          )}
+          {wordList}
+          {notesList}
+          {sheets(false)}
 
           <div className="flex flex-col gap-2">
             {toSave.length > 0 && (
@@ -995,15 +1559,29 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   );
 };
 
-type ReaderScreenProps = Omit<ChunkReaderViewProps, 'chunks'> & {
+type ReaderScreenProps = Omit<ChunkReaderViewProps, 'chunks' | 'onEditText'> & {
   loadText: (chapterId: string) => Promise<ChapterText>;
+  onEditChunk?: (index: number, text: string) => Promise<string[]>; // the chapter's sections after the edit
 };
 
 // The reader, once the chapter's text is here: it is kept in this browser,
 // and fetched from the server the first time the chapter is opened on a new
 // device.
-export const ReaderScreen: React.FC<ReaderScreenProps> = ({ loadText, ...props }) => {
+export const ReaderScreen: React.FC<ReaderScreenProps> = ({ loadText, onEditChunk, ...props }) => {
   const chapterId = props.chapter.id;
+  // Bumped when the text is edited, so the section opens afresh on it.
+  const [edits, setEdits] = useState(0);
+  // Where the next section opens: set by the reader as it turns pages across
+  // sections; anything else (the library, the section list) resumes.
+  const entry = useRef<ReaderEntry>({ kind: 'resume' });
+  const openChunk = (i: number, at?: ReaderEntry) => {
+    entry.current = at || { kind: 'resume' };
+    props.onOpenChunk(i, at);
+  };
+  const complete = (then?: CompleteThen) => {
+    if (then === 'next') entry.current = { kind: 'start' };
+    return props.onComplete(then);
+  };
   const [text, setText] = useState<{ id: string; chunks?: string[]; error?: string } | null>(null);
   const [attempt, setAttempt] = useState(0);
 
@@ -1040,5 +1618,11 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({ loadText, ...props }
       </div>
     );
   }
-  return <ChunkReaderView key={`${chapterId}-${props.index}`} {...props} chunks={text.chunks} />;
+  const editText = onEditChunk && (async (edited: string) => {
+    const chunks = await onEditChunk(props.index, edited);
+    entry.current = { kind: 'resume' };
+    setText({ id: chapterId, chunks });
+    setEdits(n => n + 1);
+  });
+  return <ChunkReaderView key={`${chapterId}-${props.index}-${edits}`} {...props} chunks={text.chunks} entry={entry.current} onOpenChunk={openChunk} onComplete={complete} onEditText={editText || undefined} />;
 };
