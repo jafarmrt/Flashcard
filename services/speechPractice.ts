@@ -121,7 +121,7 @@ Listen carefully and judge it like a strict but kind pronunciation teacher. Retu
 - "tip": one short Persian instruction for the next try.
 - "correction": the IPA of the correct pronunciation, between slashes.
 ${issues}
-Only report problems you really hear; do not invent any.${usual}`;
+Only report problems you really hear; do not invent any. If you cannot make out clear speech, return "heard": "" and "score": 0: never guess words from noise, and never write about the audio itself (its quality, noise, silence) in "heard".${usual}`;
   }
   const words = speechWords(target);
   const at = focus ? focusIndexes(target, focus) : [];
@@ -139,7 +139,7 @@ Listen carefully and judge the whole sentence like a strict but kind pronunciati
 - "tip": one short Persian instruction for the next try (e.g. «واژه‌های کوچک را کوتاه‌تر بگو و روی think تکیه کن»).
 - "correction": the IPA of the words you flag, between slashes (or empty).
 ${issues}
-Only report problems you really hear; do not invent any.${usual}`;
+Only report problems you really hear; do not invent any. If you cannot make out clear speech, return "heard": "" and "score": 0: never guess words from noise, and never write about the audio itself (its quality, noise, silence) in "heard".${usual}`;
 };
 
 // --- What was heard, against the text ---
@@ -197,6 +197,22 @@ export const compareHeard = (target: string, heard: string): { words: HeardWord[
     }
   }
   return { words: words.reverse(), added };
+};
+
+// The listener did not really hear a recording that has voice in it: it
+// heard nothing, or it wrote about the recording instead of what was said
+// ("leaked audio", "[inaudible]", "background noise"). Such an answer is
+// not the learner's score and is not kept.
+const ABOUT_THE_AUDIO = /\b(audio|recording|recorded|silence|silent|noise|noisy|music|inaudible|unintelligible|static|no speech|speech)\b|[[\]()]/i;
+
+export const listenerMissed = (evaluation: Pick<Evaluation, 'heard' | 'score'>, target: string): boolean => {
+  const heard = (evaluation.heard || '').trim();
+  if (!heard) return evaluation.score < 20;
+  const found = heard.match(ABOUT_THE_AUDIO);
+  if (!found) return false;
+  if (/^[[\]()]$/.test(found[0])) return true; // "[inaudible]", "(noise)"
+  // A word about audio counts only when the text itself does not have it.
+  return !new RegExp(`\\b${found[0]}\\b`, 'i').test(target);
 };
 
 // The AI's marks with what the comparison found added: a word left out or

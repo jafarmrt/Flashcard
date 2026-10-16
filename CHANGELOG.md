@@ -9,6 +9,12 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.5.1] - 2026-10-16 - Claude Models, and a Listener That Really Hears
+- **Claude:** Newer Claude models refused every request ("`temperature` is deprecated for this model"); the app no longer sends a temperature to Claude.
+- **A listener that did not hear:** When the listener answers without having heard a recording that has a voice in it (it heard nothing, or wrote about the recording itself, like "leaked audio" or "[inaudible]"), the answer is not saved as a score. The same recording can be sent again with one tap, and after two such answers the app suggests another listener.
+- **Quiet recordings:** A quiet recording (a phone held far away) is made up to ten times louder before it is sent; a recording with no voice in it is not sent at all, and the app says to hold the phone closer. The listener is also told to leave "heard" empty rather than guess words from noise.
+- **Wrong tries:** A try can be deleted from the pronunciation history, so a wrong score does not stay in the progress or the review schedule.
+
 ## [7.5.0] - 2026-10-16 - Claude, and Another Listener for Pronunciation
 - **Claude (Anthropic):** A new AI service in Settings, with its own key and the list of Claude models to pick from. It can be put anywhere in the order of services and does everything the other text services do (finding words, meanings, grammar, checks, quizzes). It cannot hear, so it is never asked in pronunciation practice.
 - **Pronunciation through OpenRouter:** Pronunciation practice is no longer tied to Gemini. In Settings › Study, its listener is Gemini, an OpenRouter model that takes audio (Gemini Flash by default; the list shows only models that hear), or Gemini first and OpenRouter when Gemini fails. Recordings are sent as WAV, which every such model takes. Each try says which service and model listened.

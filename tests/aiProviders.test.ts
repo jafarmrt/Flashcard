@@ -9,7 +9,7 @@ import { providerFields } from '../services/aiClient';
 import { KEY_IDS } from '../services/keySync';
 import { anthropicReply, anthropicRequestBody, AiRequestError, openAiRequestBody, requestAudio, requestText, systemText } from '../server/aiRequests';
 import { anthropicModels, openAiModels } from '../server/aiModels';
-import { encodeWav } from '../services/audioWav';
+import { encodeWav, hasSpeech, louder, speechLevel } from '../services/audioWav';
 
 const settings = (over: Partial<Settings> = {}): Settings => ({ theme: 'system', ...over } as Settings);
 
@@ -76,6 +76,9 @@ test('Claude gets a Messages API request; audio is refused; its answer is read b
   assert.deepEqual(body.messages, [{ role: 'user', content: 'List words.' }]);
   assert.match(body.system, /^You teach English\.\n\nReply with one JSON object only/);
   assert.equal(anthropicRequestBody({ contents: 'x', config: { maxOutputTokens: 16 } }).max_tokens, 16);
+  // Newer Claude models refuse sampling settings ("`temperature` is deprecated for this model").
+  const sampled = anthropicRequestBody({ contents: 'x', config: { temperature: 0.2, topP: 0.9, topK: 5 } });
+  assert.deepEqual(Object.keys(sampled).sort(), ['max_tokens', 'messages', 'model']);
   assert.equal(anthropicRequestBody({ contents: 'x' }).system, undefined);
   assert.throws(() => anthropicRequestBody(audioPayload), (e: unknown) => e instanceof AiRequestError && /cannot listen/.test(e.message));
   assert.deepEqual(
@@ -103,4 +106,34 @@ test('a recording becomes 16-bit mono WAV', () => {
   assert.equal(view.getUint16(22, true), 1);
   assert.equal(view.getUint32(40, true), 8);
   assert.deepEqual([view.getInt16(44, true), view.getInt16(46, true), view.getInt16(48, true), view.getInt16(50, true)], [0, 32767, -32768, 32767]);
+});
+
+// One second at 16 kHz: quiet room noise, with a voice from 0.3 to 0.8 s.
+const recording = (voice: number, noise = 0.002) => {
+  const s = new Float32Array(16000);
+  for (let k = 0; k < s.length; k++) {
+    const t = k / 16000;
+    s[k] = (Math.sin(k * 7.1) * noise) + (t >= 0.3 && t < 0.8 ? Math.sin(2 * Math.PI * 220 * t) * voice : 0);
+  }
+  return s;
+};
+
+test('a recording is measured: how loud, how much of it is voice', () => {
+  const normal = speechLevel(recording(0.4));
+  assert.ok(Math.abs(normal.voicedSeconds - 0.5) < 0.05, `${normal.voicedSeconds}`);
+  assert.ok(hasSpeech(normal));
+  assert.ok(hasSpeech(speechLevel(recording(0.03))), 'a quiet voice is still a voice');
+  assert.ok(hasSpeech(speechLevel(recording(0.008, 0.0005))), 'a very quiet voice in a quiet room too');
+  assert.equal(hasSpeech(speechLevel(recording(0))), false, 'room noise only');
+  assert.equal(hasSpeech(speechLevel(new Float32Array(16000))), false, 'silence');
+  const short = recording(0.4).map((v, k) => (k > 16000 * 0.4 ? 0 : v));
+  assert.equal(hasSpeech(speechLevel(short)), false, 'a tenth of a second is no word');
+});
+
+test('a quiet recording is made louder, up to ten times; a loud one is left alone', () => {
+  const quiet = louder(recording(0.05));
+  assert.ok(Math.max(...quiet) > 0.45 && Math.max(...quiet) <= 0.9, `${Math.max(...quiet)}`);
+  const loud = recording(0.7);
+  assert.equal(louder(loud), loud);
+  assert.ok(Math.max(...louder(recording(0.001, 0.001))) < 0.03, 'noise is not blown up past ten times');
 });

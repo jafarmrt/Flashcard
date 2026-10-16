@@ -90,13 +90,13 @@ export const anthropicRequestBody = (payload: any): Record<string, any> => {
   if (requestAudio(contents).length) throw new AiRequestError('Claude cannot listen to audio; pronunciation practice uses Gemini or an OpenRouter audio model.');
   const system = [systemText(config?.systemInstruction), jsonInstruction(config)].filter(Boolean).join('\n\n');
   const maxTokens = Number(config?.maxOutputTokens);
-  const temperature = Number(config?.temperature);
+  // No temperature, top_p or top_k: newer Claude models refuse them
+  // ("`temperature` is deprecated for this model") and use their own.
   return {
     model: model || 'claude-haiku-4-5',
     max_tokens: Number.isFinite(maxTokens) && maxTokens > 0 ? Math.min(maxTokens, 32_000) : MAX_OUTPUT_TOKENS,
     ...(system ? { system } : {}),
     messages: [{ role: 'user', content: requestText(contents) || ' ' }],
-    temperature: Number.isFinite(temperature) ? Math.max(0, Math.min(1, temperature)) : 0.3,
   };
 };
 

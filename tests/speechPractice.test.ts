@@ -4,7 +4,7 @@ import type { Flashcard, SpeechAttempt } from '../types';
 import {
   attemptKey, cleanEvaluation, compactAttempts, dailyScores, dueSchedules, focusIndexes, focusSounds, itemProgress, newAttempt,
   pickSpeechItems, practiceSentence, pronunciationPrompt, PRONUNCIATION_SCHEMA, scheduleFor, sentenceAround, sessionResults,
-  SOUND_IDS, speechSummary, speechTokens, speechWords, weakCardIds, weakSounds, compareHeard, wordLikeness, withHeardCheck,
+  SOUND_IDS, speechSummary, speechTokens, speechWords, weakCardIds, weakSounds, compareHeard, wordLikeness, withHeardCheck, listenerMissed,
 } from '../services/speechPractice';
 import type { Occurrence } from '../types';
 import { syncFingerprint } from '../services/syncState';
@@ -293,4 +293,15 @@ test('a kind AI is checked: missed words are marked, completeness counted, the s
 test('the prompt asks for what was said word for word, not corrected', () => {
   assert.match(pronunciationPrompt('I think so.', 'sentence'), /Do NOT correct it to match the text/);
   assert.match(pronunciationPrompt('think', 'word'), /Do NOT correct it/);
+});
+
+test('a listener that did not really hear is told apart from a learner who said it wrong', () => {
+  assert.equal(listenerMissed({ heard: 'leaked audio', score: 40 }, 'reluctant'), true, 'writes about the recording');
+  assert.equal(listenerMissed({ heard: '[inaudible]', score: 10 }, 'think'), true);
+  assert.equal(listenerMissed({ heard: 'background noise', score: 5 }, 'I think so.'), true);
+  assert.equal(listenerMissed({ heard: '', score: 0 }, 'think'), true, 'heard nothing');
+  assert.equal(listenerMissed({ heard: '', score: 70 }, 'think'), false, 'an answer without a transcript still counts');
+  assert.equal(listenerMissed({ heard: 'tink', score: 40 }, 'think'), false, 'a real mistake is kept');
+  assert.equal(listenerMissed({ heard: 'he was happy', score: 20 }, 'He was reluctant.'), false, 'another word is a real mistake');
+  assert.equal(listenerMissed({ heard: 'turn the music down', score: 80 }, 'Turn the music down.'), false, 'unless the text has the word');
 });

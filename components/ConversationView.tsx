@@ -255,6 +255,7 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
 
           {mode === 'progress' ? (
               <SpeechProgress attempts={speechAttempts} weakCount={counts.weak} dueCount={counts.due}
+                onDeleteAttempt={a => onSaveSpeechAttempt({ ...a, isDeleted: true, updatedAt: new Date().toISOString() })}
                 onPracticeWeak={() => startSpeaking(speakKind, 'weak')} onPracticeDue={() => startSpeaking(speakKind, 'plan')} />
           ) : (
           <section className={`${panel} flex flex-col items-center text-center gap-3`}>

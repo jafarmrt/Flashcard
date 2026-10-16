@@ -8,8 +8,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { SpeechAttempt, SpeechMark } from '../../types';
 import { AiRequestOptions, evaluatePronunciation } from '../../services/geminiService';
 import { recordingForAi } from '../../services/audioWav';
+import { hasSpeech } from '../../services/audioWav';
 import {
-  attemptKey, attemptsFor, dailyScores, focusIndexes, focusSounds, newAttempt, soundInfo, SpeechItem, SpeechSchedule,
+  attemptKey, attemptsFor, dailyScores, focusIndexes, focusSounds, listenerMissed, newAttempt, soundInfo, SpeechItem, SpeechSchedule,
   speechSchedules, SpeechStage, speechSummary, speechTokens, WEAK_SCORE, weakSounds,
 } from '../../services/speechPractice';
 import { dayString } from '../../services/streakService';
@@ -219,6 +220,10 @@ export const SpeakingMode: React.FC<SpeakingModeProps> = ({ items, attempts, onS
   const [myVoice, setMyVoice] = useState('');
   const [tried, setTried] = useState<SpeechAttempt[]>([]);
   const [showMeaning, setShowMeaning] = useState(false);
+  // The listener answered without hearing the recording (see listenerMissed).
+  const [missed, setMissed] = useState<{ by?: string; heard?: string; times: number } | null>(null);
+  const missedTimes = useRef(0);
+  const lastRecording = useRef<Blob | null>(null);
   const requeued = useRef(new Set<string>());
   const recorder = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
@@ -253,9 +258,23 @@ export const SpeakingMode: React.FC<SpeakingModeProps> = ({ items, attempts, onS
   const evaluate = async (blob: Blob, forIndex: number) => {
     setIsAnalyzing(true);
     setError('');
+    setMissed(null);
+    lastRecording.current = blob;
     try {
       const audio = await recordingForAi(blob);
+      // Silence is not sent: it costs a request and the listener may make up words.
+      if (audio.level && !hasSpeech(audio.level)) {
+        if (alive.current) setError('در ضبط تو صدایی شنیده نشد، پس چیزی فرستاده نشد. میکروفون را نزدیک‌تر بگیر، دکمه را بزن و بعد شروع به خواندن کن.');
+        return;
+      }
       const evaluation = await evaluatePronunciation(target, audio.data, audio.mimeType, audioOptions, { kind, weak, focus: item.focus });
+      // The listener did not really hear a recording with voice in it: no
+      // score is saved, and the same recording can be sent again.
+      if (listenerMissed(evaluation, target)) {
+        if (alive.current && indexRef.current === forIndex) setMissed({ by: evaluation.by, heard: evaluation.heard, times: (missedTimes.current += 1) });
+        return;
+      }
+      missedTimes.current = 0;
       const attempt: SpeechAttempt = { ...newAttempt(target, kind, evaluation, card.id), ...(item.focus ? { focus: item.focus } : {}) };
       await onSaveAttempt(attempt);
       if (!alive.current || indexRef.current !== forIndex) return;
@@ -289,6 +308,7 @@ export const SpeakingMode: React.FC<SpeakingModeProps> = ({ items, attempts, onS
     }
     if (starting.current || recorder.current?.state === 'recording') return;
     setError('');
+    setMissed(null);
     if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       setError('این مرورگر نمی‌تواند صدا ضبط کند.');
       return;
@@ -347,9 +367,12 @@ export const SpeakingMode: React.FC<SpeakingModeProps> = ({ items, attempts, onS
   const retry = () => {
     setResult(null);
     setError('');
+    setMissed(null);
   };
 
   const next = () => {
+    setMissed(null);
+    missedTimes.current = 0;
     if (index < queue.length - 1) {
       setIndex(i => i + 1);
       setResult(null);
@@ -425,6 +448,19 @@ export const SpeakingMode: React.FC<SpeakingModeProps> = ({ items, attempts, onS
             {isRecording ? 'برای توقف ضبط بزن' : isAnalyzing ? 'در حال بررسی تلفظ…' : kind === 'sentence' ? 'بزن، جمله را بخوان و دوباره بزن' : 'بزن، واژه را بگو و دوباره بزن'}
           </p>
           {error && <p role="alert" className="px-4 py-3 rounded-2xl bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 text-sm text-center">{error}</p>}
+          {missed && !isAnalyzing && !isRecording && (
+            <div role="alert" className="w-full px-4 py-3 rounded-2xl bg-amber-50 dark:bg-amber-900/30 text-amber-900 dark:text-amber-100 text-sm text-center flex flex-col items-center gap-2">
+              <p>
+                صدایت ضبط شده، ولی شنونده{missed.by && <> (<bdi dir="ltr" className="font-en">{missed.by}</bdi>)</>} درست نشنیدش
+                {missed.heard ? <> و به‌جایش نوشت <bdi dir="ltr" className="font-en">«{missed.heard}»</bdi></> : null}. این نمره ثبت نشد.
+              </p>
+              {missed.times >= 2 && <p className="text-xs">چند بار پشت هم شد؛ شاید این شنونده الان مشکل دارد. در تنظیمات › مطالعه › شنوندهٔ تمرین تلفظ، شنوندهٔ دیگری را امتحان کن.</p>}
+              <div className="flex flex-wrap justify-center gap-2">
+                {myVoice && <button type="button" onClick={() => new Audio(myVoice).play().catch(() => {})} className={secondaryButton}><MicIcon recording={false} size={18} /> صدای خودم</button>}
+                <button type="button" onClick={() => lastRecording.current && evaluate(lastRecording.current, index)} className={secondaryButton}>همین صدا را دوباره بفرست</button>
+              </div>
+            </div>
+          )}
           <button type="button" onClick={next} disabled={isRecording || isAnalyzing} className="text-sm text-ink-muted dark:text-slate-400 underline underline-offset-4 disabled:opacity-50">
             {isLast ? (tried.length ? 'پایان' : 'رد شدن و پایان') : 'رد شدن'}
           </button>
@@ -505,13 +541,16 @@ interface SpeechProgressProps {
   attempts: SpeechAttempt[];
   onPracticeWeak?: () => void;
   onPracticeDue?: () => void;
+  // A wrong try (the listener did not hear) is taken out of the progress and
+  // the schedule, on every device.
+  onDeleteAttempt?: (attempt: SpeechAttempt) => void;
   weakCount: number;
   dueCount: number;
 }
 
 type ItemFilter = 'all' | 'due' | 'learning' | 'settled';
 
-export const SpeechProgress: React.FC<SpeechProgressProps> = ({ attempts, onPracticeWeak, onPracticeDue, weakCount, dueCount }) => {
+export const SpeechProgress: React.FC<SpeechProgressProps> = ({ attempts, onPracticeWeak, onPracticeDue, onDeleteAttempt, weakCount, dueCount }) => {
   const summary = useMemo(() => speechSummary(attempts), [attempts]);
   const days = useMemo(() => dailyScores(attempts), [attempts]);
   const sounds = useMemo(() => weakSounds(attempts), [attempts]);
@@ -658,6 +697,12 @@ export const SpeechProgress: React.FC<SpeechProgressProps> = ({ attempts, onPrac
                           <span className="text-xs text-ink-muted dark:text-slate-400">{new Date(a.createdAt).toLocaleString('fa-IR', { dateStyle: 'medium', timeStyle: 'short' })}</span>
                         </p>
                         <AttemptDetails attempt={a} />
+                        {onDeleteAttempt && (
+                          <button type="button" onClick={() => { if (confirm('این تلاش از تاریخچه و برنامهٔ مرور حذف شود؟ (مثلاً وقتی شنونده درست نشنیده بود)')) onDeleteAttempt(a); }}
+                            className="self-start text-xs text-red-700 dark:text-red-300 underline underline-offset-4">
+                            حذف این تلاش
+                          </button>
+                        )}
                       </li>
                     ))}
                   </ol>
