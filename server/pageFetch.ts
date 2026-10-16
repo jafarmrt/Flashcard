@@ -26,12 +26,49 @@ export const isPrivateAddress = (address: string): boolean => {
       || (a === 198 && (b === 18 || b === 19));
   }
   if (net.isIPv6(address)) {
-    const lower = address.toLowerCase();
-    const mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped) return isPrivateAddress(mapped[1]);
-    return lower === '::' || lower === '::1' || /^f[cd]/.test(lower) || /^fe[89ab]/.test(lower) || /^ff/.test(lower);
+    const h = ipv6Hextets(address);
+    if (!h) return true;
+    const v4 = (hi: number, lo: number) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+    const zeros = (from: number, to: number) => h.slice(from, to).every(x => x === 0);
+    // IPv4 inside IPv6: mapped (::ffff:a.b.c.d, also written ::ffff:7f00:1),
+    // compatible (::a.b.c.d, and :: / ::1), translated (::ffff:0:a.b.c.d),
+    // NAT64 (64:ff9b::a.b.c.d) and 6to4 (2002:aabb:ccdd::).
+    if (zeros(0, 5) && h[5] === 0xffff) return isPrivateAddress(v4(h[6], h[7]));
+    if (zeros(0, 6)) return true;
+    if (zeros(0, 4) && h[4] === 0xffff && h[5] === 0) return isPrivateAddress(v4(h[6], h[7]));
+    if (h[0] === 0x64 && h[1] === 0xff9b) return zeros(2, 6) ? isPrivateAddress(v4(h[6], h[7])) : true; // 64:ff9b:1::/48 is local
+    if (h[0] === 0x2002) return isPrivateAddress(v4(h[1], h[2]));
+    return (h[0] & 0xfe00) === 0xfc00 // unique local fc00::/7
+      || (h[0] & 0xffc0) === 0xfe80 // link-local fe80::/10
+      || (h[0] & 0xffc0) === 0xfec0 // old site-local fec0::/10
+      || (h[0] & 0xff00) === 0xff00 // multicast
+      || (h[0] === 0x100 && zeros(1, 4)) // discard 100::/64
+      || (h[0] === 0x2001 && h[1] === 0) // Teredo: reaches IPv4 hosts
+      || (h[0] === 0x2001 && h[1] === 0xdb8); // documentation
   }
   return true;
+};
+
+// The eight 16-bit groups of an IPv6 address, with "::" and a dotted IPv4
+// tail expanded. Undefined for anything that is not one.
+const ipv6Hextets = (address: string): number[] | undefined => {
+  let text = address.toLowerCase().replace(/%.*$/, '');
+  const dotted = text.match(/^(.*:)(\d+\.\d+\.\d+\.\d+)$/);
+  if (dotted) {
+    if (!net.isIPv4(dotted[2])) return undefined;
+    const [a, b, c, d] = dotted[2].split('.').map(Number);
+    text = `${dotted[1]}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const halves = text.split('::');
+  if (halves.length > 2) return undefined;
+  const part = (s: string) => (s ? s.split(':') : []);
+  const head = part(halves[0]);
+  const tail = halves.length === 2 ? part(halves[1]) : [];
+  const missing = 8 - head.length - tail.length;
+  if (halves.length === 1 ? missing !== 0 : missing < 1) return undefined;
+  const groups = [...head, ...Array(halves.length === 2 ? missing : 0).fill('0'), ...tail];
+  if (groups.some(g => !/^[0-9a-f]{1,4}$/.test(g))) return undefined;
+  return groups.map(g => parseInt(g, 16));
 };
 
 type Lookup = (host: string) => Promise<string[]>;
@@ -47,12 +84,17 @@ export const checkPublicUrl = async (raw: string, lookup: Lookup = systemLookup)
   if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new PageFetchError('Only http and https links can be read.');
   if (url.username || url.password) throw new PageFetchError('Links with a user name or password are not read.');
   if (url.port && url.port !== '80' && url.port !== '443') throw new PageFetchError('Only links on the standard web ports are read.');
+  await checkPublicHost(url, lookup);
+  return url;
+};
+
+// Throws unless every address the host name stands for is on the public internet.
+export const checkPublicHost = async (url: URL, lookup: Lookup = systemLookup): Promise<void> => {
   const host = url.hostname.replace(/^\[|\]$/g, '');
   const addresses = net.isIP(host) ? [host] : await lookup(host).catch(() => {
     throw new PageFetchError('This site could not be found.', 502);
   });
   if (addresses.length === 0 || addresses.some(isPrivateAddress)) throw new PageFetchError('This address is not on the public internet.');
-  return url;
 };
 
 const readLimited = async (response: Response): Promise<string> => {

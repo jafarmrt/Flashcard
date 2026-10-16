@@ -102,12 +102,12 @@ export const AI_PRESETS: ProviderPreset[] = [
   {
     id: 'ollama',
     name: 'Ollama',
-    note: 'روی رایانهٔ خودت',
+    note: 'روی سرور خودت',
     provider: 'openai-compatible',
     baseUrl: 'http://localhost:11434/v1',
     defaultModel: 'llama3.3',
     keyPlaceholder: '',
-    keyHelp: 'با Ollama روی رایانهٔ خودت اجرا می‌شود؛ کلید لازم نیست.',
+    keyHelp: 'درخواست‌ها از سرور برنامه فرستاده می‌شوند، پس Ollama باید روی همان سرور (VPS) باشد و ALLOW_PRIVATE_AI_URL=true تنظیم شده باشد؛ روی Vercel کار نمی‌کند. کلید لازم نیست.',
   },
   {
     id: 'custom',

@@ -1,15 +1,17 @@
 // File: /components/practice/SpeakingPractice.tsx
-// Pronunciation practice: read a word or its example sentence aloud, get a
-// score with the exact sounds that went wrong, try again, and see progress
-// over time (scores by day, sounds that keep going wrong, every word tried).
+// Pronunciation practice: read a card's word inside its sentence (or the word
+// alone), get the whole sentence back word by word with what went wrong, try
+// again, and see progress over time. Each item comes back on a schedule
+// worked out from its tries (services/speechPractice).
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Flashcard, SpeechAttempt } from '../../types';
+import { SpeechAttempt, SpeechMark } from '../../types';
 import { AiRequestOptions, blobToBase64, evaluatePronunciation } from '../../services/geminiService';
 import {
-  attemptKey, attemptsFor, dailyScores, focusSounds, itemProgress, newAttempt, soundInfo, SpeechKind,
-  speechSummary, WEAK_SCORE, weakCardIds, weakSounds,
+  attemptKey, attemptsFor, dailyScores, focusIndexes, focusSounds, newAttempt, soundInfo, SpeechItem, SpeechSchedule,
+  speechSchedules, SpeechStage, speechSummary, speechTokens, WEAK_SCORE, weakSounds,
 } from '../../services/speechPractice';
+import { dayString } from '../../services/streakService';
 import { isSpeechSupported, speakText } from '../../services/ttsService';
 import { fetchAudioData } from '../../services/dictionaryService';
 import { fa, Icon } from '../common/ui';
@@ -18,8 +20,9 @@ const panel = 'bg-white dark:bg-slate-800 rounded-3xl p-5 sm:p-8';
 const primaryButton = 'inline-flex items-center justify-center gap-2 min-h-[52px] px-8 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold transition-colors disabled:opacity-50';
 const secondaryButton = 'inline-flex items-center justify-center gap-2 min-h-[44px] px-5 rounded-xl text-sm font-bold text-ink dark:text-slate-200 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50';
 
-export const SESSION_SIZE = 5;
 const MAX_RECORDING_MS = 30_000;
+// A try below this is asked once more at the end of the same session.
+const AGAIN_BELOW = 60;
 
 export const MicIcon = ({ recording, size = 28 }: { recording: boolean; size?: number }) => (
   <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={recording ? 'text-red-600 dark:text-red-400' : 'text-brand-600 dark:text-brand-200'}>
@@ -33,35 +36,102 @@ export const scoreTone = (score: number) =>
   score >= 80 ? 'text-emerald-700 dark:text-emerald-300' : score >= 60 ? 'text-amber-700 dark:text-amber-300' : 'text-red-700 dark:text-red-300';
 const scoreBox = (score: number) =>
   score >= 80 ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : score >= 60 ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20' : 'border-red-500 bg-red-50 dark:bg-red-900/20';
+const barTone = (score: number) => (score >= 80 ? 'bg-emerald-500' : score >= 60 ? 'bg-amber-500' : 'bg-red-500');
 
-// The text a card is read as: its front, or its first example sentence.
-export const speakingTarget = (card: Flashcard, kind: SpeechKind): string =>
-  kind === 'sentence' ? (card.exampleSentenceTarget || []).map(s => s.trim()).find(Boolean) || '' : card.front.trim();
+export const STAGE_LABEL: Record<SpeechStage, string> = {
+  new: 'تازه', learning: 'در حال یادگیری', reviewing: 'در حال تثبیت', settled: 'جاافتاده',
+};
+const STAGE_TONE: Record<SpeechStage, string> = {
+  new: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200',
+  learning: 'bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100',
+  reviewing: 'bg-sky-100 text-sky-900 dark:bg-sky-900/40 dark:text-sky-100',
+  settled: 'bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100',
+};
+export const StageChip: React.FC<{ stage: SpeechStage }> = ({ stage }) => (
+  <span className={`inline-block text-[11px] font-bold rounded-full px-2 py-0.5 ${STAGE_TONE[stage]}`}>{STAGE_LABEL[stage]}</span>
+);
 
-const shuffle = <T,>(list: T[]): T[] => {
-  const a = [...list];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
+// "امروز", "فردا", "۳ روز دیگر".
+export const dueLabel = (dueDay: string, today: string = dayString(new Date())): string => {
+  if (dueDay <= today) return 'امروز';
+  const days = Math.round((new Date(`${dueDay}T12:00:00`).getTime() - new Date(`${today}T12:00:00`).getTime()) / 86_400_000);
+  return days === 1 ? 'فردا' : `${fa(days)} روز دیگر`;
 };
 
-export type CardChoice = 'mixed' | 'weak';
+const MARK_STYLE: Record<SpeechMark['status'], string> = {
+  unclear: 'bg-amber-100 text-amber-900 dark:bg-amber-900/50 dark:text-amber-100 underline decoration-wavy decoration-amber-500',
+  wrong: 'bg-red-100 text-red-900 dark:bg-red-900/50 dark:text-red-100 underline decoration-wavy decoration-red-500',
+  missed: 'bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400 line-through',
+};
+const MARK_LABEL: Record<SpeechMark['status'], string> = { unclear: 'نه‌چندان واضح', wrong: 'اشتباه', missed: 'جاافتاده' };
 
-// The cards of one session: the weakest ones first when asked for, else new
-// and due cards before the rest, in random order.
-export const pickSpeakingCards = (cards: Flashcard[], attempts: SpeechAttempt[], kind: SpeechKind, choice: CardChoice, size = SESSION_SIZE): Flashcard[] => {
-  const usable = cards.filter(c => !c.isDeleted && c.kind !== 'grammar' && speakingTarget(c, kind));
-  if (choice === 'weak') {
-    const byId = new Map(usable.map(c => [c.id, c]));
-    const weak = weakCardIds(attempts.filter(a => a.kind === kind)).map(id => byId.get(id)).filter((c): c is Flashcard => !!c);
-    return weak.slice(0, size);
-  }
-  const now = Date.now();
-  const first = usable.filter(c => c.repetition === 0 || new Date(c.dueDate).getTime() <= now);
-  const rest = usable.filter(c => !first.includes(c));
-  return [...shuffle(first), ...shuffle(rest)].slice(0, size);
+// The text as read, each word coloured by how it came out; the card's own
+// word underlined. Without marks (a try from before them) only the focus shows.
+export const SentenceMarks: React.FC<{ text: string; marks?: SpeechMark[]; focus?: string; size?: string }> = ({ text, marks, focus, size = 'text-xl md:text-2xl' }) => {
+  const byIndex = new Map<number, SpeechMark>((marks || []).map(m => [m.i, m]));
+  const focusAt = new Set(focus ? focusIndexes(text, focus) : []);
+  return (
+    <p dir="ltr" className={`font-en leading-loose text-ink dark:text-white break-words ${size}`}>
+      {speechTokens(text).map((t, k) => {
+        if (t.i === undefined) return <React.Fragment key={k}>{t.text}</React.Fragment>;
+        const mark = byIndex.get(t.i);
+        const isFocus = focusAt.has(t.i);
+        const cls = `${mark ? `${MARK_STYLE[mark.status]} rounded px-0.5` : marks ? 'text-emerald-800 dark:text-emerald-200' : ''} ${isFocus ? 'font-extrabold border-b-2 border-brand-500' : ''}`;
+        return (
+          <span key={k} className={cls} title={mark ? `${MARK_LABEL[mark.status]}${mark.heard ? `: «${mark.heard}»` : ''}` : undefined}>
+            {t.text}
+          </span>
+        );
+      })}
+    </p>
+  );
+};
+
+// The marked words in a list: what was heard and how to fix it.
+const MarkList: React.FC<{ text: string; marks: SpeechMark[] }> = ({ text, marks }) => {
+  const words = speechTokens(text).filter(t => t.i !== undefined);
+  return (
+    <ul className="flex flex-col gap-1.5 text-right">
+      {marks.map(m => {
+        const info = m.sound ? soundInfo(m.sound) : null;
+        return (
+          <li key={m.i} className="text-sm text-ink dark:text-slate-200">
+            <bdi dir="ltr" className="font-en font-bold">{words[m.i]?.text}</bdi>
+            <span className="text-ink-muted dark:text-slate-400"> · {MARK_LABEL[m.status]}</span>
+            {m.heard && m.status !== 'missed' && <> · شنیده شد <bdi dir="ltr" className="font-en">«{m.heard}»</bdi></>}
+            {info && m.sound !== 'other' && <> · {info.label}{info.ipa && <> <bdi dir="ltr" className="font-en text-ink-muted dark:text-slate-400">/{info.ipa}/</bdi></>}</>}
+          </li>
+        );
+      })}
+    </ul>
+  );
+};
+
+const PARTS: { key: 'accuracy' | 'fluency' | 'rhythm' | 'completeness'; label: string }[] = [
+  { key: 'accuracy', label: 'درستی صداها' },
+  { key: 'fluency', label: 'روانی' },
+  { key: 'rhythm', label: 'تکیه و آهنگ' },
+  { key: 'completeness', label: 'کامل خواندن' },
+];
+
+const PartBars: React.FC<{ parts: SpeechAttempt['parts'] }> = ({ parts }) => {
+  const shown = PARTS.filter(p => parts?.[p.key] !== undefined);
+  if (!shown.length) return null;
+  return (
+    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-right">
+      {shown.map(p => {
+        const v = parts![p.key]!;
+        return (
+          <div key={p.key}>
+            <div className="flex justify-between text-xs"><span className="text-ink-muted dark:text-slate-400">{p.label}</span><span className={`font-bold ${scoreTone(v)}`}>{fa(v)}</span></div>
+            <div className="mt-1 h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden" aria-hidden="true">
+              <div className={`h-full rounded-full ${barTone(v)}`} style={{ width: `${v}%` }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 };
 
 const IssueList: React.FC<{ issues: SpeechAttempt['issues'] }> = ({ issues }) => (
@@ -95,16 +165,42 @@ const ScoreTrail: React.FC<{ scores: number[] }> = ({ scores }) => (
   </span>
 );
 
+// One try in full: the sentence word by word, the parts of the score, the
+// feedback and every problem.
+export const AttemptDetails: React.FC<{ attempt: SpeechAttempt; showText?: boolean }> = ({ attempt, showText = true }) => (
+  <div className="flex flex-col gap-3">
+    {showText && attempt.kind === 'sentence' && <SentenceMarks text={attempt.target} marks={attempt.marks || []} focus={attempt.focus} size="text-base" />}
+    {attempt.focus && attempt.focusScore !== undefined && (
+      <p className="text-sm text-ink dark:text-slate-200">
+        واژهٔ کارت (<bdi dir="ltr" className="font-en font-bold">{attempt.focus}</bdi>): <span className={`font-extrabold ${scoreTone(attempt.focusScore)}`}>{fa(attempt.focusScore)}</span> از {fa(100)}
+      </p>
+    )}
+    <PartBars parts={attempt.parts} />
+    {attempt.feedback && <p dir="rtl" className="text-ink dark:text-slate-200 leading-relaxed">{attempt.feedback}</p>}
+    {attempt.tip && <p className="text-sm font-bold text-brand-700 dark:text-brand-200">برای تلاش بعد: {attempt.tip}</p>}
+    {attempt.heard && <p className="text-sm text-ink-muted dark:text-slate-400">آنچه شنیده شد: <bdi dir="ltr" className="font-en">«{attempt.heard}»</bdi></p>}
+    {attempt.correction && <p className="text-sm text-ink-muted dark:text-slate-400">تلفظ درست: <bdi dir="ltr" className="font-en font-bold">{attempt.correction}</bdi></p>}
+    {attempt.marks && attempt.marks.length > 0 && <MarkList text={attempt.target} marks={attempt.marks} />}
+    {attempt.issues.length > 0 && (
+      <div className="flex flex-col gap-2">
+        <p className="text-sm font-bold text-ink dark:text-white text-right">نقطه‌های ضعف این تلاش</p>
+        <IssueList issues={attempt.issues} />
+      </div>
+    )}
+  </div>
+);
+
 interface SpeakingModeProps {
-  sessionCards: Flashcard[];
-  kind: SpeechKind;
+  items: SpeechItem[];
   attempts: SpeechAttempt[];
   onSaveAttempt: (attempt: SpeechAttempt) => Promise<void> | void;
   onFinish: (result: { average: number; tried: SpeechAttempt[] }) => void;
   audioOptions?: AiRequestOptions;
 }
 
-export const SpeakingMode: React.FC<SpeakingModeProps> = ({ sessionCards, kind, attempts, onSaveAttempt, onFinish, audioOptions }) => {
+export const SpeakingMode: React.FC<SpeakingModeProps> = ({ items, attempts, onSaveAttempt, onFinish, audioOptions }) => {
+  // The session's queue: a weak item is asked once more at its end.
+  const [queue, setQueue] = useState<SpeechItem[]>(items);
   const [index, setIndex] = useState(0);
   const [isRecording, setIsRecording] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -112,6 +208,8 @@ export const SpeakingMode: React.FC<SpeakingModeProps> = ({ sessionCards, kind, 
   const [result, setResult] = useState<SpeechAttempt | null>(null);
   const [myVoice, setMyVoice] = useState('');
   const [tried, setTried] = useState<SpeechAttempt[]>([]);
+  const [showMeaning, setShowMeaning] = useState(false);
+  const requeued = useRef(new Set<string>());
   const recorder = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
   const alive = useRef(true);
@@ -120,37 +218,46 @@ export const SpeakingMode: React.FC<SpeakingModeProps> = ({ sessionCards, kind, 
   const indexRef = useRef(0);
   indexRef.current = index;
 
-  const card = sessionCards[index];
-  const target = card ? speakingTarget(card, kind) : '';
+  const item = queue[index];
+  const card = item?.card;
+  const kind = item?.kind || 'word';
+  const target = item?.target || '';
   const key = card ? attemptKey({ cardId: card.id, target, kind }) : '';
   const history = useMemo(() => attemptsFor(attempts, key), [attempts, key]);
   // Asked once per session, so the AI listens closely for his usual slips.
   const weak = useMemo(() => focusSounds(attempts), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const isRepeat = useMemo(() => queue.slice(0, index).some(q => q.card.id === card?.id && q.kind === kind), [queue, index, card, kind]);
 
   useEffect(() => {
     alive.current = true;
     return () => {
-    alive.current = false;
-    clearTimeout(limit.current);
-    recorder.current?.stream.getTracks().forEach(t => t.stop());
+      alive.current = false;
+      clearTimeout(limit.current);
+      recorder.current?.stream.getTracks().forEach(t => t.stop());
     };
   }, []);
   useEffect(() => () => { if (myVoice) URL.revokeObjectURL(myVoice); }, [myVoice]);
 
   // The try is saved even when the page was left meanwhile; it is shown only
-  // while the same card is still on screen.
+  // while the same item is still on screen.
   const evaluate = async (blob: Blob, forIndex: number) => {
     setIsAnalyzing(true);
     setError('');
     try {
       // Gemini wants the bare type: "audio/webm", not "audio/webm;codecs=opus".
       const mime = blob.type.split(';')[0] || 'audio/webm';
-      const evaluation = await evaluatePronunciation(target, await blobToBase64(blob), mime, audioOptions, { kind, weak });
-      const attempt = newAttempt(target, kind, evaluation, card.id);
+      const evaluation = await evaluatePronunciation(target, await blobToBase64(blob), mime, audioOptions, { kind, weak, focus: item.focus });
+      const attempt: SpeechAttempt = { ...newAttempt(target, kind, evaluation, card.id), ...(item.focus ? { focus: item.focus } : {}) };
       await onSaveAttempt(attempt);
       if (!alive.current || indexRef.current !== forIndex) return;
       setResult(attempt);
       setTried(prev => [...prev, attempt]);
+      // A weak first try comes back once at the end of the session.
+      const id = `${card.id}|${kind}`;
+      if (attempt.score < AGAIN_BELOW && !requeued.current.has(id)) {
+        requeued.current.add(id);
+        setQueue(prev => [...prev, item]);
+      }
     } catch (err) {
       if (alive.current) setError(`صدا بررسی نشد: ${(err as Error)?.message || 'سرویس Gemini پاسخ نداد'}. دوباره امتحان کن.`);
     } finally {
@@ -208,9 +315,9 @@ export const SpeakingMode: React.FC<SpeakingModeProps> = ({ sessionCards, kind, 
   };
 
   // The card's own sound for a word (a dictionary recording), else the
-  // device voice.
-  const playCorrect = async () => {
-    if (kind === 'word' && card.audioSrc) {
+  // device voice; a sentence a little slower, a word slower still.
+  const playCorrect = async (slow = false) => {
+    if (kind === 'word' && card.audioSrc && !slow) {
       try {
         const src = /^(data|blob):/i.test(card.audioSrc) ? card.audioSrc : await fetchAudioData(card.audioSrc);
         await new Audio(src).play();
@@ -219,8 +326,9 @@ export const SpeakingMode: React.FC<SpeakingModeProps> = ({ sessionCards, kind, 
         console.warn('Card audio did not play:', err);
       }
     }
-    speakText(target, { rate: kind === 'sentence' ? 0.9 : 0.85 });
+    speakText(target.replace(/…/g, ''), { rate: slow ? 0.65 : kind === 'sentence' ? 0.9 : 0.85 });
   };
+  const playWord = () => speakText(item.focus || card.front, { rate: 0.75 });
 
   const retry = () => {
     setResult(null);
@@ -228,45 +336,62 @@ export const SpeakingMode: React.FC<SpeakingModeProps> = ({ sessionCards, kind, 
   };
 
   const next = () => {
-    if (index < sessionCards.length - 1) {
+    if (index < queue.length - 1) {
       setIndex(i => i + 1);
       setResult(null);
       setError('');
       setMyVoice('');
+      setShowMeaning(false);
       return;
     }
-    // Each card counts with its last try in this session.
+    // Each item counts with its last try in this session.
     const last = new Map<string, number>();
-    tried.forEach(a => last.set(a.cardId || a.target, a.score));
+    tried.forEach(a => last.set(attemptKey(a), a.score));
     const scores = Array.from(last.values());
     onFinish({ average: scores.length ? Math.round(scores.reduce((s, x) => s + x, 0) / scores.length) : 0, tried });
   };
 
-  if (!card) return null;
-  const isLast = index >= sessionCards.length - 1;
+  if (!item) return null;
+  const isLast = index >= queue.length - 1;
   const earlier = result ? history.filter(a => a.id !== result.id) : history;
+  const canHear = isSpeechSupported() || (kind === 'word' && !!card.audioSrc);
 
   return (
     <div className="max-w-xl mx-auto w-full flex flex-col gap-5">
       <div className="flex items-center gap-3">
         <div className="flex-1 h-2.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-          <div className="h-full bg-brand-500 rounded-full transition-all duration-300" style={{ width: `${((index + 1) / sessionCards.length) * 100}%` }} />
+          <div className="h-full bg-brand-500 rounded-full transition-all duration-300" style={{ width: `${((index + 1) / queue.length) * 100}%` }} />
         </div>
-        <span className="text-sm text-ink-muted dark:text-slate-400 whitespace-nowrap">کارت {fa(index + 1)} از {fa(sessionCards.length)}</span>
+        <span className="text-sm text-ink-muted dark:text-slate-400 whitespace-nowrap">{fa(index + 1)} از {fa(queue.length)}</span>
       </div>
 
-      <section className={`${panel} min-h-[200px] flex flex-col justify-center items-center gap-2 text-center`}>
-        <p className="text-sm text-ink-muted dark:text-slate-400">{kind === 'sentence' ? 'این جمله را بلند بخوان' : 'این واژه را بلند بخوان'}</p>
-        <h2 dir="ltr" className={`font-en font-bold tracking-tight text-ink dark:text-white break-words max-w-full ${kind === 'sentence' ? 'text-2xl md:text-3xl leading-relaxed' : 'text-4xl md:text-5xl'}`}>{target}</h2>
+      <section className={`${panel} min-h-[200px] flex flex-col justify-center items-center gap-3 text-center`}>
+        <p className="text-sm text-ink-muted dark:text-slate-400">
+          {kind === 'sentence' ? 'این جمله را بلند و طبیعی بخوان' : 'این واژه را بلند بخوان'}
+          {isRepeat && <span className="ms-1.5 font-bold text-amber-700 dark:text-amber-300">· یک بار دیگر</span>}
+        </p>
+        {kind === 'sentence'
+          ? <SentenceMarks text={target} marks={result?.marks || (result ? [] : undefined)} focus={item.focus} />
+          : <h2 dir="ltr" className="font-en font-bold tracking-tight text-ink dark:text-white break-words max-w-full text-4xl md:text-5xl">{target}</h2>}
         {kind === 'word' && card.pronunciation && <p dir="ltr" className="text-ink-muted dark:text-slate-400">{card.pronunciation}</p>}
-        {kind === 'sentence' && <p className="text-sm text-ink-muted dark:text-slate-400">واژهٔ کارت: <bdi dir="ltr" className="font-en font-bold">{card.front}</bdi></p>}
-        {(isSpeechSupported() || card.audioSrc) && (
-          <button type="button" onClick={playCorrect} className={`${secondaryButton} mt-2`}>
-            <Icon.Speaker size={18} /> شنیدن تلفظ درست
-          </button>
+        {kind === 'sentence' && (
+          <p className="text-sm text-ink-muted dark:text-slate-400">
+            واژهٔ کارت: <bdi dir="ltr" className="font-en font-bold text-ink dark:text-white">{card.front}</bdi>
+            {card.pronunciation && <> <bdi dir="ltr" className="font-en">{card.pronunciation}</bdi></>}
+            {card.back && (showMeaning
+              ? <> · <span className="text-ink dark:text-slate-200">{card.back}</span></>
+              : <> · <button type="button" onClick={() => setShowMeaning(true)} className="underline underline-offset-4">معنی</button></>)}
+          </p>
+        )}
+        {canHear && !result && (
+          <div className="flex flex-wrap justify-center gap-2 mt-1">
+            <button type="button" onClick={() => playCorrect()} className={secondaryButton}><Icon.Speaker size={18} /> اول گوش کن</button>
+            <button type="button" onClick={() => playCorrect(true)} className={secondaryButton}>آهسته</button>
+            {kind === 'sentence' && isSpeechSupported() && <button type="button" onClick={playWord} className={secondaryButton}>فقط واژه</button>}
+          </div>
         )}
         {earlier.length > 0 && !result && (
-          <p className="text-xs text-ink-muted dark:text-slate-400 mt-1">تلاش‌های پیشین: <ScoreTrail scores={earlier.slice(-6).map(a => a.score)} /></p>
+          <p className="text-xs text-ink-muted dark:text-slate-400">تلاش‌های پیشین: <ScoreTrail scores={earlier.slice(-6).map(a => a.score)} /></p>
         )}
       </section>
 
@@ -287,35 +412,32 @@ export const SpeakingMode: React.FC<SpeakingModeProps> = ({ sessionCards, kind, 
           </p>
           {error && <p role="alert" className="px-4 py-3 rounded-2xl bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 text-sm text-center">{error}</p>}
           <button type="button" onClick={next} disabled={isRecording || isAnalyzing} className="text-sm text-ink-muted dark:text-slate-400 underline underline-offset-4 disabled:opacity-50">
-            {isLast ? (tried.length ? 'پایان' : 'رد شدن و پایان') : 'رد شدن از این کارت'}
+            {isLast ? (tried.length ? 'پایان' : 'رد شدن و پایان') : 'رد شدن'}
           </button>
         </div>
       ) : (
         <div className="w-full flex flex-col items-center gap-4 animate-flip-in">
-          <div className={`w-full p-5 rounded-3xl border-2 text-center flex flex-col gap-3 ${scoreBox(result.score)}`}>
-            <p className="text-ink dark:text-white">
+          <div className={`w-full p-5 rounded-3xl border-2 flex flex-col gap-3 ${scoreBox(result.score)}`}>
+            <p className="text-ink dark:text-white text-center">
               <span className="text-4xl font-extrabold">{fa(result.score)}</span>
               <span className="text-base font-bold text-ink-muted dark:text-slate-400 ms-1.5">از {fa(100)}</span>
             </p>
             {earlier.length > 0 && (
-              <p className="text-sm text-ink-muted dark:text-slate-400">
+              <p className="text-sm text-ink-muted dark:text-slate-400 text-center">
                 روند تو: <ScoreTrail scores={[...earlier.slice(-5).map(a => a.score), result.score]} />
                 {result.score > earlier[earlier.length - 1].score && <span className="ms-1.5 font-bold text-emerald-700 dark:text-emerald-300">بهتر شد!</span>}
               </p>
             )}
-            {result.feedback && <p dir="rtl" className="text-ink dark:text-slate-200 leading-relaxed">{result.feedback}</p>}
-            {result.heard && (
-              <p className="text-sm text-ink-muted dark:text-slate-400">آنچه شنیده شد: <bdi dir="ltr" className="font-en">«{result.heard}»</bdi></p>
+            {kind === 'sentence' && (
+              <p className="text-xs text-ink-muted dark:text-slate-400 text-center">
+                <span className="text-emerald-700 dark:text-emerald-300 font-bold">سبز</span>: درست ·{' '}
+                <span className="text-amber-700 dark:text-amber-300 font-bold">زرد</span>: نه‌چندان واضح ·{' '}
+                <span className="text-red-700 dark:text-red-300 font-bold">قرمز</span>: اشتباه · خط‌خورده: جاافتاده
+              </p>
             )}
-            {result.correction && (
-              <p className="text-sm text-ink-muted dark:text-slate-400">تلفظ درست: <bdi dir="ltr" className="font-en font-bold">{result.correction}</bdi></p>
-            )}
-            {result.issues.length > 0 ? (
-              <div className="flex flex-col gap-2">
-                <p className="text-sm font-bold text-ink dark:text-white text-right">نقطه‌های ضعف این تلاش</p>
-                <IssueList issues={result.issues} />
-              </div>
-            ) : result.score >= 80 && <p className="text-sm font-bold text-emerald-700 dark:text-emerald-300">ایراد مشخصی شنیده نشد.</p>}
+            <AttemptDetails attempt={result} showText={false} />
+            {result.score >= 80 && result.issues.length === 0 && !result.marks?.length && <p className="text-sm font-bold text-emerald-700 dark:text-emerald-300 text-center">ایراد مشخصی شنیده نشد.</p>}
+            {result.score < AGAIN_BELOW && !isRepeat && <p className="text-sm text-ink-muted dark:text-slate-400 text-center">این مورد در پایان همین تمرین یک بار دیگر می‌آید.</p>}
           </div>
           <div className="flex flex-wrap justify-center gap-2">
             {myVoice && (
@@ -323,12 +445,10 @@ export const SpeakingMode: React.FC<SpeakingModeProps> = ({ sessionCards, kind, 
                 <MicIcon recording={false} size={18} /> صدای خودم
               </button>
             )}
-            {(isSpeechSupported() || card.audioSrc) && (
-              <button type="button" onClick={playCorrect} className={secondaryButton}><Icon.Speaker size={18} /> تلفظ درست</button>
-            )}
+            {canHear && <button type="button" onClick={() => playCorrect()} className={secondaryButton}><Icon.Speaker size={18} /> تلفظ درست</button>}
             <button type="button" onClick={retry} className={secondaryButton}>دوباره بگو</button>
           </div>
-          <button type="button" onClick={next} className={primaryButton}>{isLast ? 'پایان' : 'کارت بعدی'}</button>
+          <button type="button" onClick={next} className={primaryButton}>{isLast ? 'پایان' : 'بعدی'}</button>
         </div>
       )}
     </div>
@@ -362,7 +482,7 @@ const DayBars: React.FC<{ days: { day: string; average: number; count: number }[
         <span>{label(days[0].day)}</span>
         {days.length > 1 && <span>{label(days[days.length - 1].day)}</span>}
       </div>
-      <p className="text-xs text-ink-muted dark:text-slate-400">خط‌چین: نمرهٔ {fa(WEAK_SCORE)}؛ واژه‌هایی که آخرین بار زیر آن ماندند «ضعیف» حساب می‌شوند.</p>
+      <p className="text-xs text-ink-muted dark:text-slate-400">خط‌چین: نمرهٔ {fa(WEAK_SCORE)}؛ موردهایی که آخرین بار زیر آن ماندند «ضعیف» حساب می‌شوند.</p>
     </figure>
   );
 };
@@ -370,27 +490,46 @@ const DayBars: React.FC<{ days: { day: string; average: number; count: number }[
 interface SpeechProgressProps {
   attempts: SpeechAttempt[];
   onPracticeWeak?: () => void;
+  onPracticeDue?: () => void;
   weakCount: number;
+  dueCount: number;
 }
 
-export const SpeechProgress: React.FC<SpeechProgressProps> = ({ attempts, onPracticeWeak, weakCount }) => {
+type ItemFilter = 'all' | 'due' | 'learning' | 'settled';
+
+export const SpeechProgress: React.FC<SpeechProgressProps> = ({ attempts, onPracticeWeak, onPracticeDue, weakCount, dueCount }) => {
   const summary = useMemo(() => speechSummary(attempts), [attempts]);
   const days = useMemo(() => dailyScores(attempts), [attempts]);
   const sounds = useMemo(() => weakSounds(attempts), [attempts]);
-  const items = useMemo(() => itemProgress(attempts), [attempts]);
+  const schedules = useMemo(() => speechSchedules(attempts).sort((a, b) => b.lastDay.localeCompare(a.lastDay) || a.lastScore - b.lastScore), [attempts]);
+  const today = dayString(new Date());
+  const stageCounts = useMemo(() => {
+    const c: Record<SpeechStage, number> = { new: 0, learning: 0, reviewing: 0, settled: 0 };
+    schedules.forEach(s => { c[s.stage]++; });
+    return c;
+  }, [schedules]);
   const [open, setOpen] = useState<string | null>(null);
+  const [filter, setFilter] = useState<ItemFilter>('all');
   const [showAll, setShowAll] = useState(false);
 
   if (summary.total === 0) {
     return (
       <section className={`${panel} text-center flex flex-col items-center gap-2`}>
         <h2 className="text-xl font-extrabold text-ink dark:text-white">هنوز تلاشی ثبت نشده</h2>
-        <p className="text-ink-muted dark:text-slate-400 max-w-md leading-relaxed">از «تمرین تلفظ» شروع کن. هر تلاش با نمره و نقطه‌های ضعفش اینجا می‌ماند و روی همهٔ دستگاه‌هایت دیده می‌شود.</p>
+        <p className="text-ink-muted dark:text-slate-400 max-w-md leading-relaxed">از «تمرین تلفظ» شروع کن. هر تلاش با نمره و بازخوردش این‌جا می‌ماند، روی همهٔ دستگاه‌هایت دیده می‌شود و هر مورد سر وقتش برای مرور برمی‌گردد.</p>
       </section>
     );
   }
 
-  const shown = showAll ? items : items.slice(0, 12);
+  const filtered = schedules.filter(s => filter === 'all' || (filter === 'due' ? s.dueDay <= today : filter === 'settled' ? s.stage === 'settled' : s.stage !== 'settled'));
+  const shown = showAll ? filtered : filtered.slice(0, 12);
+  const filterButton = (value: ItemFilter, label: string) => (
+    <button type="button" onClick={() => { setFilter(value); setShowAll(false); }} aria-pressed={filter === value}
+      className={`min-h-[36px] px-3 rounded-xl text-sm ${filter === value ? 'bg-brand-100 text-brand-700 font-bold dark:bg-brand-900/60 dark:text-brand-200' : 'text-ink-muted dark:text-slate-400'}`}>
+      {label}
+    </button>
+  );
+
   return (
     <div className="flex flex-col gap-5">
       <section className={`${panel} grid grid-cols-3 gap-3 text-center`}>
@@ -410,6 +549,26 @@ export const SpeechProgress: React.FC<SpeechProgressProps> = ({ attempts, onPrac
         </div>
       </section>
 
+      <section className={`${panel} flex flex-col gap-3`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-extrabold text-ink dark:text-white">برنامهٔ مرور تلفظ</h2>
+          {onPracticeDue && dueCount > 0 && (
+            <button type="button" onClick={onPracticeDue} className={secondaryButton}>مرور {fa(dueCount)} مورد امروز</button>
+          )}
+        </div>
+        <p className="text-sm text-ink-muted dark:text-slate-400 leading-relaxed">
+          هر مورد با <b>نخستین تلاش هر روز</b> سنجیده می‌شود. اگر خوب نبود فردا برمی‌گردد؛ اگر خوب بود ۳، ۷، ۱۶ و ۳۵ روز بعد. سه روزِ پشت‌سرِهم خوب، یعنی جاافتاده.
+        </p>
+        <div className="grid grid-cols-3 gap-2 text-center">
+          {(['learning', 'reviewing', 'settled'] as SpeechStage[]).map(stage => (
+            <div key={stage} className="rounded-2xl bg-slate-50 dark:bg-slate-700/40 p-3">
+              <p className="text-2xl font-extrabold text-ink dark:text-white">{fa(stageCounts[stage])}</p>
+              <StageChip stage={stage} />
+            </div>
+          ))}
+        </div>
+      </section>
+
       <section className={panel}>
         <DayBars days={days} />
       </section>
@@ -418,7 +577,7 @@ export const SpeechProgress: React.FC<SpeechProgressProps> = ({ attempts, onPrac
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-extrabold text-ink dark:text-white">صداهایی که بیشتر اشتباه می‌شوند</h2>
           {onPracticeWeak && weakCount > 0 && (
-            <button type="button" onClick={onPracticeWeak} className={secondaryButton}>تمرین {fa(weakCount)} واژهٔ ضعیف</button>
+            <button type="button" onClick={onPracticeWeak} className={secondaryButton}>تمرین {fa(weakCount)} مورد ضعیف</button>
           )}
         </div>
         {sounds.length === 0 ? (
@@ -449,23 +608,32 @@ export const SpeechProgress: React.FC<SpeechProgressProps> = ({ attempts, onPrac
       </section>
 
       <section className={`${panel} flex flex-col gap-3`}>
-        <h2 className="text-lg font-extrabold text-ink dark:text-white">واژه‌ها و جمله‌هایی که تمرین کردی</h2>
+        <h2 className="text-lg font-extrabold text-ink dark:text-white">تاریخچهٔ تمرین‌ها</h2>
+        <div role="group" aria-label="کدام موردها" className="flex flex-wrap gap-1">
+          {filterButton('all', `همه (${fa(schedules.length)})`)}
+          {filterButton('due', 'برای امروز')}
+          {filterButton('learning', 'در حال یادگیری')}
+          {filterButton('settled', 'جاافتاده')}
+        </div>
+        {shown.length === 0 && <p className="text-sm text-ink-muted dark:text-slate-400">موردی نیست.</p>}
         <ul className="flex flex-col divide-y divide-slate-100 dark:divide-slate-700">
-          {shown.map(p => {
-            const expanded = open === p.key;
-            const list = expanded ? attemptsFor(attempts, p.key).reverse() : [];
+          {shown.map((s: SpeechSchedule) => {
+            const expanded = open === s.key;
+            const list = expanded ? attemptsFor(attempts, s.key).reverse() : [];
+            const scores = attemptsFor(attempts, s.key).map(a => a.score);
             return (
-              <li key={p.key} className="py-2">
-                <button type="button" onClick={() => setOpen(expanded ? null : p.key)} aria-expanded={expanded}
+              <li key={s.key} className="py-2">
+                <button type="button" onClick={() => setOpen(expanded ? null : s.key)} aria-expanded={expanded}
                   className="w-full flex items-center justify-between gap-3 text-right min-h-[44px]">
-                  <span className="min-w-0 flex flex-col">
-                    <bdi dir="ltr" className={`font-en font-bold text-ink dark:text-white ${p.kind === 'sentence' ? 'text-sm' : ''} truncate`}>{p.target}</bdi>
-                    <span className="text-xs text-ink-muted dark:text-slate-400">
-                      {p.kind === 'sentence' ? 'جمله · ' : ''}{fa(p.scores.length)} تلاش · بهترین {fa(p.best)}
-                      {p.last < WEAK_SCORE && <span className="ms-1 text-red-700 dark:text-red-300 font-bold">· ضعیف</span>}
+                  <span className="min-w-0 flex flex-col gap-0.5">
+                    <bdi dir="ltr" className={`font-en font-bold text-ink dark:text-white ${s.kind === 'sentence' ? 'text-sm' : ''} truncate`}>{s.target}</bdi>
+                    <span className="text-xs text-ink-muted dark:text-slate-400 flex flex-wrap items-center gap-1.5">
+                      <StageChip stage={s.stage} />
+                      {s.kind === 'sentence' ? 'جمله · ' : ''}{fa(s.tries)} تلاش · مرور بعد: {dueLabel(s.dueDay, today)}
+                      {s.lastScore < WEAK_SCORE && <span className="text-red-700 dark:text-red-300 font-bold">· ضعیف</span>}
                     </span>
                   </span>
-                  <span className="text-sm shrink-0"><ScoreTrail scores={p.scores.slice(-5)} /></span>
+                  <span className="text-sm shrink-0"><ScoreTrail scores={scores.slice(-5)} /></span>
                 </button>
                 {expanded && (
                   <ol className="mt-2 flex flex-col gap-2">
@@ -475,9 +643,7 @@ export const SpeechProgress: React.FC<SpeechProgressProps> = ({ attempts, onPrac
                           <span className={`font-extrabold ${scoreTone(a.score)}`}>{fa(a.score)} از {fa(100)}</span>
                           <span className="text-xs text-ink-muted dark:text-slate-400">{new Date(a.createdAt).toLocaleString('fa-IR', { dateStyle: 'medium', timeStyle: 'short' })}</span>
                         </p>
-                        {a.feedback && <p dir="rtl" className="text-ink dark:text-slate-200 leading-relaxed">{a.feedback}</p>}
-                        {a.heard && <p className="text-xs text-ink-muted dark:text-slate-400">شنیده شد: <bdi dir="ltr" className="font-en">«{a.heard}»</bdi></p>}
-                        {a.issues.length > 0 && <IssueList issues={a.issues} />}
+                        <AttemptDetails attempt={a} />
                       </li>
                     ))}
                   </ol>
@@ -486,8 +652,8 @@ export const SpeechProgress: React.FC<SpeechProgressProps> = ({ attempts, onPrac
             );
           })}
         </ul>
-        {items.length > shown.length && (
-          <button type="button" onClick={() => setShowAll(true)} className={`${secondaryButton} self-center`}>نمایش همه ({fa(items.length)})</button>
+        {filtered.length > shown.length && (
+          <button type="button" onClick={() => setShowAll(true)} className={`${secondaryButton} self-center`}>نمایش همه ({fa(filtered.length)})</button>
         )}
       </section>
     </div>

@@ -304,6 +304,24 @@ export interface SpeechIssue {
   detail: string; // Persian: what was heard and how to say it
 }
 
+// A word of the read text that did not come out right; words without a mark
+// were right. `i` counts the text's words from 0 (services/speechPractice
+// speechTokens).
+export interface SpeechMark {
+  i: number;
+  status: 'unclear' | 'wrong' | 'missed';
+  heard?: string; // how it sounded, in English letters
+  sound?: string; // a SOUNDS id
+}
+
+// The parts of a sentence's score, each 0-100.
+export interface SpeechParts {
+  accuracy?: number; // the sounds of the words
+  fluency?: number; // smooth, without long pauses, restarts or hesitations
+  rhythm?: number; // word and sentence stress, intonation
+  completeness?: number; // every word read, none added
+}
+
 export interface SpeechAttempt {
   id: string;
   cardId?: string;
@@ -314,6 +332,11 @@ export interface SpeechAttempt {
   feedback: string; // Persian summary
   correction?: string; // IPA of the right pronunciation
   issues: SpeechIssue[];
+  focus?: string; // the card's word inside a sentence
+  focusScore?: number; // how that word alone came out, 0-100
+  marks?: SpeechMark[]; // sentence: the words that did not come out right
+  parts?: SpeechParts; // sentence: what the score is made of
+  tip?: string; // Persian: the one thing to do on the next try
   compact?: true; // an old try kept without its long texts (services/speechPractice)
   createdAt: string;
   updatedAt: string;

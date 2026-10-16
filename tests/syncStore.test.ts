@@ -245,7 +245,19 @@ test('only public web pages are fetched for articles', async () => {
   }
   for (const ip of ['93.184.216.34', '192.0.78.9', '2606:4700::1111']) assert.equal(isPrivateAddress(ip), false, ip);
 
+  // IPv4 hidden inside IPv6, in every way the URL parser can write it.
+  for (const ip of [
+    '::ffff:7f00:1', '::ffff:a9fe:a9fe', '::ffff:10.0.0.1', '0:0:0:0:0:ffff:7f00:0001', '::7f00:1', '::127.0.0.1', '::',
+    '::ffff:0:7f00:1', '64:ff9b::7f00:1', '64:ff9b::10.0.0.1', '64:ff9b:1::5', '2002:7f00:1::', '2002:c0a8:105::1',
+    'fec0::1', 'fe80::1%eth0', 'ff02::1', '100::1', '2001:0:4136:e378::1', '2001:db8::1', 'not-an-ip', '1::2::3',
+  ]) assert.equal(isPrivateAddress(ip), true, ip);
+  for (const ip of ['::ffff:5db8:d822', '64:ff9b::5db8:d822', '2002:5db8:d822::1', '2a00:1450:4001::200e']) {
+    assert.equal(isPrivateAddress(ip), false, ip);
+  }
+
   const lookup = async (host: string) => (host === 'inside.example' ? ['10.0.0.5'] : ['93.184.216.34']);
+  await assert.rejects(checkPublicUrl('http://[::ffff:127.0.0.1]/', lookup), /public internet/);
+  await assert.rejects(checkPublicUrl('http://[::ffff:169.254.169.254]/latest/meta-data', lookup), /public internet/);
   await assert.rejects(checkPublicUrl('http://inside.example/a', lookup), /public internet/);
   await assert.rejects(checkPublicUrl('file:///etc/passwd', lookup), /http and https/);
   await assert.rejects(checkPublicUrl('http://site.example:8080/', lookup), /standard web ports/);

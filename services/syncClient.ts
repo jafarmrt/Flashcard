@@ -155,6 +155,14 @@ export const nextOutgoing = (local: LocalData, state: SyncState): Outgoing => {
 
 export const isEmptyOutgoing = (out: Outgoing) => Object.keys(out.changes).length === 0;
 
+// Whether this browser holds changes the server has not confirmed yet
+// (settings are left out: they stay in the browser on sign-out).
+export const hasUnsentChanges = (local: LocalData, saved: SyncState | undefined): boolean => {
+  if (!saved?.stamps) return local.cards.length + local.sources.length + local.logs.length > 0;
+  const state: SyncState = { ...saved, stamps: { ...emptyStamps(), ...saved.stamps } };
+  return !isEmptyOutgoing(nextOutgoing({ ...local, settings: undefined }, state));
+};
+
 // After the server took a request: the rows sent are what it now has.
 export const confirmSent = (state: SyncState, out: Outgoing): SyncState => {
   const stamps = { ...state.stamps };

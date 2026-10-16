@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile, UserAchievement, ExtractedWordCard, StudyLog, Source, Chapter, ChapterText, Occurrence, KnownWord, SpeechAttempt } from '../types';
-import { db } from '../services/localDBService';
+import { clearAccountData, db } from '../services/localDBService';
+import { belongsToAnother, localOwner, OWNER_KEY } from '../services/localOwner';
+import { APP_VERSION, RELEASES } from '../services/appVersion';
+import { unseenReleases } from '../services/changelog';
 import { calculateLevel, calculateStreak, checkAndAwardAchievements } from '../services/gamificationService';
 import { generateNewDailyGoals, updateGoalProgress, reviewGoalId } from '../services/dailyGoalsService';
 import { availableFreezes, dayString, daysToFreeze, MAX_HELD_FREEZES } from '../services/streakService';
@@ -15,7 +18,7 @@ import { aiRequestOptions } from '../services/aiSettings';
 import { AUTH_REQUIRED_EVENT, callProxy } from '../services/apiService';
 import { applicableRows, cardStamp, deckStamp, newStudyLogs, profileStamp, stampMap, syncFingerprint } from '../services/syncState';
 import {
-  confirmReceived, confirmSent, freshSyncState, isEmptyOutgoing, LocalData, markAllSynced, nextLogCursor, nextOutgoing,
+  confirmReceived, confirmSent, freshSyncState, hasUnsentChanges, isEmptyOutgoing, LocalData, markAllSynced, nextLogCursor, nextOutgoing,
   SyncState, SYNC_TABLES, SyncTable, usableSyncState, withLocalAudio,
 } from '../services/syncClient';
 import { isDue, isNewCard } from '../services/srsService';
@@ -217,6 +220,19 @@ export const useAppLogic = () => {
     signedInUser.current = username;
     setCurrentUser({ username });
     localStorage.setItem(LAST_USER_KEY, username);
+  };
+
+  // This browser's database holds one account's data. When another account
+  // signs in, the previous one's data is cleared first (it is on the server
+  // already); otherwise the first sync would upload it into this account.
+  // Data made before any sign-in belongs to nobody and is kept.
+  const claimLocalData = async (username: string) => {
+    const owner = localOwner((await db.meta.get(OWNER_KEY))?.value, (await db.meta.get('sync'))?.value);
+    if (belongsToAnother(owner, username)) {
+      await clearAccountData();
+      lastSyncedFingerprint.current = null;
+    }
+    await db.meta.put({ key: OWNER_KEY, value: username });
   };
 
   // Toasts take turns, so one never hides another (a level-up arrives with
@@ -635,8 +651,9 @@ export const useAppLogic = () => {
     const checkSession = async () => {
         const startSignedIn = async (username: string) => {
             signIn(username);
-            setIsLoggedIn(true);
             await (db as any).open();
+            await claimLocalData(username);
+            setIsLoggedIn(true);
             await fetchData();
         };
         try {
@@ -657,6 +674,19 @@ export const useAppLogic = () => {
     };
 
     checkSession();
+
+    // After an update, say once which version arrived; its changes are on the
+    // changes page (Settings › نسخهٔ برنامه).
+    try {
+        const SEEN_VERSION_KEY = 'lc_seen_version';
+        const fresh = unseenReleases(RELEASES, localStorage.getItem(SEEN_VERSION_KEY));
+        if (fresh.length > 0) {
+            setTimeout(() => showToast(`نسخهٔ ${APP_VERSION} نصب شد${fresh[0].title ? `: ${fresh[0].title}` : ''}. تغییرات در تنظیمات › نسخهٔ برنامه.`), 1500);
+        }
+        localStorage.setItem(SEEN_VERSION_KEY, APP_VERSION);
+    } catch {
+        // No storage (private mode): no notice.
+    }
 
     const onAuthRequired = () => {
         signedInUser.current = null;
@@ -1527,6 +1557,7 @@ export const useAppLogic = () => {
       try {
           const res = await callProxy('auth-login', { username, password });
           const user = { username: res.username || username };
+          await claimLocalData(user.username);
           signIn(user.username);
           await mergeWithCloud({ pullOnly: !(await hasLocalData()) });
           setIsLoggedIn(true);
@@ -1543,6 +1574,7 @@ export const useAppLogic = () => {
       try {
           const res = await callProxy('auth-register', { username, password });
           const user = { username: res.username || username };
+          await claimLocalData(user.username);
           signIn(user.username);
           if (await hasLocalData()) await mergeWithCloud();
           else await fetchData();
@@ -1556,7 +1588,16 @@ export const useAppLogic = () => {
   };
 
   const handleLogout = async () => {
-    if(confirm("Are you sure you want to log out?")) {
+    if(confirm('از حسابت خارج می‌شوی؟')) {
+        // What changed here goes up first: if another account signs in on
+        // this browser, this account's data is cleared from it.
+        if (signedInUser.current) {
+            await mergeWithCloud();
+            const user = signedInUser.current;
+            const saved = (await db.meta.get('sync'))?.value as SyncState | undefined;
+            const unsent = hasUnsentChanges(await readLocal(), saved?.user === user ? saved : undefined);
+            if (unsent && !confirm('بخشی از تغییرات این مرورگر هنوز به سرور نرسیده (شاید اینترنت قطع است). اگر بعد از خروج حساب دیگری این‌جا وارد شود، این تغییرات پاک می‌شوند. باز هم خارج می‌شوی؟')) return;
+        }
         // A key typed here that the server does not have yet goes up first.
         if (readSavedSettings().keysChanged?.length) {
             try {
