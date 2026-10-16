@@ -5,7 +5,7 @@ import { Flashcard, Deck } from './types';
 import FlashcardList from './components/FlashcardList';
 import FlashcardForm from './components/FlashcardForm';
 import { StudyView } from './components/StudyView';
-import { aiRequestOptions, geminiAudioOptions } from './services/aiSettings';
+import { aiRequestOptions, pronunciationOptions } from './services/aiSettings';
 import { refreshSources } from './services/cardRefresh';
 import Toast from './components/Toast';
 import DeckList from './components/DeckList';
@@ -218,7 +218,7 @@ const App: React.FC = () => {
                     onSaveCard={handleSaveCardContent}
                 />;
             case 'PRACTICE':
-                return <PracticeView cards={visibleFlashcards} occurrences={occurrences} speechAttempts={speechAttempts} onSaveSpeechAttempt={handleSaveSpeechAttempt} aiOptions={aiRequestOptions(settings)} audioOptions={geminiAudioOptions(settings)} awardXP={userProfile ? (points) => handleGoalUpdate('QUIZ', points, true) : () => {}} onQuizComplete={(score) => {
+                return <PracticeView cards={visibleFlashcards} occurrences={occurrences} speechAttempts={speechAttempts} onSaveSpeechAttempt={handleSaveSpeechAttempt} aiOptions={aiRequestOptions(settings)} audioOptions={pronunciationOptions(settings)} awardXP={userProfile ? (points) => handleGoalUpdate('QUIZ', points, true) : () => {}} onQuizComplete={(score) => {
                     handleCheckAchievements(score);
                     handleGoalUpdate('QUIZ', 1);
                 }} />;
@@ -271,7 +271,7 @@ const App: React.FC = () => {
                     initialDeckName={editingCardDeckName}
                     showToast={showToast}
                     sources={cardSources}
-                    audioOptions={geminiAudioOptions(settings)}
+                    audioOptions={pronunciationOptions(settings)}
                 />;
             case 'STATS':
                 return <StatsView cards={visibleFlashcards} sources={sources} occurrences={occurrences}
@@ -401,7 +401,7 @@ const App: React.FC = () => {
                         initialDeckName={visibleDecks.find(d => d.id === overlayEdit.card.deckId)?.name || ''}
                         showToast={showToast}
                         sources={cardSources}
-                        audioOptions={geminiAudioOptions(settings)}
+                        audioOptions={pronunciationOptions(settings)}
                     />
                 </div>
             )}

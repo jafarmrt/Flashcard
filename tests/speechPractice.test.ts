@@ -4,7 +4,7 @@ import type { Flashcard, SpeechAttempt } from '../types';
 import {
   attemptKey, cleanEvaluation, compactAttempts, dailyScores, dueSchedules, focusIndexes, focusSounds, itemProgress, newAttempt,
   pickSpeechItems, practiceSentence, pronunciationPrompt, PRONUNCIATION_SCHEMA, scheduleFor, sentenceAround, sessionResults,
-  SOUND_IDS, speechSummary, speechTokens, speechWords, weakCardIds, weakSounds,
+  SOUND_IDS, speechSummary, speechTokens, speechWords, weakCardIds, weakSounds, compareHeard, wordLikeness, withHeardCheck,
 } from '../services/speechPractice';
 import type { Occurrence } from '../types';
 import { syncFingerprint } from '../services/syncState';
@@ -261,4 +261,36 @@ test('old tries keep their word marks without what was heard', () => {
   const [old] = compactAttempts(list, 2, new Date(at(9)));
   assert.deepEqual(old.marks, [{ i: 1, status: 'wrong', sound: 'th-voiceless' }]);
   assert.equal('tip' in old, false);
+});
+
+// --- What was heard, against the text ---
+
+test('what was heard is lined up with the text: left out, said as another word, nearly, added', () => {
+  const { words, added } = compareHeard('I think the weather will change soon.', 'I tink weather will change very soon');
+  assert.deepEqual(words.map(w => w.status), ['ok', 'close', 'missed', 'ok', 'ok', 'ok', 'ok']);
+  assert.equal(words[1].heard, 'tink');
+  assert.equal(added, 1);
+  assert.deepEqual(compareHeard('He was reluctant.', 'He was happy').words.map(w => w.status), ['ok', 'ok', 'wrong']);
+  assert.ok(wordLikeness("don't", 'dont') === 1);
+});
+
+test('a kind AI is checked: missed words are marked, completeness counted, the score held near it', () => {
+  const target = 'I think the weather will change soon.';
+  const kind = { score: 92, feedback: '', issues: [], heard: 'I think weather', parts: { accuracy: 90, completeness: 100 }, marks: [{ i: 1, status: 'unclear' as const }] };
+  const checked = withHeardCheck(kind, target, 'sentence');
+  assert.deepEqual(checked.marks!.map(m => [m.i, m.status]), [[1, 'unclear'], [2, 'missed'], [4, 'missed'], [5, 'missed'], [6, 'missed']]);
+  assert.equal(checked.parts!.completeness, 43, 'four of seven words left out');
+  assert.equal(checked.parts!.accuracy, 90);
+  assert.equal(checked.score, 58, 'held to completeness + 15');
+  const all = withHeardCheck({ ...kind, heard: 'I think the weather will change soon' }, target, 'sentence');
+  assert.equal(all.score, 92, 'nothing missed: the AI score stands');
+  const silent = { ...kind, heard: '' };
+  assert.equal(withHeardCheck(silent, target, 'sentence'), silent, 'nothing heard: left to the AI');
+  assert.equal(withHeardCheck({ score: 85, feedback: '', issues: [], heard: 'banana' }, 'think', 'word').score, 30, 'another word altogether');
+  assert.equal(withHeardCheck({ score: 70, feedback: '', issues: [], heard: 'tink' }, 'think', 'word').score, 70, 'a near miss keeps its score');
+});
+
+test('the prompt asks for what was said word for word, not corrected', () => {
+  assert.match(pronunciationPrompt('I think so.', 'sentence'), /Do NOT correct it to match the text/);
+  assert.match(pronunciationPrompt('think', 'word'), /Do NOT correct it/);
 });

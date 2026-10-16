@@ -9,21 +9,28 @@ import type { AiRequestOptions } from './geminiService';
 
 export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 export const DEFAULT_OPENAI_COMPATIBLE_MODEL = 'llama-3.3-70b-versatile';
+// Claude's small, cheap model; the model list in Settings shows the others.
+export const DEFAULT_ANTHROPIC_MODEL = 'claude-haiku-4-5';
 
-export const defaultModelFor = (provider?: Settings['aiProvider']) =>
-  provider === 'openai-compatible' ? DEFAULT_OPENAI_COMPATIBLE_MODEL : DEFAULT_GEMINI_MODEL;
+type ProviderKind = NonNullable<AiRequestOptions['aiProvider']>;
+
+export const defaultModelFor = (provider?: ProviderKind) =>
+  provider === 'openai-compatible' ? DEFAULT_OPENAI_COMPATIBLE_MODEL : provider === 'anthropic' ? DEFAULT_ANTHROPIC_MODEL : DEFAULT_GEMINI_MODEL;
 
 // Models the providers have retired; a saved one is replaced by the default.
-const RETIRED_MODELS = /^(gemini-1\.0|gemini-1\.5|gemini-pro$|mixtral-8x7b|gemma2-|gemma-7b|llama3-|llama-3\.1-70b|llama-3\.2-)/;
+const RETIRED_MODELS = /^(gemini-1\.0|gemini-1\.5|gemini-pro$|mixtral-8x7b|gemma2-|gemma-7b|llama3-|llama-3\.1-70b|llama-3\.2-|claude-(instant|1|2)|claude-3-)/;
 
-export const usableModel = (settings: Pick<Settings, 'aiProvider' | 'aiModel' | 'aiBaseUrl'>): string => {
+export const usableModel = (settings: { aiProvider?: ProviderKind; aiModel?: string; aiBaseUrl?: string }): string => {
   const model = settings.aiModel?.trim();
   if (!model || RETIRED_MODELS.test(model)) return defaultModelFor(settings.aiProvider);
-  // A model left over from the other provider (a Gemini name sent to Groq, a
-  // Llama name sent to Gemini) only fails, so use the provider's default.
+  // A model left over from another provider (a Gemini name sent to Groq, a
+  // Llama name sent to Gemini or Claude) only fails, so use the default.
   const looksGemini = /^(gemini|gemma)-/.test(model);
+  const looksClaude = /^claude-/.test(model);
   const googleHost = (settings.aiBaseUrl || '').includes('googleapis.com');
-  const mismatch = settings.aiProvider === 'openai-compatible' ? looksGemini && !googleHost : !looksGemini;
+  const mismatch = settings.aiProvider === 'openai-compatible' ? (looksGemini && !googleHost) || looksClaude
+    : settings.aiProvider === 'anthropic' ? !looksClaude
+    : !looksGemini;
   return mismatch ? defaultModelFor(settings.aiProvider) : model;
 };
 
@@ -38,6 +45,7 @@ export interface ProviderInfo {
 
 export const AI_PROVIDERS: ProviderInfo[] = [
   { id: 'gemini', name: 'Gemini', defaultModel: DEFAULT_GEMINI_MODEL, needsKey: false, keyUrl: 'https://aistudio.google.com/apikey' },
+  { id: 'anthropic', name: 'Claude (Anthropic)', defaultModel: DEFAULT_ANTHROPIC_MODEL, needsKey: true, keyUrl: 'https://console.anthropic.com/settings/keys' },
   { id: 'groq', name: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', defaultModel: DEFAULT_OPENAI_COMPATIBLE_MODEL, needsKey: true, keyUrl: 'https://console.groq.com/keys' },
   { id: 'openrouter', name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', defaultModel: 'deepseek/deepseek-chat', needsKey: true, keyUrl: 'https://openrouter.ai/keys' },
   { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', defaultModel: 'deepseek-chat', needsKey: true, keyUrl: 'https://platform.deepseek.com/api_keys' },
@@ -84,13 +92,13 @@ export const providerKey = (settings: Partial<Settings>, id: AiProviderId): stri
 
 export const providerOptions = (settings: Partial<Settings>, entry: AiProviderSetting): AiRequestOptions => {
   const info = providerInfo(entry.id);
-  const openAi = entry.id !== 'gemini';
-  const baseUrl = openAi ? entry.baseUrl?.trim() || info.baseUrl : undefined;
+  const kind: ProviderKind = entry.id === 'gemini' ? 'gemini' : entry.id === 'anthropic' ? 'anthropic' : 'openai-compatible';
+  const baseUrl = kind === 'openai-compatible' ? entry.baseUrl?.trim() || info.baseUrl : undefined;
   return {
-    aiProvider: openAi ? 'openai-compatible' : 'gemini',
+    aiProvider: kind,
     aiBaseUrl: baseUrl,
     customApiKey: providerKey(settings, entry.id),
-    model: usableModel({ aiProvider: openAi ? 'openai-compatible' : 'gemini', aiModel: entry.model || info.defaultModel, aiBaseUrl: baseUrl }),
+    model: usableModel({ aiProvider: kind, aiModel: entry.model || info.defaultModel, aiBaseUrl: baseUrl }),
   };
 };
 
@@ -136,7 +144,7 @@ export const withPrimaryProvider = (settings: Partial<Settings>, entry: AiProvid
   };
 };
 
-// Audio (pronunciation checks) only works with Gemini. A key typed for
+// Gemini with its own key (or the server's), for audio. A key typed for
 // another provider is never sent to Google.
 export const geminiAudioOptions = (settings: Settings): AiRequestOptions => {
   const gemini = providerList(settings).find(p => p.id === 'gemini');
@@ -147,9 +155,34 @@ export const geminiAudioOptions = (settings: Settings): AiRequestOptions => {
   };
 };
 
+// A model on OpenRouter that takes audio, for pronunciation practice: Gemini
+// Flash by default (billed by OpenRouter), or another chosen in Settings.
+export const OPENROUTER_URL = 'https://openrouter.ai/api/v1';
+export const DEFAULT_OR_AUDIO_MODEL = 'google/gemini-2.5-flash';
+
+export const openRouterAudioOptions = (settings: Partial<Settings>): AiRequestOptions | null => {
+  const key = providerKey(settings, 'openrouter');
+  if (!key) return null;
+  return { aiProvider: 'openai-compatible', aiBaseUrl: OPENROUTER_URL, customApiKey: key, model: settings.orAudioModel?.trim() || DEFAULT_OR_AUDIO_MODEL };
+};
+
+// Who listens in pronunciation practice. Claude and the text-only services
+// cannot hear, so only Gemini and OpenRouter's audio models are asked:
+//   auto: Gemini, and OpenRouter when Gemini fails (with an OpenRouter key);
+//   gemini / openrouter: that one only (OpenRouter without a key: Gemini).
+export const pronunciationOptions = (settings: Settings): AiRequestOptions => {
+  const gemini = geminiAudioOptions(settings);
+  const openRouter = openRouterAudioOptions(settings);
+  const choice = settings.pronunciationService || 'auto';
+  if (!openRouter || choice === 'gemini') return gemini;
+  if (choice === 'openrouter') return openRouter;
+  return { ...gemini, fallbacks: [openRouter] };
+};
+
 // The provider's name as shown on a card ("Gemini", "Groq"…), from the
 // options the request used.
 export const providerName = (options?: AiRequestOptions): string => {
+  if (options?.aiProvider === 'anthropic') return 'Claude';
   if (!options || options.aiProvider !== 'openai-compatible') return 'Gemini';
   const url = (options.aiBaseUrl || 'https://api.groq.com/openai/v1').toLowerCase();
   if (url.includes('groq.com')) return 'Groq';

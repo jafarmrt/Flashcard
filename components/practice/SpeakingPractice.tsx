@@ -6,7 +6,8 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { SpeechAttempt, SpeechMark } from '../../types';
-import { AiRequestOptions, blobToBase64, evaluatePronunciation } from '../../services/geminiService';
+import { AiRequestOptions, evaluatePronunciation } from '../../services/geminiService';
+import { recordingForAi } from '../../services/audioWav';
 import {
   attemptKey, attemptsFor, dailyScores, focusIndexes, focusSounds, newAttempt, soundInfo, SpeechItem, SpeechSchedule,
   speechSchedules, SpeechStage, speechSummary, speechTokens, WEAK_SCORE, weakSounds,
@@ -87,12 +88,20 @@ export const SentenceMarks: React.FC<{ text: string; marks?: SpeechMark[]; focus
   );
 };
 
-// The marked words in a list: what was heard and how to fix it.
+// The marked words in a list: what was heard and how to fix it. Many words
+// left out are said in one line; the sentence above shows them crossed out.
 const MarkList: React.FC<{ text: string; marks: SpeechMark[] }> = ({ text, marks }) => {
   const words = speechTokens(text).filter(t => t.i !== undefined);
+  const missed = marks.filter(m => m.status === 'missed');
+  const listed = missed.length > 3 ? marks.filter(m => m.status !== 'missed') : marks;
   return (
     <ul className="flex flex-col gap-1.5 text-right">
-      {marks.map(m => {
+      {missed.length > 3 && (
+        <li className="text-sm font-bold text-ink dark:text-slate-200">
+          {fa(missed.length)} واژه از {fa(words.length)} واژهٔ جمله شنیده نشد{missed.length > words.length / 2 ? '؛ جمله را کامل و از اول بخوان.' : '.'}
+        </li>
+      )}
+      {listed.slice(0, 8).map(m => {
         const info = m.sound ? soundInfo(m.sound) : null;
         return (
           <li key={m.i} className="text-sm text-ink dark:text-slate-200">
@@ -179,6 +188,7 @@ export const AttemptDetails: React.FC<{ attempt: SpeechAttempt; showText?: boole
     {attempt.feedback && <p dir="rtl" className="text-ink dark:text-slate-200 leading-relaxed">{attempt.feedback}</p>}
     {attempt.tip && <p className="text-sm font-bold text-brand-700 dark:text-brand-200">برای تلاش بعد: {attempt.tip}</p>}
     {attempt.heard && <p className="text-sm text-ink-muted dark:text-slate-400">آنچه شنیده شد: <bdi dir="ltr" className="font-en">«{attempt.heard}»</bdi></p>}
+    {attempt.by && <p className="text-xs text-ink-muted dark:text-slate-500">شنونده: <bdi dir="ltr" className="font-en">{attempt.by}</bdi></p>}
     {attempt.correction && <p className="text-sm text-ink-muted dark:text-slate-400">تلفظ درست: <bdi dir="ltr" className="font-en font-bold">{attempt.correction}</bdi></p>}
     {attempt.marks && attempt.marks.length > 0 && <MarkList text={attempt.target} marks={attempt.marks} />}
     {attempt.issues.length > 0 && (
@@ -244,9 +254,8 @@ export const SpeakingMode: React.FC<SpeakingModeProps> = ({ items, attempts, onS
     setIsAnalyzing(true);
     setError('');
     try {
-      // Gemini wants the bare type: "audio/webm", not "audio/webm;codecs=opus".
-      const mime = blob.type.split(';')[0] || 'audio/webm';
-      const evaluation = await evaluatePronunciation(target, await blobToBase64(blob), mime, audioOptions, { kind, weak, focus: item.focus });
+      const audio = await recordingForAi(blob);
+      const evaluation = await evaluatePronunciation(target, audio.data, audio.mimeType, audioOptions, { kind, weak, focus: item.focus });
       const attempt: SpeechAttempt = { ...newAttempt(target, kind, evaluation, card.id), ...(item.focus ? { focus: item.focus } : {}) };
       await onSaveAttempt(attempt);
       if (!alive.current || indexRef.current !== forIndex) return;
@@ -259,7 +268,12 @@ export const SpeakingMode: React.FC<SpeakingModeProps> = ({ items, attempts, onS
         setQueue(prev => [...prev, item]);
       }
     } catch (err) {
-      if (alive.current) setError(`صدا بررسی نشد: ${(err as Error)?.message || 'سرویس Gemini پاسخ نداد'}. دوباره امتحان کن.`);
+      if (!alive.current) return;
+      // With only Gemini to ask, say where another listener is set up.
+      const onlyGemini = (audioOptions?.aiProvider || 'gemini') === 'gemini' && !audioOptions?.fallbacks?.length;
+      setError(`صدا بررسی نشد: ${((err as Error)?.message || 'سرویس جواب نداد').replace(/\.+$/, '')}.${onlyGemini
+        ? ' اگر Gemini کار نمی‌کند، کلید OpenRouter را در تنظیمات › سرویس‌های هوش مصنوعی وارد کن تا وقتی Gemini جواب نداد، OpenRouter گوش کند.'
+        : ' دوباره امتحان کن.'}`);
     } finally {
       if (alive.current) setIsAnalyzing(false);
     }

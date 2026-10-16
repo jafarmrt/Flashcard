@@ -149,7 +149,7 @@ export type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
 
 // The AI services the app can use. They are tried in the order of
 // Settings.aiProviders: when one fails (no quota left, a wrong key), the next.
-export type AiProviderId = 'gemini' | 'groq' | 'openrouter' | 'deepseek' | 'ollama' | 'custom';
+export type AiProviderId = 'gemini' | 'anthropic' | 'groq' | 'openrouter' | 'deepseek' | 'ollama' | 'custom';
 
 export interface AiProviderSetting {
   id: AiProviderId;
@@ -190,6 +190,8 @@ export interface Settings {
     aiSpeechModel?: string; // the Gemini text-to-speech model
     orSpeechModel?: string; // the OpenRouter speech model
     orSpeechVoice?: string; // its voice; unset: the model's own default
+    pronunciationService?: 'auto' | 'gemini' | 'openrouter'; // who listens in pronunciation practice; auto: Gemini, then OpenRouter
+    orAudioModel?: string; // the OpenRouter model that listens (one that takes audio)
     updatedAt?: string; // when settings last changed; the newest wins across devices
 }
 
@@ -337,6 +339,7 @@ export interface SpeechAttempt {
   marks?: SpeechMark[]; // sentence: the words that did not come out right
   parts?: SpeechParts; // sentence: what the score is made of
   tip?: string; // Persian: the one thing to do on the next try
+  by?: string; // the service and model that listened ("Gemini · gemini-2.5-flash")
   compact?: true; // an old try kept without its long texts (services/speechPractice)
   createdAt: string;
   updatedAt: string;

@@ -105,9 +105,12 @@ test('registration: the first account is allowed, later ones only when ALLOW_REG
 test('AI errors say why they failed', () => {
   assert.equal(
     aiErrorMessage('Gemini', 429, JSON.stringify({ error: { message: 'Resource has been exhausted.' } })),
-    'Gemini (429): the free quota is used up for now - Resource has been exhausted.',
+    'Gemini (429): the free quota is used up for now - Resource has been exhausted',
   );
   assert.match(aiErrorMessage('api.groq.com', 401, '{"error":{"message":"Invalid API Key"}}'), /key is wrong.*Invalid API Key/);
+  // Refused for where the server is, not for the key.
+  assert.match(aiErrorMessage('openrouter.ai', 403, '{"success":false,"error":"Access denied by security policy."}'), /refuses requests from where the server is/);
+  assert.match(aiErrorMessage('Gemini', 400, '{"error":{"message":"User location is not supported for the API use."}}'), /refuses requests from where the server is/);
   assert.equal(aiErrorMessage('Gemini', 500, ''), 'Gemini (500): request failed');
 });
 
