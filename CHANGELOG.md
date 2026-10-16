@@ -9,6 +9,12 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.5.0] - 2026-10-16 - Claude, and Another Listener for Pronunciation
+- **Claude (Anthropic):** A new AI service in Settings, with its own key and the list of Claude models to pick from. It can be put anywhere in the order of services and does everything the other text services do (finding words, meanings, grammar, checks, quizzes). It cannot hear, so it is never asked in pronunciation practice.
+- **Pronunciation through OpenRouter:** Pronunciation practice is no longer tied to Gemini. In Settings › Study, its listener is Gemini, an OpenRouter model that takes audio (Gemini Flash by default; the list shows only models that hear), or Gemini first and OpenRouter when Gemini fails. Recordings are sent as WAV, which every such model takes. Each try says which service and model listened.
+- **Fairer scores:** The AI now writes down what was said word for word, without correcting it, and the app lines it up with the sentence itself: a word left out or said as another word is marked even when the AI did not mark it, completeness is counted from it, and the score cannot stand far above what was actually read. A different word altogether no longer scores well in word practice.
+- **Clearer failures:** When the listener fails, the message says why and where to set up another one. A service that refuses the server for its region or for sanctions (Google's "User location is not supported", OpenRouter's "Access denied by security policy") is reported as that, not as a wrong key. Pronunciation feedback on the card form is in Persian and works with Safari's recordings.
+
 ## [7.4.0] - 2026-10-16 - Safer Sign-out, Versions and Pronunciation in Sentences
 - **Accounts:** Signing out first sends what changed on this browser and warns if something could not reach the server. When another account signs in on the same browser, the previous account's cards are cleared from it first; before, they were uploaded into the new account.
 - **Security:** Article links written as an IPv6 address (`[::ffff:127.0.0.1]` and the like) can no longer reach the server itself or its network.

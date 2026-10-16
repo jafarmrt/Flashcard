@@ -5,9 +5,9 @@ import { Flashcard, ExtractedWordCard, CardOrigin, CardKind, CefrLevel } from '.
 import { CARD_KINDS, parseCardKind } from './cardKinds';
 import { callProxy } from './apiService';
 import { aiGenerate, providerFields } from './aiClient';
-import { aiOrigin } from './aiSettings';
+import { aiOrigin, providerName } from './aiSettings';
 import { ruleForName } from './grammarPatterns';
-import { cleanEvaluation, Evaluation, PRONUNCIATION_SCHEMA, pronunciationPrompt, SpeechKind } from './speechPractice';
+import { cleanEvaluation, Evaluation, PRONUNCIATION_SCHEMA, pronunciationPrompt, SpeechKind, withHeardCheck } from './speechPractice';
 import { EXTRAS_SCHEMA_PROPERTIES, extrasPromptLines, hasExtras, parseExtras } from './cardExtras';
 
 export { providerFields };
@@ -22,7 +22,7 @@ export interface PersianDetails {
 export type PronunciationResult = Evaluation;
 
 export interface AiRequestOptions {
-  aiProvider?: 'gemini' | 'openai-compatible';
+  aiProvider?: 'gemini' | 'anthropic' | 'openai-compatible';
   aiBaseUrl?: string;
   customApiKey?: string;
   model?: string;
@@ -126,9 +126,9 @@ export const getPronunciationFeedback = async (
 ): Promise<string> => {
   try {
     const result = await evaluatePronunciation(word, audioBase64, mimeType, options);
-    return result.feedback;
+    return [`${result.score} از 100.`, result.feedback, result.tip].filter(Boolean).join(' ');
   } catch (error) {
-    return "Sorry, I couldn't analyze the pronunciation at this time.";
+    return `صدا بررسی نشد: ${(error as Error)?.message || 'سرویس جواب نداد'}`;
   }
 };
 
@@ -147,8 +147,9 @@ export const evaluatePronunciation = async (
       },
     };
     const textPart = { text: pronunciationPrompt(target, how.kind || 'word', how.weak, how.focus) };
-    // Only Gemini hears audio: the other services are not asked.
-    const response = await aiGenerate({ ...options, aiProvider: 'gemini', fallbacks: undefined }, {
+    // Only services that hear audio are in these options (services/aiSettings
+    // pronunciationOptions): Gemini, and OpenRouter's audio models.
+    const response = await aiGenerate(options, {
       contents: { parts: [textPart, audioPart] },
       config: {
         responseMimeType: "application/json",
@@ -156,7 +157,10 @@ export const evaluatePronunciation = async (
       }
     }, 'pronunciation');
 
-    return cleanEvaluation(parseJsonFromAiResponse(response.text), target);
+    const kind = how.kind || 'word';
+    const evaluation = withHeardCheck(cleanEvaluation(parseJsonFromAiResponse(response.text), target), target, kind);
+    const by = [providerName(response.used), response.used.model].filter(Boolean).join(' · ').slice(0, 80);
+    return { ...evaluation, by };
   } catch (error) {
     console.error("Error evaluating pronunciation:", error);
     throw error;

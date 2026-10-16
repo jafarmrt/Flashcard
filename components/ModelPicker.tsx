@@ -8,7 +8,7 @@ const SHOWN = 150;
 // The models a service offers, read from it with the key typed above, to
 // pick one by tapping instead of typing its name. OpenRouter also says
 // which are free and what the others cost.
-export const ModelPicker: React.FC<{ options: AiRequestOptions; value: string; onPick: (id: string) => void }> = ({ options, value, onPick }) => {
+export const ModelPicker: React.FC<{ options: AiRequestOptions; value: string; onPick: (id: string) => void; audioOnly?: boolean }> = ({ options, value, onPick, audioOnly }) => {
     const [open, setOpen] = useState(false);
     const [models, setModels] = useState<AiModel[] | null>(null);
     const [error, setError] = useState('');
@@ -24,14 +24,15 @@ export const ModelPicker: React.FC<{ options: AiRequestOptions; value: string; o
             .catch((e: Error) => setError(e?.message || 'فهرست مدل‌ها گرفته نشد.'));
     };
 
-    const shown = useMemo(() => (models ? filterModels(models, search, freeOnly) : []), [models, search, freeOnly]);
+    // audioOnly: only models that take audio in (pronunciation practice).
+    const shown = useMemo(() => (models ? filterModels(audioOnly ? models.filter(m => m.audio) : models, search, freeOnly) : []), [models, search, freeOnly, audioOnly]);
     const hasFree = !!models?.some(m => m.free);
     const hasPrices = !!models?.some(m => m.priceIn !== undefined);
 
     if (!open) {
         return (
             <button type="button" onClick={load} className="self-start min-h-[36px] px-3 rounded-xl text-sm text-brand-600 dark:text-brand-300 hover:bg-brand-50 dark:hover:bg-slate-700">
-                دیدن مدل‌های این سرویس
+                {audioOnly ? 'دیدن مدل‌هایی که صدا می‌شنوند' : 'دیدن مدل‌های این سرویس'}
             </button>
         );
     }

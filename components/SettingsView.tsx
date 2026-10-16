@@ -4,7 +4,7 @@ import { dictionaryKey, dictionaryList, dictionaryNote } from '../services/dictS
 import { DictionaryId, DictionaryKeyId, dictionaryInfo } from '../services/dictionaryCatalog';
 import { testDictionary } from '../services/dictionaryService';
 import { CARD_KINDS, extractKinds, KIND_EXAMPLE, KIND_LABEL } from '../services/cardKinds';
-import { AI_PROVIDERS, providerInfo, providerKey, providerList, providerOptions, providerProblem } from '../services/aiSettings';
+import { AI_PROVIDERS, DEFAULT_OR_AUDIO_MODEL, OPENROUTER_URL, providerInfo, providerKey, providerList, providerOptions, providerProblem } from '../services/aiSettings';
 import { testAiConnection } from '../services/geminiService';
 import { fa, Icon } from './common/ui';
 import { ModelPicker } from './ModelPicker';
@@ -544,6 +544,46 @@ const ReadAloudSettings: React.FC<{ settings: Settings; onUpdateSettings: (s: Pa
     );
 };
 
+// Who listens in pronunciation practice: Gemini, an audio model on OpenRouter,
+// or Gemini first and OpenRouter when it fails. Claude and the text-only
+// services cannot hear.
+const PronunciationSettings: React.FC<{ settings: Settings; onUpdateSettings: (s: Partial<Settings>) => void }> = ({ settings, onUpdateSettings }) => {
+    const choice = settings.pronunciationService || 'auto';
+    const orKey = providerKey(settings, 'openrouter');
+    const [model, setModel] = useState(settings.orAudioModel || '');
+    useEffect(() => { setModel(settings.orAudioModel || ''); }, [settings.orAudioModel]);
+    const save = (value: string) => { if (value.trim() !== (settings.orAudioModel || '')) onUpdateSettings({ orAudioModel: value.trim() || undefined }); };
+    return (
+        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-700 flex flex-col gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+                <h3 className="font-bold text-ink dark:text-white">شنوندهٔ تمرین تلفظ</h3>
+                <Segmented label="شنوندهٔ تمرین تلفظ" value={choice} onChange={v => onUpdateSettings({ pronunciationService: v })}
+                    options={[{ value: 'auto', label: 'خودکار' }, { value: 'gemini', label: 'فقط Gemini' }, { value: 'openrouter', label: 'فقط OpenRouter' }]} />
+            </div>
+            <p className="text-sm text-ink-muted dark:text-slate-400">
+                {choice === 'auto' ? 'اول Gemini گوش می‌کند؛ اگر جواب نداد (کلید، سهمیه یا قطعی)، مدل صوتی OpenRouter.'
+                    : choice === 'gemini' ? 'فقط Gemini، با کلید خودت یا کلید سرور.'
+                    : 'فقط مدل صوتی OpenRouter؛ هزینه از اعتبار OpenRouter کم می‌شود.'}
+                {' '}Claude و سرویس‌های متنی صدا نمی‌شنوند و برای این کار به کار نمی‌روند.
+            </p>
+            {!orKey && choice !== 'gemini' && (
+                <p role="note" className="text-sm text-amber-800 dark:text-amber-200">کلید OpenRouter وارد نشده، پس فعلاً فقط Gemini گوش می‌کند. آن را در «سرویس‌های هوش مصنوعی» وارد کن.</p>
+            )}
+            {orKey && choice !== 'gemini' && (
+                <>
+                    <label className="flex flex-col gap-1 text-sm">
+                        <span className="text-ink-muted dark:text-slate-400">مدل OpenRouter (باید صدا بشنود)</span>
+                        <input dir="ltr" value={model} placeholder={DEFAULT_OR_AUDIO_MODEL} aria-label="مدل صوتی OpenRouter"
+                            onChange={e => setModel(e.target.value)} onBlur={() => save(model)} className={input} />
+                    </label>
+                    <ModelPicker key={`or-audio:${orKey}`} audioOnly options={{ aiProvider: 'openai-compatible', aiBaseUrl: OPENROUTER_URL, customApiKey: orKey }}
+                        value={model.trim() || DEFAULT_OR_AUDIO_MODEL} onPick={id => { setModel(id); save(id); }} />
+                </>
+            )}
+        </div>
+    );
+};
+
 const SettingsView: React.FC<SettingsViewProps> = ({
     settings, onUpdateSettings, onExportCSV, onImportCSV, onResetApp, onDeleteAllCards, onNavigateToChangelog, onNavigateToAchievements,
     onNavigateToProfile, onNavigateToUsage, currentUser, onLogout,
@@ -588,6 +628,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                     <input type="checkbox" checked={!!settings.preReadAuto} onChange={e => onUpdateSettings({ preReadAuto: e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="پیش‌خوانی خودکار" />
                 </Row>
                 <ReadAloudSettings settings={settings} onUpdateSettings={onUpdateSettings} />
+                <PronunciationSettings settings={settings} onUpdateSettings={onUpdateSettings} />
                 <Row title="نشان دادن ساختارهای دستوری" hint="واژه‌هایی که یک ساختار دستوری می‌سازند، هنگام خواندن با نقطه‌چین مشخص شوند.">
                     <input type="checkbox" checked={!settings.hideGrammar} onChange={e => onUpdateSettings({ hideGrammar: !e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="نشان دادن ساختارهای دستوری" />
                 </Row>

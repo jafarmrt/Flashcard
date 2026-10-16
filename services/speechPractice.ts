@@ -9,6 +9,7 @@
 import type { Flashcard, Occurrence, SpeechAttempt, SpeechIssue, SpeechMark, SpeechParts } from '../types';
 import { dayString } from './streakService.js';
 import { isFormOf, termPattern } from './lemma.js';
+import { levenshtein } from './stringSimilarity.js';
 
 export interface SoundInfo {
   label: string; // Persian name
@@ -114,7 +115,7 @@ export const pronunciationPrompt = (target: string, kind: SpeechKind, weak: stri
   if (kind === 'word') {
     return `I am a Persian speaker learning English. The audio is my attempt at reading the word "${target}" aloud.
 Listen carefully and judge it like a strict but kind pronunciation teacher. Return JSON:
-- "heard": what you actually heard, written in English letters (empty if silence or noise).
+- "heard": exactly what was said, word for word, spelled the way it sounded ("tink" for think said with a t, "de" for the said with a d). Do NOT correct it to match the text: leave out words that were not said and keep wrong or added ones. Empty if silence or noise.
 - "score": 0-100 for how close it is to a clear standard pronunciation. Silence, noise or a different word scores below 20.
 - "feedback": 1-2 short, encouraging sentences in Persian: what was good and the most important thing to fix.
 - "tip": one short Persian instruction for the next try.
@@ -130,7 +131,7 @@ Only report problems you really hear; do not invent any.${usual}`;
   return `I am a Persian speaker learning English. The audio is my attempt at reading the sentence "${target}" aloud.
 Its words, numbered: ${words.map((w, i) => `${i + 1} ${w}`).join(' | ')}${focusLine}
 Listen carefully and judge the whole sentence like a strict but kind pronunciation teacher. Return JSON:
-- "heard": what you actually heard, written in English letters (empty if silence or noise).
+- "heard": exactly what was said, word for word, spelled the way it sounded ("tink" for think said with a t, "de" for the said with a d). Do NOT correct it to match the text: leave out words that were not said and keep wrong or added ones. Empty if silence or noise.
 - "score": 0-100 overall: how clear and natural the whole sentence was. Silence, noise or a different text scores below 20.
 - "parts": each 0-100: "accuracy" (the sounds of the words), "fluency" (smooth, without long pauses, restarts or hesitation), "rhythm" (word stress, sentence stress, linking and intonation), "completeness" (every word read, none added).
 - "marks": one item for each word that did NOT come out right, by its number: "i" (the word's number), "status" ("unclear": understandable but off; "wrong": a different sound or word; "missed": left out), "heard" (how it sounded), "sound" (an id from the list below). Words you do not list count as right.${at.length ? '\n- "focusScore": 0-100 for the phrase I am learning alone.' : ''}
@@ -139,6 +140,94 @@ Listen carefully and judge the whole sentence like a strict but kind pronunciati
 - "correction": the IPA of the words you flag, between slashes (or empty).
 ${issues}
 Only report problems you really hear; do not invent any.${usual}`;
+};
+
+// --- What was heard, against the text ---
+//
+// The AI also writes down what it heard, word for word. The app lines that
+// up with the text itself, so a word left out or said as another word is
+// marked and counted even when the AI's own judgement was too kind.
+
+const plain = (w: string) => w.toLowerCase().replace(/[’']/g, '').replace(/[^\p{L}\p{N}]/gu, '');
+
+// 1 for the same word, down to 0 for nothing alike.
+export const wordLikeness = (a: string, b: string): number => {
+  const x = plain(a);
+  const y = plain(b);
+  if (x === y) return 1;
+  if (!x || !y) return 0;
+  return 1 - levenshtein(x, y) / Math.max(x.length, y.length);
+};
+
+const CLOSE = 0.6; // said, though not cleanly ("tink" for think)
+
+export interface HeardWord { i: number; status: 'ok' | 'close' | 'wrong' | 'missed'; heard?: string }
+
+// Each word of the text: said, said nearly, said as another word, or left
+// out. Words added in between are counted apart.
+export const compareHeard = (target: string, heard: string): { words: HeardWord[]; added: number } => {
+  const want = speechWords(target);
+  const got = speechWords(heard);
+  const n = want.length;
+  const m = got.length;
+  // Edit distance on words: a near word costs less than a different one.
+  const cost = (i: number, j: number) => {
+    const like = wordLikeness(want[i], got[j]);
+    return like === 1 ? 0 : like >= CLOSE ? 0.4 : 1;
+  };
+  const d: number[][] = Array.from({ length: n + 1 }, (_, i) => Array.from({ length: m + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)));
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost(i - 1, j - 1));
+  }
+  const words: HeardWord[] = [];
+  let added = 0;
+  let i = n;
+  let j = m;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && Math.abs(d[i][j] - (d[i - 1][j - 1] + cost(i - 1, j - 1))) < 1e-9) {
+      const like = wordLikeness(want[i - 1], got[j - 1]);
+      words.push({ i: i - 1, status: like === 1 ? 'ok' : like >= CLOSE ? 'close' : 'wrong', ...(like < 1 ? { heard: got[j - 1] } : {}) });
+      i--; j--;
+    } else if (i > 0 && Math.abs(d[i][j] - (d[i - 1][j] + 1)) < 1e-9) {
+      words.push({ i: i - 1, status: 'missed' });
+      i--;
+    } else {
+      added++;
+      j--;
+    }
+  }
+  return { words: words.reverse(), added };
+};
+
+// The AI's marks with what the comparison found added: a word left out or
+// said as another word that the AI did not mark. Completeness is counted,
+// and the score cannot stand far above it.
+export const withHeardCheck = (evaluation: Evaluation, target: string, kind: SpeechKind): Evaluation => {
+  const heard = evaluation.heard?.trim();
+  if (!heard) return evaluation;
+  if (kind === 'word') {
+    // A different word altogether is not a near miss.
+    const best = Math.max(0, ...speechWords(heard).map(w => wordLikeness(target, w)), wordLikeness(target, heard));
+    return best < 0.4 ? { ...evaluation, score: Math.min(evaluation.score, 30) } : evaluation;
+  }
+  const n = speechWords(target).length;
+  if (!n) return evaluation;
+  const { words, added } = compareHeard(target, heard);
+  const marks = [...(evaluation.marks || [])];
+  for (const w of words) {
+    if ((w.status === 'missed' || w.status === 'wrong') && !marks.some(m => m.i === w.i)) {
+      marks.push({ i: w.i, status: w.status, ...(w.heard ? { heard: w.heard } : {}) });
+    }
+  }
+  marks.sort((a, b) => a.i - b.i);
+  const missed = words.filter(w => w.status === 'missed').length;
+  const completeness = Math.max(0, Math.round(100 * (n - missed - Math.min(added, n) * 0.5) / n));
+  return {
+    ...evaluation,
+    score: Math.min(evaluation.score, completeness + 15),
+    parts: { ...(evaluation.parts || {}), completeness },
+    ...(marks.length ? { marks } : {}),
+  };
 };
 
 const PERCENT = { type: 'INTEGER' };
@@ -195,6 +284,7 @@ export interface Evaluation {
   focusScore?: number;
   parts?: SpeechParts;
   marks?: SpeechMark[];
+  by?: string; // the service and model that listened
 }
 
 const text = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');

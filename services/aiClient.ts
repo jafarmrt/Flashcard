@@ -5,7 +5,7 @@
 // page. The caller learns which service answered, for the card's origin.
 
 import { callProxy, ProxyError } from './apiService';
-import { providerName } from './aiSettings';
+import { defaultModelFor, providerName } from './aiSettings';
 import type { AiRequestOptions } from './geminiService';
 import { logUsage } from './usageLog';
 
@@ -37,11 +37,11 @@ export const chainOf = (options?: AiRequestOptions): AiRequestOptions[] => {
 
 // The provider fields every proxy call sends.
 export const providerFields = (options?: AiRequestOptions) => {
-  const openAi = options?.aiProvider === 'openai-compatible';
+  const provider = options?.aiProvider === 'openai-compatible' || options?.aiProvider === 'anthropic' ? options.aiProvider : 'gemini';
   return {
-    aiProvider: openAi ? 'openai-compatible' : 'gemini',
-    aiBaseUrl: openAi ? options?.aiBaseUrl || undefined : undefined,
-    model: options?.model || (openAi ? 'llama-3.3-70b-versatile' : 'gemini-2.5-flash'),
+    aiProvider: provider,
+    aiBaseUrl: provider === 'openai-compatible' ? options?.aiBaseUrl || undefined : undefined,
+    model: options?.model || defaultModelFor(provider),
     customApiKey: options?.customApiKey || undefined,
   };
 };

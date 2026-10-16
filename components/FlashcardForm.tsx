@@ -4,8 +4,8 @@ import { Flashcard, Deck, CefrLevel } from '../types';
 import {
   AiRequestOptions,
   getPronunciationFeedback,
-  blobToBase64
 } from '../services/geminiService';
+import { recordingForAi } from '../services/audioWav';
 import { fetchAudioData } from '../services/dictionaryService';
 import {
   applyProposal,
@@ -265,12 +265,13 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
         };
 
         mediaRecorderRef.current.onstop = async () => {
-          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          // Safari records mp4, Chrome and Firefox webm or ogg.
+          const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorderRef.current?.mimeType || audioChunksRef.current[0]?.type || 'audio/webm' });
           setIsCheckingPronunciation(true);
           setPronunciationFeedback('');
           try {
-            const base64Audio = await blobToBase64(audioBlob);
-            const feedback = await getPronunciationFeedback(formData.front, base64Audio, audioBlob.type, audioOptions);
+            const audio = await recordingForAi(audioBlob);
+            const feedback = await getPronunciationFeedback(formData.front, audio.data, audio.mimeType, audioOptions);
             setPronunciationFeedback(feedback);
           } catch (err) {
             setPronunciationFeedback('بازخوردی نیامد. دوباره امتحان کن.');

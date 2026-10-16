@@ -73,8 +73,9 @@ characters) on Vercel; on a VPS one is generated in `DATA_DIR/.session_secret`.
 ## AI
 
 In Settings, under «سرویس‌های هوش مصنوعی», list the AI services in the order
-they should be tried: Gemini, Groq, OpenRouter, DeepSeek, a local Ollama or
-another OpenAI-compatible service, each with its own key and model. When one
+they should be tried: Gemini, Claude (Anthropic), Groq, OpenRouter, DeepSeek,
+a local Ollama or another OpenAI-compatible service, each with its own key
+and model. When one
 fails (its free quota is used up, its key is wrong, it is down), the next is
 asked, and the free dictionaries come last. Gemini without a key uses the
 server's `GEMINI_API_KEY` (or `API_KEY`). Keys stay on the device; the order
@@ -124,6 +125,12 @@ translation quota about tenfold.
   stress and rhythm and completeness, a score for the card's word alone, and
   Persian feedback with one thing to do next time. A word can also be read
   alone.
+- Who listens is set in Settings › Study: Gemini, an OpenRouter model that
+  takes audio, or Gemini first and OpenRouter when it fails (Claude and the
+  text-only services cannot hear). Recordings go as 16 kHz WAV. The AI writes
+  down what was said word for word and the app lines that up with the
+  sentence, so left-out and wrong words are marked and counted even when the
+  AI's own judgement is too kind.
 - Every try is kept with its feedback and syncs. Each item comes back on its
   own schedule, worked out from the tries: the first try of a day decides it;
   weak ones return the next day, good ones after 3, 7, 16 and 35 days, and

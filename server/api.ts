@@ -7,8 +7,9 @@ import { lookupChain, lookupSingle, mwKey } from './dictionaries.js';
 import { cleanDictionaryRequest, DEFAULT_DICTIONARY_ORDER, DICTIONARY_IDS, DictionaryRequest, dictionarySignature } from '../services/dictionaryCatalog.js';
 import { applyChanges, changesSince, upgradeStore } from './syncStore.js';
 import { checkPublicHost, fetchPublicPage, PageFetchError } from './pageFetch.js';
+import { AiRequestError, ANTHROPIC_URL, anthropicHeaders, anthropicReply, anthropicRequestBody, openAiRequestBody } from './aiRequests.js';
 import { packChapter, unpackChapter } from './chapterText.js';
-import { geminiUsage, listGeminiModels, listOpenAiModels, openAiUsage } from './aiModels.js';
+import { geminiUsage, listAnthropicModels, listGeminiModels, listOpenAiModels, openAiUsage } from './aiModels.js';
 import { cachedEnrich, fileLookupStore, LookupStore } from './lookupCache.js';
 import { openKeys, sealKeys } from './keyVault.js';
 import { cleanSentKeys, mergeKeyEntries } from '../services/keySync.js';
@@ -279,8 +280,12 @@ export function aiErrorMessage(provider: string, status: number, body: string): 
   } catch {
     reason = body;
   }
-  reason = String(reason || '').replace(/\s+/g, ' ').trim().slice(0, 200);
-  const hint = status === 401 || status === 403 ? 'the API key is wrong or not allowed'
+  reason = String(reason || '').replace(/\s+/g, ' ').trim().replace(/\.+$/, '').slice(0, 200);
+  // Refused for where the request comes from (sanctions, a region the
+  // service does not serve), not for the key.
+  const blocked = /location is not supported|security policy|unsupported.?(country|region)|not available in your (country|region)|request not allowed/i.test(reason);
+  const hint = blocked ? 'this service refuses requests from where the server is (region or sanctions), not the key'
+    : status === 401 || status === 403 ? 'the API key is wrong or not allowed'
     : status === 429 ? 'the free quota is used up for now'
     : status === 404 ? 'the model name is not available'
     : '';
@@ -379,37 +384,7 @@ async function handleOpenAiGenerate(payload: any, res: ProxyResponse, apiKey: st
     return res.status(400).json({ error: (e as Error).message });
   }
   const endpoint = `${cleanBaseUrl}/chat/completions`;
-  const { model, contents, config } = payload;
-  
-  let systemInstruction = config?.systemInstruction || '';
-  let userText = '';
-  
-  if (typeof contents === 'string') {
-    userText = contents;
-  } else if (Array.isArray(contents)) {
-    userText = contents.map((c: any) => c.text || c.parts?.map((p: any) => p.text || '').join('\n') || '').join('\n');
-  } else if (contents && typeof contents === 'object' && contents.parts) {
-    userText = contents.parts.map((p: any) => p.text || '').join('\n');
-  } else {
-    userText = JSON.stringify(contents);
-  }
-
-  const messages = [
-    ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
-    { role: 'user', content: userText }
-  ];
-
-  const requestBody: Record<string, any> = {
-    model: model || 'llama-3.3-70b-versatile',
-    messages,
-    temperature: 0.3,
-  };
-
-  if (config?.responseMimeType === 'application/json' || config?.responseSchema) {
-    requestBody.response_format = { type: 'json_object' };
-  }
-  // OpenRouter says what each answer cost when asked.
-  if (/(^|\.)openrouter\.ai$/.test(new URL(endpoint).hostname)) requestBody.usage = { include: true };
+  const requestBody = openAiRequestBody(payload, new URL(endpoint).hostname);
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -436,6 +411,32 @@ async function handleOpenAiGenerate(payload: any, res: ProxyResponse, apiKey: st
   const text = responseData.choices?.[0]?.message?.content || '';
   const usage = openAiUsage(responseData);
   return res.status(200).json({ text, candidates: responseData.choices, model: responseData.model || requestBody.model, ...(usage ? { usage } : {}) });
+}
+
+// --- ANTHROPIC (CLAUDE) HANDLER ---
+// Only with the key typed on the device: the server has no Claude key of its own.
+async function handleAnthropicGenerate(payload: any, res: ProxyResponse, apiKey: string) {
+  if (!apiKey) return res.status(400).json({ error: 'Claude: no API key. Enter an Anthropic key in the AI settings.' });
+  let body: Record<string, any>;
+  try {
+    body = anthropicRequestBody(payload);
+  } catch (e) {
+    if (e instanceof AiRequestError) return res.status(e.status).json({ error: e.message });
+    throw e;
+  }
+  const response = await fetch(`${ANTHROPIC_URL}/messages`, {
+    method: 'POST',
+    headers: anthropicHeaders(apiKey),
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(AI_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('Anthropic API Error:', errorText);
+    return res.status(response.status).json({ error: aiErrorMessage('Claude', response.status, errorText) });
+  }
+  const reply = anthropicReply(await response.json(), body.model);
+  return res.status(200).json(reply);
 }
 
 // --- PROXY ENDPOINT ---
@@ -488,6 +489,7 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
       }
 
       case 'gemini-generate': {
+        if (payload.aiProvider === 'anthropic') return await handleAnthropicGenerate(payload, res, payload.customApiKey || '');
         const isCustomOpenAi = payload.aiProvider === 'openai-compatible' || payload.aiBaseUrl;
         if (isCustomOpenAi) {
           const apiKey = payload.customApiKey || '';
@@ -539,6 +541,9 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
       }
 
       case 'test-ai-key': {
+        if (payload.aiProvider === 'anthropic') {
+          return await handleAnthropicGenerate({ model: payload.model, contents: 'Say "OK".', config: { maxOutputTokens: 16 } }, res, payload.customApiKey || '');
+        }
         const isCustomOpenAi = payload.aiProvider === 'openai-compatible' || payload.aiBaseUrl;
         if (isCustomOpenAi) {
           const apiKey = payload.customApiKey || '';
@@ -565,8 +570,13 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
       case 'list-models': {
         // The models of one service, asked with the key typed on the device
         // (Gemini: or the server's key).
-        const isCustomOpenAi = payload.aiProvider === 'openai-compatible' || payload.aiBaseUrl;
+        const isAnthropic = payload.aiProvider === 'anthropic';
+        const isCustomOpenAi = !isAnthropic && (payload.aiProvider === 'openai-compatible' || payload.aiBaseUrl);
         try {
+          if (isAnthropic) {
+            if (!payload.customApiKey) return res.status(400).json({ error: 'Claude: no API key.' });
+            return res.status(200).json({ models: await listAnthropicModels(payload.customApiKey) });
+          }
           if (isCustomOpenAi) {
             let baseUrl: string;
             try {
@@ -581,7 +591,7 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
           return res.status(200).json({ models: await listGeminiModels(apiKey) });
         } catch (e) {
           const status = Number((e as { status?: number }).status) || 502;
-          const host = isCustomOpenAi ? (() => { try { return new URL(cleanAiBaseUrl(payload.aiBaseUrl)).hostname; } catch { return 'AI'; } })() : 'Gemini';
+          const host = isAnthropic ? 'Claude' : isCustomOpenAi ? (() => { try { return new URL(cleanAiBaseUrl(payload.aiBaseUrl)).hostname; } catch { return 'AI'; } })() : 'Gemini';
           const error = status === 404
             ? `${host} (404): this service does not list its models; type the model name instead`
             : aiErrorMessage(host, status, (e as Error).message || 'the model list could not be read');

@@ -1,0 +1,68 @@
+// File: /services/audioWav.ts
+// A recording made ready for the AI that listens to it. Browsers record
+// WebM/Opus (Chrome, Firefox) or MP4 (Safari); Gemini takes those, but most
+// audio models on OpenRouter only take WAV or MP3. So the recording is
+// turned into 16 kHz mono WAV, which every one of them takes: 30 seconds is
+// under 1 MB, well inside the server's request limit.
+
+export const WAV_RATE = 16_000;
+
+// 16-bit PCM WAV of mono samples (-1..1).
+export const encodeWav = (samples: Float32Array, sampleRate = WAV_RATE): Uint8Array => {
+  const bytes = new Uint8Array(44 + samples.length * 2);
+  const view = new DataView(bytes.buffer);
+  const text = (at: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(at + i, s.charCodeAt(i)); };
+  text(0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * 2, true);
+  text(8, 'WAVE');
+  text(12, 'fmt ');
+  view.setUint32(16, 16, true); // size of this part
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true); // bytes per second
+  view.setUint16(32, 2, true); // bytes per sample
+  view.setUint16(34, 16, true); // bits per sample
+  text(36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return bytes;
+};
+
+const toBase64 = (bytes: Uint8Array): string => {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+};
+
+const blobBase64 = async (blob: Blob): Promise<string> => toBase64(new Uint8Array(await blob.arrayBuffer()));
+
+// The recording as base64 WAV; when this browser cannot decode it, as it was
+// recorded (Gemini still takes that).
+export const recordingForAi = async (blob: Blob): Promise<{ data: string; mimeType: string }> => {
+  try {
+    const Ctx: typeof AudioContext | undefined = window.AudioContext || (window as any).webkitAudioContext;
+    if (!Ctx || typeof OfflineAudioContext === 'undefined') throw new Error('no Web Audio');
+    const ctx = new Ctx();
+    let decoded: AudioBuffer;
+    try {
+      decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
+    } finally {
+      ctx.close().catch(() => undefined);
+    }
+    const offline = new OfflineAudioContext(1, Math.max(1, Math.ceil(decoded.duration * WAV_RATE)), WAV_RATE);
+    const source = offline.createBufferSource();
+    source.buffer = decoded;
+    source.connect(offline.destination); // two channels are mixed into one
+    source.start();
+    const rendered = await offline.startRendering();
+    return { data: toBase64(encodeWav(rendered.getChannelData(0))), mimeType: 'audio/wav' };
+  } catch (e) {
+    console.warn('The recording could not be turned into WAV; sent as recorded:', e);
+    // Gemini wants the bare type: "audio/webm", not "audio/webm;codecs=opus".
+    return { data: await blobBase64(blob), mimeType: blob.type.split(';')[0] || 'audio/webm' };
+  }
+};

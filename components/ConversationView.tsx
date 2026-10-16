@@ -91,11 +91,13 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
   const counts = useMemo(() => {
     const ofKind = speechAttempts.filter(a => a.kind === speakKind);
     const mine = (cardId?: string) => !!cardId && liveIds.has(cardId);
+    const practised = new Set(ofKind.map(a => a.cardId).filter(Boolean));
     return {
       weak: speechSchedules(ofKind).filter(s => mine(s.cardId) && s.lastScore < WEAK_SCORE).length,
       due: dueSchedules(ofKind).filter(s => mine(s.cardId)).length,
+      fresh: liveCards.filter(c => !practised.has(c.id) && (speakKind === 'word' || practiceSentence(c, occurrences))).length,
     };
-  }, [speechAttempts, speakKind, liveIds]);
+  }, [speechAttempts, speakKind, liveIds, liveCards, occurrences]);
 
   const startSpeaking = (kind: SpeechKind = speakKind, choice: SpeechChoice = cardChoice) => {
     setErrorMessage(null);
@@ -265,7 +267,7 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
             <p className="text-ink-muted dark:text-slate-400 max-w-md leading-relaxed">
                 {mode === 'quiz'
                     ? 'هوش مصنوعی با چند واژهٔ تازه‌ات جمله می‌سازد و جای واژه را خالی می‌گذارد؛ از میان چهار گزینه، واژهٔ درست را انتخاب کن.'
-                    : 'واژه‌هایت را در همان جمله‌ای که در کتاب دیدی بلند بخوان. Gemini کل جمله را می‌شنود و واژه‌به‌واژه نشان می‌دهد کدام درست، کدام نامفهوم و کدام اشتباه بود؛ روانی، تکیه و آهنگ جمله را هم نمره می‌دهد. هر مورد سر وقتش برای مرور برمی‌گردد.'}
+                    : 'واژه‌هایت را در همان جمله‌ای که در کتاب دیدی بلند بخوان. هوش مصنوعی (Gemini یا مدل صوتی OpenRouter، از تنظیمات) کل جمله را می‌شنود و واژه‌به‌واژه نشان می‌دهد کدام درست، کدام نامفهوم و کدام اشتباه بود؛ روانی، تکیه و آهنگ جمله را هم نمره می‌دهد. هر مورد سر وقتش برای مرور برمی‌گردد.'}
             </p>
             {mode === 'speaking' && (
                 <div className="flex flex-col gap-3 items-center mt-1">
@@ -274,7 +276,9 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
                         {choice<SpeechKind>(speakKind, 'word', setSpeakKind, 'فقط واژه')}
                     </div>
                     <div role="group" aria-label="کدام موردها" className="flex flex-wrap justify-center gap-2">
-                        {choice<SpeechChoice>(cardChoice, 'plan', setCardChoice, counts.due > 0 ? <>برنامهٔ امروز: {fa(counts.due)} مرور + تازه‌ها</> : 'برنامهٔ امروز: موردهای تازه')}
+                        {choice<SpeechChoice>(cardChoice, 'plan', setCardChoice,
+                            counts.due + counts.fresh === 0 ? 'برنامهٔ امروز: تمام شد'
+                                : <>برنامهٔ امروز: {[counts.due > 0 && `${fa(counts.due)} مرور`, counts.fresh > 0 && `${fa(counts.fresh)} تازه`].filter(Boolean).join(' + ')}</>)}
                         {choice<SpeechChoice>(cardChoice, 'weak', setCardChoice, <>موردهای ضعیف ({fa(counts.weak)})</>, counts.weak === 0)}
                     </div>
                 </div>

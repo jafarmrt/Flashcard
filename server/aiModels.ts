@@ -4,6 +4,8 @@
 // own reply: Gemini's model list and usageMetadata, or the OpenAI-style
 // /models list and usage that Groq, OpenRouter, DeepSeek and Ollama share.
 
+import { ANTHROPIC_URL, anthropicHeaders } from './aiRequests.js';
+
 export interface AiModel {
   id: string; // what goes in the request's "model"
   name?: string;
@@ -11,6 +13,7 @@ export interface AiModel {
   priceIn?: number; // dollars per million input tokens (OpenRouter only)
   priceOut?: number; // dollars per million output tokens
   free?: boolean;
+  audio?: boolean; // takes audio in (OpenRouter says), for pronunciation practice
 }
 
 export interface TokenUsage {
@@ -60,8 +63,25 @@ export const openAiModels = (data: any): AiModel[] =>
       if (priceIn !== undefined) model.priceIn = priceIn;
       if (priceOut !== undefined) model.priceOut = priceOut;
       if (m.id.endsWith(':free') || (priceIn === 0 && priceOut === 0)) model.free = true;
+      const input = m.architecture?.input_modalities;
+      if (Array.isArray(input) && input.includes('audio')) model.audio = true;
       return model;
     });
+
+// Anthropic's list: Claude models with their display names, newest first.
+export const anthropicModels = (data: any): AiModel[] =>
+  (Array.isArray(data?.data) ? data.data : [])
+    .filter((m: any) => m && typeof m.id === 'string' && /^claude-/.test(m.id))
+    .map((m: any) => ({ id: m.id, ...(typeof m.display_name === 'string' && m.display_name ? { name: m.display_name } : {}) }));
+
+export async function listAnthropicModels(apiKey: string, fetchImpl: typeof fetch = fetch): Promise<AiModel[]> {
+  const res = await fetchImpl(`${ANTHROPIC_URL}/models?limit=1000`, {
+    headers: anthropicHeaders(apiKey),
+    signal: AbortSignal.timeout(MODELS_TIMEOUT_MS),
+  });
+  if (!res.ok) throw Object.assign(new Error(await res.text()), { status: res.status });
+  return anthropicModels(await res.json());
+}
 
 export async function listGeminiModels(apiKey: string, fetchImpl: typeof fetch = fetch): Promise<AiModel[]> {
   const res = await fetchImpl('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000', {
