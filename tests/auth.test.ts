@@ -5,7 +5,7 @@ import {
   sessionCookieHeader, sessionUser, SESSION_COOKIE, loginLockMinutes, recordLoginFailure,
   clearLoginFailures, isAllowedAudioUrl, PUBLIC_ACTIONS, registrationAllowed,
 } from '../server/auth';
-import { aiErrorMessage, cleanAiBaseUrl } from '../server/api';
+import { aiErrorMessage, checkAiBaseUrl, cleanAiBaseUrl } from '../server/api';
 
 const SECRET = 'x'.repeat(40);
 
@@ -117,4 +117,24 @@ test('the AI base URL must be an http(s) address without credentials', () => {
   assert.throws(() => cleanAiBaseUrl('file:///etc/passwd'));
   assert.throws(() => cleanAiBaseUrl('not a url'));
   assert.throws(() => cleanAiBaseUrl('https://user:pass@example.com/v1'));
+  assert.throws(() => cleanAiBaseUrl('https://example.com/any/path#'), /\? or #/, 'a fragment would cut off /chat/completions');
+  assert.throws(() => cleanAiBaseUrl('https://example.com/v1?x='), /\? or #/);
+});
+
+test('the AI base URL must be public, unless the server allows private ones', async () => {
+  const lookup = async (host: string) => (host === 'inside.example' ? ['10.0.0.5'] : ['93.184.216.34']);
+  const before = process.env.ALLOW_PRIVATE_AI_URL;
+  try {
+    delete process.env.ALLOW_PRIVATE_AI_URL;
+    assert.equal(await checkAiBaseUrl('https://api.groq.com/openai/v1', lookup), 'https://api.groq.com/openai/v1');
+    for (const url of ['http://localhost:11434/v1', 'http://127.0.0.1:8080', 'http://169.254.169.254/latest', 'http://[::ffff:127.0.0.1]/v1', 'http://inside.example/v1']) {
+      await assert.rejects(checkAiBaseUrl(url, async h => (h === 'localhost' ? ['127.0.0.1'] : lookup(h))), /public address/, url);
+    }
+    await assert.rejects(checkAiBaseUrl('https://nowhere.example/v1', async () => { throw new Error('ENOTFOUND'); }), /could not be found/);
+    process.env.ALLOW_PRIVATE_AI_URL = 'true';
+    assert.equal(await checkAiBaseUrl('http://localhost:11434/v1', lookup), 'http://localhost:11434/v1');
+  } finally {
+    if (before === undefined) delete process.env.ALLOW_PRIVATE_AI_URL;
+    else process.env.ALLOW_PRIVATE_AI_URL = before;
+  }
 });

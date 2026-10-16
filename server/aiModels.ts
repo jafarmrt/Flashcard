@@ -76,6 +76,7 @@ export async function listOpenAiModels(baseUrl: string, apiKey: string, fetchImp
   const res = await fetchImpl(`${baseUrl}/models`, {
     headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
     signal: AbortSignal.timeout(MODELS_TIMEOUT_MS),
+    redirect: 'error', // the base URL was checked, a redirect target was not
   });
   if (!res.ok) throw Object.assign(new Error(await res.text()), { status: res.status });
   return openAiModels(await res.json());

@@ -80,6 +80,10 @@ asked, and the free dictionaries come last. Gemini without a key uses the
 server's `GEMINI_API_KEY` (or `API_KEY`). Keys stay on the device; the order
 syncs. Every card records which service made it.
 
+The base URL of a custom service must be a public address, since the server
+sends the requests. A VPS that runs its own Ollama sets
+`ALLOW_PRIVATE_AI_URL=true` to allow `http://localhost:11434/v1` and the like.
+
 The usage page («گزارش مصرف», from Settings) shows, for the last 30 days on
 this device: requests to each service per day, failures with their message,
 the cards each service made, roughly how much of the free daily translation
@@ -110,6 +114,28 @@ translation quota about tenfold.
   rules say at once whether the structure is there; with AI you also get the
   mistakes with a short Persian explanation and a corrected sentence, and a
   suggested rating.
+
+## Pronunciation
+
+- A card's word is read inside the sentence it was met in (the book's
+  sentence first, then the card's own or its example; a long one is cut
+  around the word). Gemini hears the recording and returns the sentence word
+  by word (right, unclear, wrong, left out), part scores for sounds, fluency,
+  stress and rhythm and completeness, a score for the card's word alone, and
+  Persian feedback with one thing to do next time. A word can also be read
+  alone.
+- Every try is kept with its feedback and syncs. Each item comes back on its
+  own schedule, worked out from the tries: the first try of a day decides it;
+  weak ones return the next day, good ones after 3, 7, 16 and 35 days, and
+  three good days in a row make it settled. A weak try is asked once more at
+  the end of the same session.
+
+## Versions
+
+`CHANGELOG.md` is the one place a version is written: the version in
+Settings, the changes page and the "new version" notice are read from its
+newest entry, and a test keeps `package.json` on the same version. A change
+that reaches users gets an entry in the same commit.
 
 ## Books, reviews and progress
 

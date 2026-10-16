@@ -6,8 +6,9 @@
 // The AI names each problem with one of a fixed list of sound ids, so the
 // same weakness is counted together across tries and days.
 
-import type { SpeechAttempt, SpeechIssue } from '../types';
+import type { Flashcard, Occurrence, SpeechAttempt, SpeechIssue, SpeechMark, SpeechParts } from '../types';
 import { dayString } from './streakService.js';
+import { isFormOf, termPattern } from './lemma.js';
 
 export interface SoundInfo {
   label: string; // Persian name
@@ -51,29 +52,123 @@ export const soundInfo = (id: string): SoundInfo => SOUNDS[id] || SOUNDS.other;
 
 export type SpeechKind = SpeechAttempt['kind'];
 
-export const pronunciationPrompt = (target: string, kind: SpeechKind, weak: string[] = []): string => {
-  const what = kind === 'sentence' ? `the sentence "${target}"` : `the word "${target}"`;
-  const focus = weak.filter(id => SOUNDS[id] && id !== 'other').slice(0, 5);
-  return `I am a Persian speaker learning English. The audio is my attempt at reading ${what} aloud.
-Listen carefully and judge it like a strict but kind pronunciation teacher. Return JSON:
-- "heard": what you actually heard, written in English letters (empty if silence or noise).
-- "score": 0-100 for how close it is to a clear standard pronunciation. Silence, noise or a different ${kind === 'sentence' ? 'text' : 'word'} scores below 20.
-- "feedback": 1-2 short, encouraging sentences in Persian: what was good and the most important thing to fix.
-- "correction": the IPA of the correct pronunciation${kind === 'sentence' ? ' of the words you flag (or empty)' : ''}, between slashes.
-- "issues": every specific problem, most important first (empty when it was right). Each item:
+// --- The words of a text read aloud ---
+
+// A text cut into its words and what lies between them, so a sentence can be
+// shown with each word marked. `i` numbers the words from 0.
+export interface SpeechToken { text: string; i?: number }
+const SPEECH_WORD = /[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu;
+
+export const speechTokens = (text: string): SpeechToken[] => {
+  const out: SpeechToken[] = [];
+  let at = 0;
+  let i = 0;
+  for (const m of text.matchAll(SPEECH_WORD)) {
+    if (m.index! > at) out.push({ text: text.slice(at, m.index) });
+    out.push({ text: m[0], i: i++ });
+    at = m.index! + m[0].length;
+  }
+  if (at < text.length) out.push({ text: text.slice(at) });
+  return out;
+};
+
+export const speechWords = (text: string): string[] => text.match(SPEECH_WORD) || [];
+
+// Where a card's term stands in a sentence, in any form ("took … into
+// account" for "take into account"): the indexes of its words, or none.
+// Where a placeholder stood ("take something into account") a longer object
+// is allowed too ("took the cost of the journey into account").
+export const focusIndexes = (sentence: string, term: string): number[] => {
+  const words = speechWords(sentence);
+  const pattern = termPattern(term);
+  const found = findTerm(words, pattern.words, pattern.gaps);
+  return found.length || !pattern.gaps.some(g => g > 1)
+    ? found
+    : findTerm(words, pattern.words, pattern.gaps.map(g => (g > 1 ? 8 : g)));
+};
+
+const findTerm = (words: string[], wanted: string[], gaps: number[]): number[] => {
+  if (wanted.length === 0) return [];
+  for (let start = 0; start < words.length; start++) {
+    if (!isFormOf(words[start], wanted[0])) continue;
+    const found = [start];
+    let at = start;
+    for (let k = 1; k < wanted.length && found.length === k; k++) {
+      // gaps[k]: how many words may stand between this word and the one before.
+      for (let j = at + 1; j <= Math.min(words.length - 1, at + 1 + gaps[k]); j++) {
+        if (isFormOf(words[j], wanted[k])) { found.push(j); at = j; break; }
+      }
+    }
+    if (found.length === wanted.length) return found;
+  }
+  return [];
+};
+
+export const pronunciationPrompt = (target: string, kind: SpeechKind, weak: string[] = [], focus?: string): string => {
+  const sounds = weak.filter(id => SOUNDS[id] && id !== 'other').slice(0, 5);
+  const usual = sounds.length ? `\nThis learner often has trouble with: ${sounds.join(', ')}. Check these closely.` : '';
+  const issues = `- "issues": every specific problem, most important first (empty when it was right). Each item:
   - "sound": one id from this list: ${SOUND_IDS.join(', ')}.
   - "word": the word where it happened.
-  - "detail": one short Persian sentence: what you heard and how to say it right (e.g. «th را مثل "ت" گفتی؛ نوک زبان را میان دندان‌ها بگذار»).
-Only report problems you really hear; do not invent any.${focus.length ? `\nThis learner often has trouble with: ${focus.join(', ')}. Check these closely.` : ''}`;
+  - "detail": one short Persian sentence: what you heard and how to say it right (e.g. «th را مثل "ت" گفتی؛ نوک زبان را میان دندان‌ها بگذار»).`;
+  if (kind === 'word') {
+    return `I am a Persian speaker learning English. The audio is my attempt at reading the word "${target}" aloud.
+Listen carefully and judge it like a strict but kind pronunciation teacher. Return JSON:
+- "heard": what you actually heard, written in English letters (empty if silence or noise).
+- "score": 0-100 for how close it is to a clear standard pronunciation. Silence, noise or a different word scores below 20.
+- "feedback": 1-2 short, encouraging sentences in Persian: what was good and the most important thing to fix.
+- "tip": one short Persian instruction for the next try.
+- "correction": the IPA of the correct pronunciation, between slashes.
+${issues}
+Only report problems you really hear; do not invent any.${usual}`;
+  }
+  const words = speechWords(target);
+  const at = focus ? focusIndexes(target, focus) : [];
+  const focusLine = at.length
+    ? `\nThe phrase I am learning in it is "${at.map(i => words[i]).join(' ')}" (word${at.length > 1 ? 's' : ''} ${at.map(i => i + 1).join(', ')}): listen to it most closely and score it alone as "focusScore".`
+    : '';
+  return `I am a Persian speaker learning English. The audio is my attempt at reading the sentence "${target}" aloud.
+Its words, numbered: ${words.map((w, i) => `${i + 1} ${w}`).join(' | ')}${focusLine}
+Listen carefully and judge the whole sentence like a strict but kind pronunciation teacher. Return JSON:
+- "heard": what you actually heard, written in English letters (empty if silence or noise).
+- "score": 0-100 overall: how clear and natural the whole sentence was. Silence, noise or a different text scores below 20.
+- "parts": each 0-100: "accuracy" (the sounds of the words), "fluency" (smooth, without long pauses, restarts or hesitation), "rhythm" (word stress, sentence stress, linking and intonation), "completeness" (every word read, none added).
+- "marks": one item for each word that did NOT come out right, by its number: "i" (the word's number), "status" ("unclear": understandable but off; "wrong": a different sound or word; "missed": left out), "heard" (how it sounded), "sound" (an id from the list below). Words you do not list count as right.${at.length ? '\n- "focusScore": 0-100 for the phrase I am learning alone.' : ''}
+- "feedback": 2-3 short, encouraging sentences in Persian about the whole sentence: what was good, and the most important thing to fix (a sound, the stress, the rhythm or the linking).
+- "tip": one short Persian instruction for the next try (e.g. «واژه‌های کوچک را کوتاه‌تر بگو و روی think تکیه کن»).
+- "correction": the IPA of the words you flag, between slashes (or empty).
+${issues}
+Only report problems you really hear; do not invent any.${usual}`;
 };
+
+const PERCENT = { type: 'INTEGER' };
 
 export const PRONUNCIATION_SCHEMA = {
   type: 'OBJECT',
   properties: {
     heard: { type: 'STRING' },
-    score: { type: 'INTEGER' },
+    score: PERCENT,
     feedback: { type: 'STRING' },
+    tip: { type: 'STRING' },
     correction: { type: 'STRING' },
+    focusScore: PERCENT,
+    parts: {
+      type: 'OBJECT',
+      properties: { accuracy: PERCENT, fluency: PERCENT, rhythm: PERCENT, completeness: PERCENT },
+    },
+    marks: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          i: { type: 'INTEGER' },
+          status: { type: 'STRING', enum: ['unclear', 'wrong', 'missed'] },
+          heard: { type: 'STRING' },
+          sound: { type: 'STRING', enum: SOUND_IDS },
+        },
+        required: ['i', 'status'],
+      },
+    },
     issues: {
       type: 'ARRAY',
       items: {
@@ -96,19 +191,49 @@ export interface Evaluation {
   feedback: string;
   correction?: string;
   issues: SpeechIssue[];
+  tip?: string;
+  focusScore?: number;
+  parts?: SpeechParts;
+  marks?: SpeechMark[];
 }
 
 const text = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 const MAX_ISSUES = 6;
+const percent = (v: unknown): number | undefined => {
+  if (v === null || v === undefined || (typeof v === 'string' && v.trim() === '')) return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : undefined;
+};
+const MARK_STATUS = new Set(['unclear', 'wrong', 'missed']);
 
 // The AI's answer made safe to show and save: a whole score from 0 to 100,
-// known sound ids, short texts.
-export const cleanEvaluation = (raw: any): Evaluation => {
+// known sound ids, short texts. With the text that was read, word marks are
+// kept only for its real words (the AI numbers them from 1).
+export const cleanEvaluation = (raw: any, target?: string): Evaluation => {
   const r = raw && typeof raw === 'object' ? raw : {};
   const n = typeof r.score === 'string' && r.score.trim() === '' ? NaN : Number(r.score ?? NaN);
   // An answer without a score is no answer: it is not saved as a zero.
   if (!Number.isFinite(n)) throw new Error('The AI sent no score.');
   const score = Math.max(0, Math.min(100, Math.round(n)));
+  const wordCount = target ? speechWords(target).length : 0;
+  const marks: SpeechMark[] = [];
+  for (const m of Array.isArray(r.marks) && wordCount ? r.marks : []) {
+    const i = Math.round(Number(m?.i)) - 1;
+    if (!Number.isInteger(i) || i < 0 || i >= wordCount || marks.some(x => x.i === i)) continue;
+    const status = text(m.status, 10).toLowerCase();
+    if (!MARK_STATUS.has(status)) continue;
+    const heard = text(m.heard, 60);
+    const sound = text(m.sound, 40).toLowerCase();
+    marks.push({ i, status: status as SpeechMark['status'], ...(heard ? { heard } : {}), ...(SOUNDS[sound] ? { sound } : {}) });
+  }
+  marks.sort((a, b) => a.i - b.i);
+  const parts: SpeechParts = {};
+  for (const key of ['accuracy', 'fluency', 'rhythm', 'completeness'] as const) {
+    const v = percent(r.parts?.[key]);
+    if (v !== undefined) parts[key] = v;
+  }
+  const focusScore = percent(r.focusScore);
+  const tip = text(r.tip, 300);
   const issues: SpeechIssue[] = (Array.isArray(r.issues) ? r.issues : [])
     .map((i: any): SpeechIssue | null => {
       if (!i || typeof i !== 'object') return null;
@@ -128,6 +253,10 @@ export const cleanEvaluation = (raw: any): Evaluation => {
     feedback: text(r.feedback, 600),
     ...(correction ? { correction } : {}),
     issues,
+    ...(tip ? { tip } : {}),
+    ...(focusScore !== undefined ? { focusScore } : {}),
+    ...(Object.keys(parts).length ? { parts } : {}),
+    ...(marks.length ? { marks } : {}),
   };
 };
 
@@ -287,13 +416,223 @@ export const compactAttempts = (attempts: SpeechAttempt[], keep = KEEP_FULL_ATTE
   return live.slice(0, Math.max(0, live.length - keep))
     .filter(a => !a.compact)
     .map(a => {
-      const { heard: _h, correction: _c, ...rest } = a;
+      const { heard: _h, correction: _c, tip: _t, ...rest } = a;
       return {
         ...rest,
         feedback: '',
         issues: (a.issues || []).map(i => ({ sound: i.sound, ...(i.word ? { word: i.word } : {}), detail: '' })),
+        ...(a.marks ? { marks: a.marks.map(({ heard: _mh, ...m }) => m) } : {}),
         compact: true,
         updatedAt: now.toISOString(),
       };
     });
+};
+
+// --- What to practise: the sentence of a card ---
+
+const MIN_SENTENCE_WORDS = 3;
+const MAX_SENTENCE_WORDS = 25;
+
+// A long sentence is cut to the words around the card's term, at a comma or
+// a clause start where there is one, so it can be read in one breath.
+export const sentenceAround = (sentence: string, term: string, max = MAX_SENTENCE_WORDS): string => {
+  const tokens = speechTokens(sentence.trim());
+  const count = tokens.filter(t => t.i !== undefined).length;
+  if (count <= max) return sentence.trim();
+  const at = focusIndexes(sentence, term);
+  const centre = at.length ? Math.round((at[0] + at[at.length - 1]) / 2) : 0;
+  let from = Math.max(0, Math.min(centre - Math.floor(max / 2), count - max));
+  let to = from + max - 1;
+  // Move the ends to a nearby comma, semicolon or dash, when the term stays in.
+  const breakBefore = (i: number) => {
+    const k = tokens.findIndex(t => t.i === i);
+    return k > 0 && /[,;:—–(]/.test(tokens[k - 1].text);
+  };
+  for (let i = from; i <= Math.min(from + 6, at[0] ?? from); i++) if (breakBefore(i)) { from = i; break; }
+  for (let i = to + 1; i >= Math.max(to - 6, (at[at.length - 1] ?? to) + 1); i--) if (i < count && breakBefore(i)) { to = i - 1; break; }
+  const startK = tokens.findIndex(t => t.i === from);
+  const endK = tokens.findIndex(t => t.i === to);
+  const cut = tokens.slice(startK, endK + 1).map(t => t.text).join('').trim();
+  return `${from > 0 ? '… ' : ''}${cut}${to < count - 1 ? ' …' : ''}`;
+};
+
+// The sentence a card is practised in: where the word was met in a book
+// (latest first), then the card's own sentence, then its examples. Very
+// short ones are skipped; long ones are cut around the word.
+export const practiceSentence = (card: Pick<Flashcard, 'id' | 'front' | 'sourceSentence' | 'exampleSentenceTarget'>, occurrences: Occurrence[] = []): string => {
+  const met = occurrences
+    .filter(o => o.cardId === card.id && !o.isDeleted && o.sentence?.trim())
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .map(o => o.sentence!);
+  const candidates = [...met, card.sourceSentence || '', ...(card.exampleSentenceTarget || [])]
+    .map(s => s.replace(/\s+/g, ' ').trim())
+    .filter(s => speechWords(s).length >= MIN_SENTENCE_WORDS);
+  const withTerm = candidates.filter(s => focusIndexes(s, card.front).length > 0);
+  const pick = withTerm[0] || candidates[0];
+  return pick ? sentenceAround(pick, card.front) : '';
+};
+
+// --- When an item comes back (spaced pronunciation practice) ---
+//
+// Worked out from the tries alone, so it follows the account to every
+// device. Each day an item was practised counts once, by its FIRST try that
+// day: that one says what has stuck, the later ones are practice.
+//   - first try of the last day below GOOD_SCORE: back the next day, or two
+//     days later when it ended the day well;
+//   - at or above GOOD_SCORE: 3, 7, 16, then 35 days, as such days follow in
+//     a row; three in a row and it counts as settled.
+
+export const GOOD_SCORE = 80;
+const INTERVALS = [3, 7, 16, 35];
+export const SETTLED_DAYS = 3;
+
+export type SpeechStage = 'new' | 'learning' | 'reviewing' | 'settled';
+
+export interface SpeechSchedule {
+  key: string;
+  cardId?: string;
+  kind: SpeechKind;
+  target: string;
+  stage: SpeechStage;
+  lastScore: number; // the latest try
+  firstScoreLastDay: number; // the first try of the last practice day
+  goodDays: number; // days in a row (latest back) that started at GOOD_SCORE or above
+  lastDay: string;
+  dueDay: string; // local YYYY-MM-DD
+  tries: number;
+}
+
+const addDays = (day: string, days: number): string => {
+  const d = new Date(`${day}T12:00:00`);
+  d.setDate(d.getDate() + days);
+  return dayString(d);
+};
+
+export const scheduleFor = (key: string, list: SpeechAttempt[]): SpeechSchedule => {
+  const byDay = new Map<string, SpeechAttempt[]>();
+  for (const a of list) {
+    const day = dayString(new Date(a.createdAt));
+    byDay.set(day, [...(byDay.get(day) || []), a]);
+  }
+  const days = Array.from(byDay.keys()).sort();
+  const firstOf = (day: string) => byDay.get(day)![0].score;
+  let goodDays = 0;
+  for (let k = days.length - 1; k >= 0 && firstOf(days[k]) >= GOOD_SCORE; k--) goodDays++;
+  const lastDay = days[days.length - 1];
+  const lastOfDay = byDay.get(lastDay)!;
+  const first = lastOfDay[0].score;
+  const best = Math.max(...lastOfDay.map(a => a.score));
+  const interval = first >= GOOD_SCORE ? INTERVALS[Math.min(goodDays, INTERVALS.length) - 1] : best >= GOOD_SCORE ? 2 : 1;
+  const last = list[list.length - 1];
+  return {
+    key, kind: last.kind, target: last.target, ...(last.cardId ? { cardId: last.cardId } : {}),
+    stage: goodDays >= SETTLED_DAYS ? 'settled' : goodDays > 0 ? 'reviewing' : 'learning',
+    lastScore: last.score, firstScoreLastDay: first, goodDays, lastDay, dueDay: addDays(lastDay, interval), tries: list.length,
+  };
+};
+
+// Every item practised, with when it comes back.
+export const speechSchedules = (attempts: SpeechAttempt[]): SpeechSchedule[] => {
+  const by = new Map<string, SpeechAttempt[]>();
+  for (const a of liveAttempts(attempts)) {
+    const key = attemptKey(a);
+    by.set(key, [...(by.get(key) || []), a]);
+  }
+  return Array.from(by.entries()).map(([key, list]) => scheduleFor(key, list));
+};
+
+// Items due today or earlier, the weakest first.
+export const dueSchedules = (attempts: SpeechAttempt[], today: string = dayString(new Date())): SpeechSchedule[] =>
+  speechSchedules(attempts)
+    .filter(s => s.dueDay <= today)
+    .sort((a, b) => a.firstScoreLastDay - b.firstScoreLastDay || a.dueDay.localeCompare(b.dueDay));
+
+export interface SpeechItem {
+  card: Flashcard;
+  kind: SpeechKind;
+  target: string;
+  focus?: string; // the card's term, in a sentence
+}
+
+export type SpeechChoice = 'plan' | 'weak';
+export const SESSION_SIZE = 6;
+const NEW_PER_SESSION_ALWAYS = 2;
+
+const shuffled = <T,>(list: T[], random: () => number): T[] => {
+  const a = [...list];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+};
+
+// The items of one session.
+//   plan: those due again (weakest first), then a few never practised: cards
+//     being learned now (new or due in review) before the others;
+//   weak: those whose latest try stayed below WEAK_SCORE, weakest first.
+export const pickSpeechItems = (opts: {
+  cards: Flashcard[];
+  attempts: SpeechAttempt[];
+  occurrences?: Occurrence[];
+  kind: SpeechKind;
+  choice: SpeechChoice;
+  size?: number;
+  now?: Date;
+  random?: () => number;
+}): SpeechItem[] => {
+  const { cards, attempts, occurrences = [], kind, choice, size = SESSION_SIZE, now = new Date(), random = Math.random } = opts;
+  const itemOf = (card: Flashcard): SpeechItem | null => {
+    if (card.isDeleted || card.kind === 'grammar' || !card.front.trim()) return null;
+    if (kind === 'word') return { card, kind, target: card.front.trim() };
+    const target = practiceSentence(card, occurrences);
+    return target ? { card, kind, target, focus: card.front.trim() } : null;
+  };
+  const byId = new Map(cards.map(c => [c.id, c]));
+  const ofKind = attempts.filter(a => a.kind === kind);
+  const fromSchedules = (list: SpeechSchedule[]) =>
+    list.map(s => (s.cardId ? byId.get(s.cardId) : undefined)).filter((c): c is Flashcard => !!c).map(itemOf).filter((i): i is SpeechItem => !!i);
+
+  if (choice === 'weak') {
+    const weak = speechSchedules(ofKind).filter(s => s.lastScore < WEAK_SCORE).sort((a, b) => a.lastScore - b.lastScore);
+    return fromSchedules(weak).slice(0, size);
+  }
+  const due = fromSchedules(dueSchedules(ofKind, dayString(now)));
+  const practised = new Set(ofKind.map(a => a.cardId).filter(Boolean));
+  const fresh = cards.filter(c => !practised.has(c.id));
+  const learning = fresh.filter(c => c.repetition === 0 || new Date(c.dueDate).getTime() <= now.getTime());
+  const others = fresh.filter(c => !learning.includes(c));
+  const newItems = [...shuffled(learning, random), ...shuffled(others, random)].map(itemOf).filter((i): i is SpeechItem => !!i);
+  // Reviews first; new items take the room left, and always a couple so
+  // learning goes on when many are due.
+  const newCount = Math.min(newItems.length, Math.max(size - due.length, NEW_PER_SESSION_ALWAYS));
+  return [...due.slice(0, size - newCount), ...newItems.slice(0, newCount)];
+};
+
+// What a session leaves behind: each item's first and last score in it, and
+// when it comes back.
+export interface SessionItemResult {
+  key: string;
+  target: string;
+  kind: SpeechKind;
+  focus?: string;
+  first: number;
+  last: number;
+  tries: number;
+  dueDay: string;
+  stage: SpeechStage;
+}
+
+export const sessionResults = (allAttempts: SpeechAttempt[], tried: SpeechAttempt[]): SessionItemResult[] => {
+  const keys = Array.from(new Set(tried.map(attemptKey)));
+  const schedules = new Map(speechSchedules(allAttempts).map(s => [s.key, s]));
+  return keys.map(key => {
+    const mine = tried.filter(a => attemptKey(a) === key);
+    const s = schedules.get(key) || scheduleFor(key, mine);
+    const last = mine[mine.length - 1];
+    return {
+      key, target: last.target, kind: last.kind, ...(last.focus ? { focus: last.focus } : {}),
+      first: mine[0].score, last: last.score, tries: mine.length, dueDay: s.dueDay, stage: s.stage,
+    };
+  });
 };

@@ -283,17 +283,17 @@ export const resetLocalDatabase = async (): Promise<void> => {
   window.location.reload();
 };
 
-// Pre-populate with a default deck and user profile if none exist
-(db as any).on('populate', async () => {
-  await db.decks.add({ id: 'default', name: 'Default Deck' });
-  await db.userProfile.add({ 
-      id: 1, 
-      xp: 0, 
-      level: 1, 
-      lastStreakCheck: '', 
-      firstName: '', 
-      lastName: '', 
-      bio: '', 
+// A default deck and user profile, as a new database starts with.
+const seedDefaults = async () => {
+  await db.decks.put({ id: 'default', name: 'Default Deck' });
+  await db.userProfile.put({
+      id: 1,
+      xp: 0,
+      level: 1,
+      lastStreakCheck: '',
+      firstName: '',
+      lastName: '',
+      bio: '',
       profileLastUpdated: new Date().toISOString(),
       dailyGoals: {
           date: '1970-01-01',
@@ -301,4 +301,17 @@ export const resetLocalDatabase = async (): Promise<void> => {
           allCompleteAwarded: false
       }
   });
-});
+};
+
+// Pre-populate with a default deck and user profile if none exist
+(db as any).on('populate', seedDefaults);
+
+// Everything one account keeps in this browser, removed when another account
+// signs in here. Dictionary lookups are not anyone's and stay.
+export const clearAccountData = async (): Promise<void> => {
+  const tables = (db as any).tables.filter((t: any) => t.name !== 'lookups');
+  await (db as any).transaction('rw', tables, async () => {
+    for (const table of tables) await table.clear();
+    await seedDefaults();
+  });
+};

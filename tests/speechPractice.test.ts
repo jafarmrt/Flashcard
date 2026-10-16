@@ -2,9 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Flashcard, SpeechAttempt } from '../types';
 import {
-  attemptKey, cleanEvaluation, compactAttempts, dailyScores, focusSounds, itemProgress, newAttempt, pronunciationPrompt,
-  PRONUNCIATION_SCHEMA, SOUND_IDS, speechSummary, weakCardIds, weakSounds,
+  attemptKey, cleanEvaluation, compactAttempts, dailyScores, dueSchedules, focusIndexes, focusSounds, itemProgress, newAttempt,
+  pickSpeechItems, practiceSentence, pronunciationPrompt, PRONUNCIATION_SCHEMA, scheduleFor, sentenceAround, sessionResults,
+  SOUND_IDS, speechSummary, speechTokens, speechWords, weakCardIds, weakSounds,
 } from '../services/speechPractice';
+import type { Occurrence } from '../types';
 import { syncFingerprint } from '../services/syncState';
 import { nextOutgoing, freshSyncState, LocalData } from '../services/syncClient';
 
@@ -128,4 +130,135 @@ test('old tries lose their long texts but keep score, sounds and words', () => {
   assert.equal(out[0].updatedAt, at(9), 'newer, so the short copy wins on every device');
   assert.deepEqual(compactAttempts([...out, ...list.slice(2)], 3), [], 'nothing twice');
   assert.equal(weakSounds([...out, ...list.slice(2)])[0].count, 5, 'still counted');
+});
+
+// --- Words in their sentence ---
+
+const card = (over: Partial<Flashcard> = {}): Flashcard => ({
+  id: 'c1', deckId: 'd', front: 'think', back: 'فکر کردن', repetition: 1, easinessFactor: 2.5, interval: 1,
+  dueDate: at(30), createdAt: at(1), updatedAt: at(1), ...over,
+} as Flashcard);
+const occ = (over: Partial<Occurrence>): Occurrence => ({
+  id: 'o', cardId: 'c1', sourceId: 's', chapterId: 'ch', chunk: 0, createdAt: at(1), updatedAt: at(1), ...over,
+});
+
+test('a sentence is cut into numbered words with the punctuation between them', () => {
+  const tokens = speechTokens("“I don't think so,” she said.");
+  assert.deepEqual(tokens.filter(t => t.i !== undefined).map(t => t.text), ['I', "don't", 'think', 'so', 'she', 'said']);
+  assert.equal(tokens.map(t => t.text).join(''), "“I don't think so,” she said.", 'nothing is lost');
+  assert.deepEqual(speechWords('well-known, 42 cats'), ['well-known', '42', 'cats']);
+});
+
+test("the card's term is found in its sentence in any form, phrases with a word between", () => {
+  assert.deepEqual(focusIndexes('She thought about it.', 'think'), [1]);
+  assert.deepEqual(focusIndexes('They took the cost into account.', 'take something into account'), [1, 4, 5]);
+  assert.deepEqual(focusIndexes('He gave it up at last.', 'give up'), [1, 3]);
+  assert.deepEqual(focusIndexes('They took the cost of the journey into account.', 'take something into account'), [1, 7, 8], 'a long object where the placeholder stood');
+  assert.deepEqual(focusIndexes('He gave the old red book to me and then up we went.', 'give up'), [], 'no placeholder: no long gap');
+  assert.deepEqual(focusIndexes('Nothing here.', 'think'), []);
+});
+
+test('the sentence to practise: where the word was met in a book first, then the card, then its examples', () => {
+  const c = card({ sourceSentence: 'I think so.', exampleSentenceTarget: ['Think before you speak.'] });
+  const book = [occ({ sentence: 'He was thinking about the long winter ahead.', updatedAt: at(2) }), occ({ cardId: 'other', sentence: 'Not this one at all.' })];
+  assert.equal(practiceSentence(c, book), 'He was thinking about the long winter ahead.');
+  assert.equal(practiceSentence(c), 'I think so.');
+  assert.equal(practiceSentence(card({ sourceSentence: 'Think!', exampleSentenceTarget: ['Think before you speak.'] })), 'Think before you speak.', 'too short is skipped');
+  assert.equal(practiceSentence(card({ exampleSentenceTarget: ['A sentence without it here.'] })), 'A sentence without it here.', 'a sentence without the term only when nothing else');
+  assert.equal(practiceSentence(card({ sourceSentence: '', exampleSentenceTarget: [] })), '');
+});
+
+test('a long sentence is cut around the word, at a comma where there is one', () => {
+  const long = 'When the long and very cold winter finally came to the small village in the north, the old man began to think about the summer he had spent by the sea as a boy.';
+  const cut = sentenceAround(long, 'think', 16);
+  assert.ok(speechWords(cut).length <= 16, cut);
+  assert.ok(cut.includes('think'));
+  assert.ok(cut.startsWith('… the old man'), `starts after the comma: ${cut}`);
+  assert.ok(cut.endsWith(' …'));
+  assert.equal(sentenceAround('A short one to think about.', 'think'), 'A short one to think about.');
+});
+
+test('a sentence prompt numbers its words, names the learned phrase and asks for marks and parts', () => {
+  const p = pronunciationPrompt('They took the cost into account.', 'sentence', [], 'take something into account');
+  assert.match(p, /1 They \| 2 took \| 3 the \| 4 cost \| 5 into \| 6 account/);
+  assert.match(p, /"took into account" \(words 2, 5, 6\)/);
+  assert.match(p, /"marks"/);
+  assert.match(p, /"parts"/);
+  assert.match(p, /focusScore/);
+  assert.doesNotMatch(pronunciationPrompt('think', 'word'), /marks/);
+});
+
+test('word marks are kept only for real words, once each, with known statuses and sounds', () => {
+  const e = cleanEvaluation({
+    score: 70, feedback: 'خوب', issues: [], tip: ' آرام‌تر ', focusScore: '64',
+    parts: { accuracy: 80, fluency: 120, rhythm: 'x', completeness: null },
+    marks: [
+      { i: 2, status: 'WRONG', heard: 'tink', sound: 'th-voiceless' },
+      { i: 2, status: 'unclear' }, // the same word again
+      { i: 9, status: 'missed' }, // no such word
+      { i: 1, status: 'great' }, // unknown status
+      { i: 3, status: 'missed', sound: 'bogus' },
+    ],
+  }, 'I think so');
+  assert.deepEqual(e.marks, [{ i: 1, status: 'wrong', heard: 'tink', sound: 'th-voiceless' }, { i: 2, status: 'missed' }]);
+  assert.deepEqual(e.parts, { accuracy: 80, fluency: 100 });
+  assert.equal(e.focusScore, 64);
+  assert.equal(e.tip, 'آرام‌تر');
+  assert.equal('marks' in cleanEvaluation({ score: 50, feedback: '', issues: [], marks: [{ i: 1, status: 'wrong' }] }), false, 'no text, no marks');
+});
+
+// --- When an item comes back ---
+
+const tryOn = (day: number, score: number, over: Partial<SpeechAttempt> = {}) =>
+  attempt({ score, createdAt: at(day), kind: 'sentence', target: 'I think so.', ...over });
+const local = (day: number) => new Date(2026, 9, day, 12); // noon local time, like the day strings
+
+test('an item is judged by its first try of each day: weak comes back tomorrow, good ones later and later', () => {
+  const key = 'c1|sentence';
+  const day = (n: number) => `2026-10-${String(n).padStart(2, '0')}`;
+  let s = scheduleFor(key, [tryOn(1, 40), tryOn(1, 90, { createdAt: at(1, 11) })]);
+  assert.equal(s.stage, 'learning');
+  assert.equal(s.dueDay, day(3), 'a weak start that ended well: two days');
+  s = scheduleFor(key, [tryOn(1, 40), tryOn(1, 55, { createdAt: at(1, 11) })]);
+  assert.equal(s.dueDay, day(2), 'still weak: the next day');
+  s = scheduleFor(key, [tryOn(1, 40), tryOn(2, 85)]);
+  assert.deepEqual([s.stage, s.goodDays, s.dueDay], ['reviewing', 1, day(5)]);
+  s = scheduleFor(key, [tryOn(1, 40), tryOn(2, 85), tryOn(5, 90)]);
+  assert.deepEqual([s.goodDays, s.dueDay], [2, day(12)]);
+  s = scheduleFor(key, [tryOn(1, 40), tryOn(2, 85), tryOn(5, 90), tryOn(12, 88)]);
+  assert.deepEqual([s.stage, s.dueDay], ['settled', day(28)]);
+  s = scheduleFor(key, [tryOn(2, 85), tryOn(5, 90), tryOn(12, 50)]);
+  assert.deepEqual([s.stage, s.goodDays, s.dueDay], ['learning', 0, day(13)], 'a bad day starts over');
+});
+
+test('due items come weakest first; a session takes them, then a couple of new ones', () => {
+  const list = [
+    tryOn(1, 70, { cardId: 'a' }), tryOn(1, 40, { cardId: 'b' }), tryOn(1, 95, { cardId: 'c' }),
+    tryOn(1, 30, { cardId: 'gone' }),
+  ];
+  assert.deepEqual(dueSchedules(list, '2026-10-02').map(s => s.cardId), ['gone', 'b', 'a']);
+  const cards = ['a', 'b', 'c', 'n1', 'n2', 'n3'].map(id => card({ id, sourceSentence: 'I think so.' }));
+  const items = pickSpeechItems({ cards, attempts: list, kind: 'sentence', choice: 'plan', size: 4, now: local(2), random: () => 0 });
+  assert.deepEqual(items.slice(0, 2).map(i => i.card.id), ['b', 'a'], 'due ones first; a deleted card is left out; c is not due');
+  assert.ok(items.slice(2).every(i => i.card.id.startsWith('n')), 'then new ones');
+  assert.equal(items.length, 4);
+  assert.equal(items[0].target, 'I think so.');
+  assert.equal(items[0].focus, 'think');
+  const crowded = pickSpeechItems({ cards, attempts: list, kind: 'sentence', choice: 'plan', size: 2, now: local(2), random: () => 0 });
+  assert.equal(crowded.filter(i => i.card.id.startsWith('n')).length, 2, 'new ones keep their two places');
+  assert.deepEqual(pickSpeechItems({ cards, attempts: list, kind: 'sentence', choice: 'weak', now: local(2) }).map(i => i.card.id), ['b', 'a']);
+  assert.deepEqual(pickSpeechItems({ cards: [card({ id: 'w' })], attempts: [], kind: 'word', choice: 'plan' }).map(i => [i.target, i.focus]), [['think', undefined]]);
+});
+
+test('a session ends with each item: first and last score, when it comes back', () => {
+  const tried = [tryOn(3, 45, { cardId: 'a', focus: 'think' }), tryOn(3, 82, { cardId: 'a', focus: 'think', createdAt: at(3, 11) })];
+  const [r] = sessionResults(tried, tried);
+  assert.deepEqual([r.first, r.last, r.tries, r.focus, r.dueDay], [45, 82, 2, 'think', '2026-10-05']);
+});
+
+test('old tries keep their word marks without what was heard', () => {
+  const list = Array.from({ length: 3 }, (_, i) => attempt({ score: 50, createdAt: at(1, i), kind: 'sentence', tip: 'x', marks: [{ i: 1, status: 'wrong', heard: 'tink', sound: 'th-voiceless' }] }));
+  const [old] = compactAttempts(list, 2, new Date(at(9)));
+  assert.deepEqual(old.marks, [{ i: 1, status: 'wrong', sound: 'th-voiceless' }]);
+  assert.equal('tip' in old, false);
 });

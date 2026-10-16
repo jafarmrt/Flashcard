@@ -6,7 +6,7 @@ import { freeEnrich, freeTranslate, lookupFrequencies } from './freeLookup.js';
 import { lookupChain, lookupSingle, mwKey } from './dictionaries.js';
 import { cleanDictionaryRequest, DEFAULT_DICTIONARY_ORDER, DICTIONARY_IDS, DictionaryRequest, dictionarySignature } from '../services/dictionaryCatalog.js';
 import { applyChanges, changesSince, upgradeStore } from './syncStore.js';
-import { fetchPublicPage, PageFetchError } from './pageFetch.js';
+import { checkPublicHost, fetchPublicPage, PageFetchError } from './pageFetch.js';
 import { packChapter, unpackChapter } from './chapterText.js';
 import { geminiUsage, listGeminiModels, listOpenAiModels, openAiUsage } from './aiModels.js';
 import { cachedEnrich, fileLookupStore, LookupStore } from './lookupCache.js';
@@ -298,7 +298,24 @@ export function cleanAiBaseUrl(baseUrl: string | undefined): string {
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('The AI base URL must start with https://');
   if (url.username || url.password) throw new Error('Put the API key in the key field, not in the base URL.');
+  if (url.search || url.hash || raw.includes('#') || raw.includes('?')) throw new Error('The AI base URL cannot have ? or # in it.');
   return raw;
+}
+
+// The server sends requests to the base URL a user typed, so it must be on
+// the public internet: never this server, its network or a cloud metadata
+// address. A VPS running its own Ollama sets ALLOW_PRIVATE_AI_URL=true.
+export async function checkAiBaseUrl(baseUrl: string | undefined, lookup?: (host: string) => Promise<string[]>): Promise<string> {
+  const clean = cleanAiBaseUrl(baseUrl);
+  if (process.env.ALLOW_PRIVATE_AI_URL === 'true') return clean;
+  try {
+    await checkPublicHost(new URL(clean), lookup);
+  } catch (e) {
+    throw new Error(e instanceof PageFetchError && /public internet/.test(e.message)
+      ? 'The AI base URL must be a public address. A server running its own Ollama can allow private addresses with ALLOW_PRIVATE_AI_URL=true.'
+      : 'The AI base URL could not be found.');
+  }
+  return clean;
 }
 
 // --- GEMINI API HANDLER ---
@@ -357,7 +374,7 @@ async function handleGeminiGenerate(payload: any, res: ProxyResponse, apiKey: st
 async function handleOpenAiGenerate(payload: any, res: ProxyResponse, apiKey: string, baseUrl?: string) {
   let cleanBaseUrl: string;
   try {
-    cleanBaseUrl = cleanAiBaseUrl(baseUrl);
+    cleanBaseUrl = await checkAiBaseUrl(baseUrl);
   } catch (e) {
     return res.status(400).json({ error: (e as Error).message });
   }
@@ -392,7 +409,7 @@ async function handleOpenAiGenerate(payload: any, res: ProxyResponse, apiKey: st
     requestBody.response_format = { type: 'json_object' };
   }
   // OpenRouter says what each answer cost when asked.
-  if (new URL(endpoint).hostname.endsWith('openrouter.ai')) requestBody.usage = { include: true };
+  if (/(^|\.)openrouter\.ai$/.test(new URL(endpoint).hostname)) requestBody.usage = { include: true };
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -406,6 +423,7 @@ async function handleOpenAiGenerate(payload: any, res: ProxyResponse, apiKey: st
     headers,
     body: JSON.stringify(requestBody),
     signal: AbortSignal.timeout(AI_TIMEOUT_MS),
+    redirect: 'error', // a redirect could lead to an address that was not checked
   });
 
   if (!apiResponse.ok) {
@@ -552,7 +570,7 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
           if (isCustomOpenAi) {
             let baseUrl: string;
             try {
-              baseUrl = cleanAiBaseUrl(payload.aiBaseUrl);
+              baseUrl = await checkAiBaseUrl(payload.aiBaseUrl);
             } catch (e) {
               return res.status(400).json({ error: (e as Error).message });
             }

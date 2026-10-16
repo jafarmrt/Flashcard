@@ -9,6 +9,7 @@ import { testAiConnection } from '../services/geminiService';
 import { fa, Icon } from './common/ui';
 import { ModelPicker } from './ModelPicker';
 import { clearSpeechCache, speechCacheSize } from '../services/speechCache';
+import { APP_VERSION } from '../services/appVersion';
 import { AI_VOICES, aiSpeech, DEFAULT_OPENROUTER_SPEECH_MODEL, DEFAULT_SPEECH_MODEL, listSpeechModels, speechModel, speechProvider, speechVoice, type SpeechModel } from '../services/aiSpeech';
 
 interface SettingsViewProps {
@@ -25,8 +26,6 @@ interface SettingsViewProps {
     currentUser: { username: string } | null;
     onLogout: () => void;
 }
-
-const APP_VERSION = '7.0.0';
 
 // Defined outside SettingsView: a component created inside it would be a new
 // type on every render, so its inputs would lose focus after each key press.

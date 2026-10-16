@@ -1,12 +1,16 @@
 import React, { useMemo, useState } from 'react';
-import { Flashcard, SpeechAttempt } from '../types';
+import { Flashcard, Occurrence, SpeechAttempt } from '../types';
 import { AiRequestOptions, generateInstructionalQuiz, InstructionalQuizQuestion } from '../services/geminiService';
-import { soundInfo, SpeechKind, weakCardIds, weakSounds } from '../services/speechPractice';
-import { CardChoice, MicIcon, pickSpeakingCards, SpeakingMode, SpeechProgress, speakingTarget } from './practice/SpeakingPractice';
+import {
+  dueSchedules, pickSpeechItems, practiceSentence, sessionResults, SessionItemResult, soundInfo, SpeechChoice, SpeechItem,
+  SpeechKind, speechSchedules, WEAK_SCORE, weakSounds,
+} from '../services/speechPractice';
+import { dueLabel, MicIcon, SentenceMarks, SpeakingMode, SpeechProgress, scoreTone, StageChip } from './practice/SpeakingPractice';
 import { fa, Icon } from './common/ui';
 
 interface PracticeViewProps {
   cards: Flashcard[];
+  occurrences?: Occurrence[];
   awardXP: (points: number, message?: string) => void;
   onQuizComplete: (score: { score: number, total: number }) => void;
   aiOptions?: AiRequestOptions;
@@ -14,6 +18,27 @@ interface PracticeViewProps {
   speechAttempts: SpeechAttempt[];
   onSaveSpeechAttempt: (attempt: SpeechAttempt) => Promise<void> | void;
 }
+
+// What one pronunciation session did for each item, and when it comes back.
+const SessionResultList: React.FC<{ results: SessionItemResult[] }> = ({ results }) => (
+  <ul className="w-full max-w-md flex flex-col gap-2 text-right">
+    {results.map(r => (
+      <li key={r.key} className="px-3 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-700/40 flex flex-col gap-1">
+        {r.kind === 'sentence'
+          ? <SentenceMarks text={r.target} focus={r.focus} size="text-sm" />
+          : <bdi dir="ltr" className="font-en font-bold text-ink dark:text-white">{r.target}</bdi>}
+        <p className="text-xs text-ink-muted dark:text-slate-400 flex flex-wrap items-center gap-1.5">
+          <span>
+            نمره: {r.tries > 1 ? <><span className={`font-bold ${scoreTone(r.first)}`}>{fa(r.first)}</span> ← </> : null}
+            <span className={`font-bold ${scoreTone(r.last)}`}>{fa(r.last)}</span>
+          </span>
+          <span>· مرور بعد: <b className="text-ink dark:text-slate-200">{dueLabel(r.dueDay)}</b></span>
+          <StageChip stage={r.stage} />
+        </p>
+      </li>
+    ))}
+  </ul>
+);
 
 // Fix: Make the shuffle function specific to Flashcard[] to avoid generic type inference issues.
 const shuffleArray = (array: Flashcard[]): Flashcard[] => {
@@ -42,7 +67,7 @@ const StepBar: React.FC<{ label: string; value: number; total: number }> = ({ la
     </div>
 );
 
-export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQuizComplete, aiOptions, audioOptions, speechAttempts, onSaveSpeechAttempt }) => {
+export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences = [], awardXP, onQuizComplete, aiOptions, audioOptions, speechAttempts, onSaveSpeechAttempt }) => {
   type PracticeState = 'idle' | 'generating' | 'active' | 'finished';
   type Mode = 'quiz' | 'speaking' | 'progress';
 
@@ -54,28 +79,36 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
   const [isAnswered, setIsAnswered] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [speakKind, setSpeakKind] = useState<SpeechKind>('word');
-  const [cardChoice, setCardChoice] = useState<CardChoice>('mixed');
-  const [speakingCards, setSpeakingCards] = useState<Flashcard[]>([]);
+  // Words are practised in their sentence unless asked otherwise.
+  const [speakKind, setSpeakKind] = useState<SpeechKind>('sentence');
+  const [cardChoice, setCardChoice] = useState<SpeechChoice>('plan');
+  const [speakingItems, setSpeakingItems] = useState<SpeechItem[]>([]);
   const [sessionTries, setSessionTries] = useState<SpeechAttempt[]>([]);
 
   const liveCards = useMemo(() => cards.filter(c => !c.isDeleted && c.kind !== 'grammar'), [cards]);
-  const sentenceCount = useMemo(() => liveCards.filter(c => speakingTarget(c, 'sentence')).length, [liveCards]);
-  const weakCount = useMemo(() => {
-    const ids = new Set(liveCards.filter(c => speakingTarget(c, speakKind)).map(c => c.id));
-    return weakCardIds(speechAttempts.filter(a => a.kind === speakKind)).filter(id => ids.has(id)).length;
-  }, [liveCards, speechAttempts, speakKind]);
+  const liveIds = useMemo(() => new Set(liveCards.map(c => c.id)), [liveCards]);
+  const sentenceCount = useMemo(() => liveCards.filter(c => practiceSentence(c, occurrences)).length, [liveCards, occurrences]);
+  const counts = useMemo(() => {
+    const ofKind = speechAttempts.filter(a => a.kind === speakKind);
+    const mine = (cardId?: string) => !!cardId && liveIds.has(cardId);
+    return {
+      weak: speechSchedules(ofKind).filter(s => mine(s.cardId) && s.lastScore < WEAK_SCORE).length,
+      due: dueSchedules(ofKind).filter(s => mine(s.cardId)).length,
+    };
+  }, [speechAttempts, speakKind, liveIds]);
 
-  const startSpeaking = (kind: SpeechKind = speakKind, choice: CardChoice = cardChoice) => {
+  const startSpeaking = (kind: SpeechKind = speakKind, choice: SpeechChoice = cardChoice) => {
     setErrorMessage(null);
-    const picked = pickSpeakingCards(cards, speechAttempts, kind, choice);
+    const picked = pickSpeechItems({ cards, attempts: speechAttempts, occurrences, kind, choice });
     if (picked.length === 0) {
-      setErrorMessage(kind === 'sentence' ? 'هیچ کارتی جملهٔ نمونه ندارد.' : choice === 'weak' ? 'واژهٔ ضعیفی نمانده؛ آفرین!' : 'کارتی برای تمرین نیست.');
+      setErrorMessage(kind === 'sentence' && choice === 'plan' && sentenceCount === 0
+        ? 'هیچ کارتی جمله ندارد؛ واژه‌ها را از کتاب‌ها بساز یا جملهٔ نمونه به کارت‌ها اضافه کن.'
+        : choice === 'weak' ? 'مورد ضعیفی نمانده؛ آفرین!' : 'برای امروز چیزی نمانده؛ آفرین!');
       return;
     }
     setSpeakKind(kind);
     setCardChoice(choice);
-    setSpeakingCards(picked);
+    setSpeakingItems(picked);
     setSessionTries([]);
     setMode('speaking');
     setPracticeState('active');
@@ -219,7 +252,8 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
           </div>
 
           {mode === 'progress' ? (
-              <SpeechProgress attempts={speechAttempts} weakCount={weakCount} onPracticeWeak={() => startSpeaking(speakKind, 'weak')} />
+              <SpeechProgress attempts={speechAttempts} weakCount={counts.weak} dueCount={counts.due}
+                onPracticeWeak={() => startSpeaking(speakKind, 'weak')} onPracticeDue={() => startSpeaking(speakKind, 'plan')} />
           ) : (
           <section className={`${panel} flex flex-col items-center text-center gap-3`}>
             <span className="w-14 h-14 rounded-2xl bg-brand-100 text-brand-600 dark:bg-brand-900/60 dark:text-brand-200 flex items-center justify-center">
@@ -231,17 +265,17 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
             <p className="text-ink-muted dark:text-slate-400 max-w-md leading-relaxed">
                 {mode === 'quiz'
                     ? 'هوش مصنوعی با چند واژهٔ تازه‌ات جمله می‌سازد و جای واژه را خالی می‌گذارد؛ از میان چهار گزینه، واژهٔ درست را انتخاب کن.'
-                    : 'بلند بخوان؛ Gemini صدایت را می‌شنود، از ۱۰۰ نمره می‌دهد و می‌گوید کدام صدا را در کدام واژه اشتباه گفتی و چطور درستش کنی. هر تلاش در «پیشرفت تلفظ» می‌ماند.'}
+                    : 'واژه‌هایت را در همان جمله‌ای که در کتاب دیدی بلند بخوان. Gemini کل جمله را می‌شنود و واژه‌به‌واژه نشان می‌دهد کدام درست، کدام نامفهوم و کدام اشتباه بود؛ روانی، تکیه و آهنگ جمله را هم نمره می‌دهد. هر مورد سر وقتش برای مرور برمی‌گردد.'}
             </p>
             {mode === 'speaking' && (
                 <div className="flex flex-col gap-3 items-center mt-1">
                     <div role="group" aria-label="چه بخوانم" className="flex flex-wrap justify-center gap-2">
-                        {choice<SpeechKind>(speakKind, 'word', setSpeakKind, 'واژه')}
-                        {choice<SpeechKind>(speakKind, 'sentence', setSpeakKind, <>جملهٔ نمونه ({fa(sentenceCount)})</>, sentenceCount === 0)}
+                        {choice<SpeechKind>(speakKind, 'sentence', setSpeakKind, <>واژه در جمله ({fa(sentenceCount)})</>, sentenceCount === 0)}
+                        {choice<SpeechKind>(speakKind, 'word', setSpeakKind, 'فقط واژه')}
                     </div>
-                    <div role="group" aria-label="کدام کارت‌ها" className="flex flex-wrap justify-center gap-2">
-                        {choice<CardChoice>(cardChoice, 'mixed', setCardChoice, 'کارت‌های تازه و رسیده')}
-                        {choice<CardChoice>(cardChoice, 'weak', setCardChoice, <>واژه‌های ضعیف ({fa(weakCount)})</>, weakCount === 0)}
+                    <div role="group" aria-label="کدام موردها" className="flex flex-wrap justify-center gap-2">
+                        {choice<SpeechChoice>(cardChoice, 'plan', setCardChoice, counts.due > 0 ? <>برنامهٔ امروز: {fa(counts.due)} مرور + تازه‌ها</> : 'برنامهٔ امروز: موردهای تازه')}
+                        {choice<SpeechChoice>(cardChoice, 'weak', setCardChoice, <>موردهای ضعیف ({fa(counts.weak)})</>, counts.weak === 0)}
                     </div>
                 </div>
             )}
@@ -260,9 +294,10 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
   }
 
   if (practiceState === 'finished') {
-       // What still went wrong in each card's last try of the session.
-       const lastTries = Array.from(new Map<string, SpeechAttempt>(sessionTries.map(t => [t.cardId || t.target, t])).values());
+       // What still went wrong in each item's last try of the session.
+       const lastTries = Array.from(new Map<string, SpeechAttempt>(sessionTries.map(t => [`${t.cardId || t.target}|${t.kind}`, t])).values());
        const sessionSounds = mode === 'speaking' ? weakSounds(lastTries, lastTries.length) : [];
+       const results = mode === 'speaking' ? sessionResults(speechAttempts, sessionTries) : [];
        return (
         <Shell>
             <section className={`${panel} text-center py-12 flex flex-col items-center gap-2`}>
@@ -285,6 +320,12 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
                         </ul>
                     </div>
                 )}
+                {results.length > 0 && (
+                    <div className="w-full max-w-md flex flex-col items-stretch gap-2 mb-4">
+                        <p className="text-sm font-bold text-ink dark:text-white text-right">موردهای این تمرین و مرور بعدشان</p>
+                        <SessionResultList results={results} />
+                    </div>
+                )}
                 <div className="flex flex-wrap justify-center gap-2">
                     {mode === 'speaking' && (
                         <button type="button" onClick={() => { setMode('progress'); setPracticeState('idle'); }} className={secondaryButton}>
@@ -302,7 +343,7 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, awardXP, onQu
 
   // Render Speaking Mode
   if (mode === 'speaking' && practiceState === 'active') {
-      return <Shell><SpeakingMode sessionCards={speakingCards} kind={speakKind} attempts={speechAttempts} onSaveAttempt={onSaveSpeechAttempt} onFinish={handleSpeakingFinish} audioOptions={audioOptions} /></Shell>;
+      return <Shell><SpeakingMode items={speakingItems} attempts={speechAttempts} onSaveAttempt={onSaveSpeechAttempt} onFinish={handleSpeakingFinish} audioOptions={audioOptions} /></Shell>;
   }
 
   // Render Quiz Mode

@@ -137,7 +137,7 @@ export const evaluatePronunciation = async (
   audioBase64: string,
   mimeType: string,
   options?: AiRequestOptions,
-  how: { kind?: SpeechKind; weak?: string[] } = {},
+  how: { kind?: SpeechKind; weak?: string[]; focus?: string } = {},
 ): Promise<PronunciationResult> => {
   try {
     const audioPart = {
@@ -146,7 +146,7 @@ export const evaluatePronunciation = async (
         data: audioBase64,
       },
     };
-    const textPart = { text: pronunciationPrompt(target, how.kind || 'word', how.weak) };
+    const textPart = { text: pronunciationPrompt(target, how.kind || 'word', how.weak, how.focus) };
     // Only Gemini hears audio: the other services are not asked.
     const response = await aiGenerate({ ...options, aiProvider: 'gemini', fallbacks: undefined }, {
       contents: { parts: [textPart, audioPart] },
@@ -156,7 +156,7 @@ export const evaluatePronunciation = async (
       }
     }, 'pronunciation');
 
-    return cleanEvaluation(parseJsonFromAiResponse(response.text));
+    return cleanEvaluation(parseJsonFromAiResponse(response.text), target);
   } catch (error) {
     console.error("Error evaluating pronunciation:", error);
     throw error;

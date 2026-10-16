@@ -2,7 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
-## [7.1.0] - Books: Reviews, Difficulty and Progress
+This file is the one place a version is written: the app reads its version,
+the changes page and the "new version" notice from the newest entry, and a
+test keeps `package.json` on the same version. Every change that reaches
+users gets an entry here in the same commit, as
+`## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
+feature raises the middle number, fixes alone raise the last one.
+
+## [7.4.0] - 2026-10-16 - Safer Sign-out, Versions and Pronunciation in Sentences
+- **Accounts:** Signing out first sends what changed on this browser and warns if something could not reach the server. When another account signs in on the same browser, the previous account's cards are cleared from it first; before, they were uploaded into the new account.
+- **Security:** Article links written as an IPv6 address (`[::ffff:127.0.0.1]` and the like) can no longer reach the server itself or its network.
+- **Security:** The base URL of a custom AI service must be a public address, and its redirects are not followed. A VPS running its own Ollama allows private addresses with `ALLOW_PRIVATE_AI_URL=true`.
+- **Versions:** The version in Settings and the changes page are read from this file, so they always match what is installed; the page lists every release with its date. After an update the app says once which version arrived.
+- **Pronunciation in sentences:** A word is now practised inside the sentence it was met in (from the book first, then the card's own sentence or example; a long one is cut around the word). The word is underlined, its meaning is a tap away, and the sentence can be heard first, slowly, or the word alone.
+- **Feedback on the whole sentence:** The sentence comes back word by word in colour (right, unclear, wrong, left out) with what each wrong word sounded like, four part scores (sounds, fluency, stress and rhythm, completeness), a separate score for the card's word, and one thing to do on the next try.
+- **Pronunciation that comes back:** Each item has its own review schedule, worked out from its tries: the first try of a day decides it; a weak one comes back the next day, a good one after 3, 7, 16 and 35 days, and three good days in a row make it settled. Today's plan takes the items due first, then a couple of new ones; a try below 60 is asked once more at the end of the same session.
+- **Practice history:** The progress page shows learning, settling and settled items, what is due today, and every try with its marked sentence; a session ends with each item's first and last score and when it comes back.
+
+## [7.3.0] - 2026-10-11 - Reading Aloud and Pronunciation Feedback
+- **Read aloud:** A section can be read aloud by the device voice or an AI voice (Gemini or OpenRouter speech models), goes on from where it was paused, and a paragraph can be translated. AI audio is kept on the device.
+- **Pronunciation:** Practice names the sounds that went wrong, keeps every try with the AI's feedback (synced between devices) and shows progress by day and the weakest cards.
+- **Improve cards with AI:** Pick the parts to fill (empty only, or rewrite), the service and how many cards, then tick the changes to keep. A new reference part explains historical and literary allusions.
+- **Cards page:** Says what the fill buttons use and that they only fill empty parts, and asks before filling all.
+
+## [7.2.0] - 2026-10-10 - Richer Cards, Dictionaries and Keys on Every Device
+- **Keys:** AI and dictionary keys follow the account, encrypted on the server, so a key typed once works on every device; they leave the browser on sign-out.
+- **Richer cards:** Synonyms with how they differ, a common mistake, register, word family and root, and fresh help for stubborn cards. A card can be refilled from a chosen AI service or dictionary with a preview, and edited from any screen.
+- **Dictionaries:** Set up in Settings like the AI services, in the order you choose; idioms, collocations, expressions and slang become their own kinds of card.
+- **AI models:** Picked from each service's own list, and a token report by day, week and month.
+- **Reliability:** The browser database and sync say why they failed and offer a repair; every browser starts afresh once; sign-in errors show on the sign-in screen; a 500 on every request on Vercel was fixed.
+
+## [7.1.0] - 2026-10-09 - Books: Reviews, Difficulty and Progress
 - **Review by book:** Each book and chapter reviews its own cards (due ones first, else the weakest); a chapter's hard words can be pre-studied before reading it.
 - **Gap in the sentence:** A new review mode («جای خالی») leaves the word out of the book's sentence; a typo or another form counts as close.
 - **Difficulty:** A book's page shows how many of its words you know, new words per section and the text's level, measured once with a 400-word sample.
@@ -10,7 +40,7 @@ All notable changes to this project will be documented in this file.
 - **Stats:** Rewritten in Persian, with each book's words over time and the hardest words to review.
 - **Persian everywhere:** Decks, the word list, the card form, bulk add, review setup, badges, profile and all messages.
 
-## [7.0.0] - Library, Reading Mode and Checks
+## [7.0.0] - 2026-10-09 - Library, Reading Mode and Checks
 - **Library:** Books (EPUB), articles (a link) and texts in one library, read section by section, with the place every card came from and which service made it.
 - **Reading:** A tap gives the meaning in the sentence; drag over words for a phrase or a sentence (meaning, grammar, translation); «بلدم» takes a word off the suggestions for good; words are underlined by how well you know them; a section's hard words can be shown before reading it.
 - **AI services:** Several services in the order you choose, each with its own key; when one fails the next is asked, then the free dictionaries. A usage page shows requests, failures, cards per service, the free translation quota and data size.
@@ -19,7 +49,7 @@ All notable changes to this project will be documented in this file.
 - **Settings:** Now in Persian.
 - **Matching:** A card's term is found in a text without its placeholders («take something into account» finds «took the cost into account») and in irregular plurals («children» for «child»).
 
-## [6.0.0] - New Look: Today Screen, Reading Path & Fairer Rewards
+## [6.0.0] - 2026-10-08 - New Look: Today Screen, Reading Path & Fairer Rewards
 - **Design:** A Persian, right-to-left interface with the Vazirmatn font; English words and texts stay left-to-right. Older screens (decks, card list, settings, stats, practice) keep their English layout inside the new frame.
 - **Design:** On a computer a side menu lists every section (Today, Review, Practice, Texts, Words, Stats, Settings) with quick-add buttons and the sync status. On a phone there are four tabs (Today, Texts, Words, Me) and an add button.
 - **Feature:** The Today screen is the new home: a daily goal ring with one Start Review button for all due cards, typing and practice shortcuts, this week's streak days, a "word garden" of mastery stages, and the text you are reading.
@@ -30,13 +60,13 @@ All notable changes to this project will be documented in this file.
 - **Gamification:** Streak freezes: every third finished section gives one (you can hold two), and a freeze covers a missed day automatically so the streak survives.
 - **Words:** Each card has a mastery stage from its FSRS stability: seed, sprout, sapling, tree, rooted.
 
-## [5.4.0] - FSRS Scheduling
+## [5.4.0] - 2026-10-08 - FSRS Scheduling
 - **Feature:** Reviews are now scheduled with FSRS-5, which tracks how well you know each card (stability and difficulty) and shows it again just before you are likely to forget it, aiming for 90% recall. It needs noticeably fewer reviews than the old SM-2 rule for the same retention.
 - **Feature:** A fourth answer button, **Hard**, sits between Again and Good. Each button shows when the card will come back (for example `3d`, `2mo`).
 - **Improvement:** Existing cards keep their schedule: their current interval and easiness are converted to FSRS the first time you review them.
 - **Fix:** A card answered "Again" and repeated in the same session now continues from that answer instead of being scored twice from its old state.
 
-## [5.3.0] - Long Texts, Richer Cards & Free Dictionary Mode
+## [5.3.0] - 2026-10-08 - Long Texts, Richer Cards & Free Dictionary Mode
 - **Feature:** Long texts are split into sections of at most 300 words on sentence boundaries; each section is analysed on its own with a progress bar and a Stop button, and the results are merged without repeats.
 - **Feature:** Terms that already have a card are excluded from the AI request and flagged ("قبلاً کارت دارد") instead of being added again.
 - **Feature:** Cards now keep the exact sentence of your text, 3-5 common expressions that use the term (each with a listen button), a type (word, phrase, idiom, grammar) and, for grammar structures, the pattern and a sentence-building exercise. Every sentence and expression on a study card can be read aloud.
