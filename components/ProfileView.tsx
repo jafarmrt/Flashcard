@@ -15,7 +15,7 @@ interface ProfileViewProps {
 
 const input = 'w-full min-h-[44px] px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 focus:border-brand-500 focus:outline-none';
 
-export const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, streak, earnedAchievements, onSave, onBack, onNavigateToAchievements }) => {
+export const ProfileView: React.FC<ProfileViewProps & { playful?: boolean }> = ({ userProfile, streak, earnedAchievements, onSave, onBack, onNavigateToAchievements, playful = false }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState<Partial<UserProfile>>({ firstName: '', lastName: '', bio: '' });
 
@@ -61,7 +61,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, streak, e
           </span>
           <div className="flex-1 min-w-[10rem]">
             <h2 dir="auto" className="text-2xl font-extrabold text-ink dark:text-white">{fullName}</h2>
-            <p className="text-ink-muted dark:text-slate-400">سطح {fa(level.level)}</p>
+            {playful && <p className="text-ink-muted dark:text-slate-400">سطح {fa(level.level)}</p>}
           </div>
           {!isEditing && (
             <button type="button" onClick={() => setIsEditing(true)} className="min-h-[44px] px-4 rounded-xl border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 font-bold">ویرایش نمایه</button>
@@ -95,7 +95,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, streak, e
         )}
       </section>
 
-      <section className="grid grid-cols-2 gap-3">
+      {playful && <><section className="grid grid-cols-2 gap-3">
         <div className="bg-white dark:bg-slate-800 rounded-3xl p-4 flex flex-col gap-1">
           <p className="text-2xl font-extrabold text-flame-500 dark:text-orange-300 flex items-center gap-1.5"><Icon.Flame size={22} />{fa(streak)} روز</p>
           <p className="text-xs text-ink-muted dark:text-slate-400">زنجیرهٔ مطالعه</p>
@@ -126,7 +126,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, streak, e
         ) : (
           <p className="text-sm text-ink-muted dark:text-slate-400">هنوز نشانی نگرفته‌ای؛ با خواندن و مرور ادامه بده.</p>
         )}
-      </section>
+      </section></>}
     </div>
   );
 };

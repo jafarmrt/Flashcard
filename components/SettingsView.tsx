@@ -10,6 +10,7 @@ import { fa, Icon } from './common/ui';
 import { ModelPicker } from './ModelPicker';
 import { clearSpeechCache, speechCacheSize } from '../services/speechCache';
 import { APP_VERSION } from '../services/appVersion';
+import { callProxy } from '../services/apiService';
 import { AI_VOICES, aiSpeech, DEFAULT_OPENROUTER_SPEECH_MODEL, DEFAULT_SPEECH_MODEL, listSpeechModels, speechModel, speechProvider, speechVoice, type SpeechModel } from '../services/aiSpeech';
 
 interface SettingsViewProps {
@@ -584,6 +585,111 @@ const PronunciationSettings: React.FC<{ settings: Settings; onUpdateSettings: (s
     );
 };
 
+type TelegramStatus = { available: boolean; bot?: string; linked?: boolean; words?: number; paused?: boolean };
+
+// The daily review in Telegram: link the account once (a one-time link that
+// opens the bot), then pick how many words a day.
+const TelegramSettings: React.FC = () => {
+    const [status, setStatus] = useState<TelegramStatus | null>(null);
+    const [error, setError] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [link, setLink] = useState('');
+    const [note, setNote] = useState('');
+    const tz = -new Date().getTimezoneOffset();
+
+    const load = async () => {
+        try {
+            const s: TelegramStatus = await callProxy('telegram-status', {});
+            setStatus(s);
+            setError('');
+            return s;
+        } catch (e) {
+            setError((e as Error).message || 'وضعیت تلگرام نیامد.');
+            return null;
+        }
+    };
+    useEffect(() => { load(); }, []);
+
+    // After the link opens Telegram, the page waits a little for the bot to
+    // say the account is linked.
+    useEffect(() => {
+        if (!link || status?.linked) return;
+        let tries = 0;
+        const timer = setInterval(async () => {
+            tries++;
+            const s = await load();
+            if (s?.linked || tries > 40) { clearInterval(timer); if (s?.linked) setLink(''); }
+        }, 3000);
+        return () => clearInterval(timer);
+    }, [link, status?.linked]);
+
+    const run = async (work: () => Promise<void>) => {
+        setBusy(true);
+        setError('');
+        try { await work(); } catch (e) { setError((e as Error).message || 'نشد. دوباره امتحان کن.'); } finally { setBusy(false); }
+    };
+    const connect = () => run(async () => {
+        const r = await callProxy('telegram-link', { tz });
+        setLink(r.link);
+        window.open(r.link, '_blank', 'noopener');
+    });
+    const update = (fields: { words?: number; paused?: boolean }) => run(async () => {
+        const r = await callProxy('telegram-update', { ...fields, tz });
+        setStatus(s => ({ ...(s || { available: true }), ...r }));
+    });
+    const sendNow = () => run(async () => {
+        const r = await callProxy('telegram-send', {});
+        setNote(r.result === 'empty' ? 'امروز کارتی برای مرور نبود.' : 'فرستاده شد؛ تلگرام را باز کن.');
+    });
+    const disconnect = () => run(async () => {
+        if (!confirm('اتصال تلگرام برداشته شود؟')) return;
+        await callProxy('telegram-unlink', {});
+        setStatus(s => ({ ...(s || { available: true }), linked: false }));
+    });
+
+    if (!status) return <Row title="مرور روزانه در تلگرام" hint={error || 'در حال خواندن وضعیت…'}><span /></Row>;
+    if (!status.available) {
+        return (
+            <Row title="مرور روزانه در تلگرام" hint="روی سرور تنظیم نشده است. یک ربات از ‎@BotFather‎ بساز و توکنش را به نام TELEGRAM_BOT_TOKEN در تنظیمات Vercel (Environment Variables) بگذار؛ برای فرستادن خودکار هر روز، CRON_SECRET را هم با یک رمز دلخواه بگذار.">
+                <span className="text-sm text-ink-muted dark:text-slate-400">غیرفعال</span>
+            </Row>
+        );
+    }
+    return (
+        <>
+            <Row title="مرور روزانه در تلگرام" hint={status.linked
+                ? `هر روز حدود ساعت ۸ صبح چند واژه از کارت‌هایت${status.bot ? ` در ‎@${status.bot}‎` : ''} می‌آید: واژه در جملهٔ کتاب، معنی با یک دکمه، و امتیاز مثل همین برنامه. در ربات /review هر وقت خواستی مرور می‌کنی.`
+                : 'هر روز ۵ تا ۱۰ واژه از کارت‌هایت را در تلگرام مرور کن؛ امتیازها به همین برنامه برمی‌گردد. یک بار وصل کن.'}>
+                {status.linked ? (
+                    <div className="flex flex-wrap gap-2">
+                        <button type="button" disabled={busy} onClick={sendNow} className={button}>همین حالا بفرست</button>
+                        <button type="button" disabled={busy} onClick={disconnect} className={`${button} text-red-700 dark:text-red-300`}>قطع اتصال</button>
+                    </div>
+                ) : (
+                    <button type="button" disabled={busy} onClick={connect} className="min-h-[40px] px-4 rounded-xl text-sm font-bold bg-sky-600 hover:bg-sky-700 text-white disabled:opacity-60">وصل کردن تلگرام</button>
+                )}
+            </Row>
+            {link && !status.linked && (
+                <p className="px-5 pb-3 text-sm text-ink-muted dark:text-slate-400">
+                    اگر تلگرام باز نشد، این پیوند را باز کن و «Start» را بزن (تا ۱۵ دقیقه معتبر است): <a href={link} target="_blank" rel="noopener noreferrer" dir="ltr" className="font-en text-brand-600 dark:text-brand-300 break-all">{link}</a>
+                </p>
+            )}
+            {status.linked && (
+                <>
+                    <Row title="تعداد واژه در روز" hint="واژه‌های موعددار اول می‌آیند، بعد کارت‌های تازه.">
+                        <Segmented label="تعداد واژه در روز" value={status.words || 7} onChange={words => update({ words })}
+                            options={[5, 6, 7, 8, 9, 10].map(n => ({ value: n, label: fa(n) }))} />
+                    </Row>
+                    <Row title="فرستادن خودکار هر روز" hint="خاموش باشد، فقط وقتی در ربات /review بزنی می‌آید.">
+                        <input type="checkbox" checked={!status.paused} disabled={busy} onChange={e => update({ paused: !e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="فرستادن خودکار هر روز" />
+                    </Row>
+                </>
+            )}
+            {(error || note) && <p role={error ? 'alert' : 'status'} className={`px-5 pb-4 text-sm ${error ? 'text-red-700 dark:text-red-300' : 'text-emerald-700 dark:text-emerald-300'}`}>{error || note}</p>}
+        </>
+    );
+};
+
 const SettingsView: React.FC<SettingsViewProps> = ({
     settings, onUpdateSettings, onExportCSV, onImportCSV, onResetApp, onDeleteAllCards, onNavigateToChangelog, onNavigateToAchievements,
     onNavigateToProfile, onNavigateToUsage, currentUser, onLogout,
@@ -619,10 +725,20 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                         {LEVELS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
                     </select>
                 </Row>
-                <Row title="هدف روزانهٔ مرور" hint="تعداد مرور در روز برای حلقهٔ هدف در صفحهٔ امروز؛ هر بخشی که می‌خوانی ۵ مرور حساب می‌شود. تغییر از همین امروز حساب می‌شود، مگر هدف امروز کامل شده باشد.">
+                <Row title="معنی بالای واژه‌های کارت‌دار" hint="هنگام خواندن، معنی کوتاه کارت خودت با خط ریز بالای واژه نوشته می‌شود تا لازم نباشد رویش بزنی؛ وقتی واژه را یاد گرفتی، خودش کنار می‌رود.">
+                    <Segmented label="معنی بالای واژه" value={settings.readerGloss || 'new'} onChange={readerGloss => onUpdateSettings({ readerGloss })}
+                        options={[{ value: 'off', label: 'هیچ‌کدام' }, { value: 'new', label: 'واژه‌های تازه' }, { value: 'learning', label: 'تا وقتی آشنا شود' }]} />
+                </Row>
+                <Row title="باز شدن برنامه روی کتاب" hint="با باز کردن برنامه، مستقیم به صفحه‌ای از کتاب بروی که آن‌جا ماندی.">
+                    <input type="checkbox" checked={!!settings.openBookOnStart} onChange={e => onUpdateSettings({ openBookOnStart: e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="باز شدن برنامه روی کتاب" />
+                </Row>
+                <Row title="امتیاز، سطح، زنجیره و نشان‌ها" hint="خاموش (حالت آرام): پیشرفت به شکل خواندن و یادگیری نشان داده می‌شود. روشن: امتیاز، سطح، زنجیرهٔ روزها، پیاپی‌ها، نشان‌ها و جشن پایان هدف هم دیده می‌شوند. چیزی پاک نمی‌شود؛ امتیازها در هر دو حالت شمرده می‌شوند.">
+                    <input type="checkbox" checked={!!settings.playful} onChange={e => onUpdateSettings({ playful: e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="امتیاز، سطح، زنجیره و نشان‌ها" />
+                </Row>
+                {settings.playful && <Row title="هدف روزانهٔ مرور" hint="تعداد مرور در روز برای حلقهٔ هدف در صفحهٔ امروز؛ هر بخشی که می‌خوانی ۵ مرور حساب می‌شود. تغییر از همین امروز حساب می‌شود، مگر هدف امروز کامل شده باشد.">
                     <Segmented label="هدف روزانه" value={settings.dailyReviewGoal || 20} onChange={goal => onUpdateSettings({ dailyReviewGoal: goal })}
                         options={[10, 20, 30, 50].map(n => ({ value: n, label: fa(n) }))} />
-                </Row>
+                </Row>}
                 <ExtractKinds settings={settings} onUpdateSettings={onUpdateSettings} />
                 <Row title="پیش‌خوانی خودکار" hint="پیش از هر بخش کتاب، واژه‌های سخت آن یک بار نشان داده شود.">
                     <input type="checkbox" checked={!!settings.preReadAuto} onChange={e => onUpdateSettings({ preReadAuto: e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="پیش‌خوانی خودکار" />
@@ -632,6 +748,10 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                 <Row title="نشان دادن ساختارهای دستوری" hint="واژه‌هایی که یک ساختار دستوری می‌سازند، هنگام خواندن با نقطه‌چین مشخص شوند.">
                     <input type="checkbox" checked={!settings.hideGrammar} onChange={e => onUpdateSettings({ hideGrammar: !e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="نشان دادن ساختارهای دستوری" />
                 </Row>
+            </Card>
+
+            <Card title="تلگرام">
+                <TelegramSettings />
             </Card>
 
             <Card title="سرویس‌های هوش مصنوعی">
@@ -689,9 +809,9 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                 <Row title="پروفایل" hint="نام، معرفی و پیشرفت.">
                     <button type="button" onClick={onNavigateToProfile} className={button}>پروفایل</button>
                 </Row>
-                <Row title="نشان‌ها" hint="نشان‌ها و رکوردهایی که گرفته‌ای.">
+                {settings.playful && <Row title="نشان‌ها" hint="نشان‌ها و رکوردهایی که گرفته‌ای.">
                     <button type="button" onClick={onNavigateToAchievements} className={button}>نشان‌ها</button>
-                </Row>
+                </Row>}
                 <Row title="نسخهٔ برنامه" hint="تغییرات هر نسخه.">
                     <div className="flex items-center gap-2">
                         <span dir="ltr" className="font-en text-sm rounded-full bg-slate-100 dark:bg-slate-700 px-3 py-1">{APP_VERSION}</span>

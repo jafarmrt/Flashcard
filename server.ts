@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import { handleProxy } from './server/api';
+import { handleProxy, handleTelegram, startTelegramWorker } from './server/api';
 
 dotenv.config();
 
@@ -22,6 +22,9 @@ app.set('trust proxy', 'loopback');
 app.use(express.json({ limit: '50mb' }));
 
 app.post('/api/proxy', (req, res) => handleProxy(req, res));
+// Telegram's updates (webhook) and a cron, as on Vercel (api/telegram.ts).
+app.all('/api/telegram', (req, res) => handleTelegram(req, res));
+startTelegramWorker();
 
 
 // Setup Vite dev server or static file serving

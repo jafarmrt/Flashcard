@@ -1,9 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { db } from '../services/localDBService';
-import type { Flashcard, Occurrence, Source, StudyLog } from '../types';
+import type { Chapter, Flashcard, KnownWord, Occurrence, Source, StudyLog } from '../types';
 import { calculateStreak } from '../services/gamificationService';
 import { stageCounts, STAGE_NAMES, type MasteryStage } from '../services/masteryService';
-import { bookGrowth, hardestWords, isLearned, reviewsPerDay, type BookGrowth } from '../services/readingStats';
+import { bookGrowth, hardestWords, isLearned, readingSummary, reviewsPerDay, yearGrid, type BookGrowth } from '../services/readingStats';
+import { lastDays, minutes as toMinutes, readingByDay, totalOf, wordsPerMinute } from '../services/readingTime';
+import { chaptersOf, sourceProgress } from '../services/library';
+import { coverageOf, knownByFrom, savedProfile } from '../services/coverage';
 import { fa, Icon } from './common/ui';
 
 interface StatsViewProps {
@@ -12,6 +15,10 @@ interface StatsViewProps {
   occurrences: Occurrence[];
   onReviewCards: (ids: string[]) => void;
   onOpenSource: (sourceId: string) => void;
+  chapters?: Chapter[];
+  knownWords?: KnownWord[];
+  userLevel?: string;
+  playful?: boolean; // the streak tile (services/calm)
 }
 
 const WEEKS = 12;
@@ -38,16 +45,33 @@ const Tile: React.FC<{ value: string; label: string; tone?: string }> = ({ value
 );
 
 // Reviews per day, last 30 days; today is the last bar (on the left in RTL).
-const ActivityBars: React.FC<{ days: { day: string; count: number }[] }> = ({ days }) => {
+const ActivityBars: React.FC<{ days: { day: string; count: number }[]; unit?: string }> = ({ days, unit = 'مرور' }) => {
   const max = Math.max(1, ...days.map(d => d.count));
   return (
-    <div className="flex items-end gap-[3px] h-28" role="img" aria-label={`مرورهای ${fa(days.length)} روز اخیر`}>
+    <div className="flex items-end gap-[3px] h-28" role="img" aria-label={`${unit} در ${fa(days.length)} روز اخیر`}>
       {days.map((d, i) => (
-        <div key={d.day} className="flex-1 h-full flex items-end" title={`${d.day}: ${fa(d.count)} مرور`}>
+        <div key={d.day} className="flex-1 h-full flex items-end" title={`${d.day}: ${fa(d.count)} ${unit}`}>
           <div className={`w-full rounded-t ${i === days.length - 1 ? 'bg-brand-500' : d.count ? 'bg-brand-200 dark:bg-brand-800' : 'bg-slate-100 dark:bg-slate-700'}`}
             style={{ height: `${d.count ? Math.max(8, (d.count / max) * 100) : 4}%` }} />
         </div>
       ))}
+    </div>
+  );
+};
+
+// A year of reading, one square a day, Saturday at the top; the newest week
+// on the left (RTL).
+const YearLog: React.FC<{ grid: ({ day: string; minutes: number } | null)[][] }> = ({ grid }) => {
+  const shade = (m: number) => (m <= 0 ? 'bg-slate-100 dark:bg-slate-700' : m < 10 ? 'bg-emerald-200 dark:bg-emerald-900' : m < 25 ? 'bg-emerald-400 dark:bg-emerald-700' : 'bg-emerald-600 dark:bg-emerald-500');
+  return (
+    <div className="overflow-x-auto -mx-1 px-1">
+      <div className="flex gap-[3px] w-max" role="img" aria-label="کارنامهٔ خواندن در یک سال اخیر">
+        {grid.map((week, w) => (
+          <div key={w} className="flex flex-col gap-[3px]">
+            {week.map((d, i) => <span key={i} title={d ? `${d.day}: ${fa(d.minutes)} دقیقه` : undefined} className={`w-3 h-3 rounded-[3px] ${d ? shade(d.minutes) : 'opacity-0'}`} />)}
+          </div>
+        ))}
+      </div>
     </div>
   );
 };
@@ -76,7 +100,7 @@ const GrowthChart: React.FC<{ books: BookGrowth[] }> = ({ books }) => {
   );
 };
 
-export const StatsView: React.FC<StatsViewProps> = ({ cards, sources, occurrences, onReviewCards, onOpenSource }) => {
+export const StatsView: React.FC<StatsViewProps> = ({ cards, sources, occurrences, onReviewCards, onOpenSource, chapters = [], knownWords = [], userLevel, playful = false }) => {
   const [logs, setLogs] = useState<StudyLog[] | null>(null);
   const [streak, setStreak] = useState(0);
 
@@ -98,6 +122,25 @@ export const StatsView: React.FC<StatsViewProps> = ({ cards, sources, occurrence
   const hardest = useMemo(() => (logs ? hardestWords(logs, live, 10) : []), [logs, live]);
   const stages = useMemo(() => stageCounts(live), [live]);
   const learned = useMemo(() => live.filter(isLearned).length, [live]);
+  const summary = useMemo(() => readingSummary(sources, chapters, occurrences), [sources, chapters, occurrences]);
+  const readDays = useMemo(() => readingByDay(sources.filter(s => !s.isDeleted)), [sources]);
+  const readMonth = useMemo(() => lastDays(30).map(day => ({ day, count: toMinutes(readDays.get(day)?.ms || 0) })), [readDays]);
+  const year = useMemo(() => yearGrid(new Map(Array.from(readDays, ([d, r]) => [d, toMinutes(r.ms)] as [string, number]))), [readDays]);
+  const yearTotals = useMemo(() => {
+    const days = year.flat().filter((d): d is { day: string; minutes: number } => !!d);
+    return { minutes: days.reduce((n, d) => n + d.minutes, 0), days: days.filter(d => d.minutes > 0).length };
+  }, [year]);
+  const known = useMemo(() => knownByFrom(live, knownWords), [live, knownWords]);
+  // Each book: how far, how long, at what pace, and how much of it is known
+  // (when its words were measured on this device).
+  const bookRows = useMemo(() => sources.filter(s => !s.isDeleted).map(s => {
+    const total = totalOf(s.reading);
+    const profile = savedProfile(s.id);
+    return {
+      source: s, progress: sourceProgress(chaptersOf(s.id, chapters)), minutes: toMinutes(total.ms), wpm: wordsPerMinute(total),
+      coverage: profile ? coverageOf(profile, userLevel, known).percent : null,
+    };
+  }).filter(r => r.progress.done > 0 || r.minutes > 0).sort((a, b) => b.source.updatedAt.localeCompare(a.source.updatedAt)), [sources, chapters, userLevel, known]);
 
   if (!logs) return <p dir="rtl" className="font-fa text-center py-20 text-ink-muted">در حال آماده‌سازی آمار…</p>;
 
@@ -106,12 +149,44 @@ export const StatsView: React.FC<StatsViewProps> = ({ cards, sources, occurrence
 
   return (
     <div dir="rtl" className="font-fa max-w-4xl mx-auto w-full flex flex-col gap-5">
-      <h1 className="text-2xl font-extrabold text-ink dark:text-white">آمار</h1>
+      <h1 className="text-2xl font-extrabold text-ink dark:text-white">{playful ? 'آمار' : 'پیشرفت'}</h1>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Tile value={`${fa(streak)} روز`} label="زنجیرهٔ مطالعه" tone="text-flame-500 dark:text-orange-300" />
+        <Tile value={fa(summary.minutes)} label="دقیقه خواندن" tone="text-brand-600 dark:text-brand-300" />
+        <Tile value={fa(summary.chaptersFinished)} label={`فصل خوانده‌شده · ${fa(summary.booksFinished)} کتاب تمام`} />
+        <Tile value={fa(summary.wordsMet)} label="واژهٔ کارت‌دار که در کتاب‌ها دیدی" />
+        <Tile value={fa(summary.words)} label="واژه خواندی" />
+      </div>
+
+      <Panel title="خواندن در هر روز" hint={`دقیقه‌های خواندن فعال در ۳۰ روز اخیر؛ ${fa(readMonth.filter(d => d.count > 0).length)} روز کتاب خواندی.`}>
+        <ActivityBars days={readMonth} unit="دقیقه" />
+      </Panel>
+
+      <Panel title="کارنامهٔ سال" hint={`در یک سال اخیر: ${fa(yearTotals.minutes)} دقیقه در ${fa(yearTotals.days)} روز.`}>
+        <YearLog grid={year} />
+      </Panel>
+
+      {bookRows.length > 0 && (
+        <Panel title="کتاب‌هایت" hint="چقدر خواندی، با چه سرعتی، و چند درصد واژه‌هایش را می‌شناسی (اگر در صفحهٔ کتاب سنجیده شده باشد).">
+          <ul className="flex flex-col divide-y divide-slate-100 dark:divide-slate-700">
+            {bookRows.map(r => (
+              <li key={r.source.id}>
+                <button type="button" onClick={() => onOpenSource(r.source.id)} className="w-full flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5 text-right hover:bg-slate-50 dark:hover:bg-slate-700/50 rounded-xl px-1">
+                  <span dir="auto" className="flex-1 min-w-[10rem] font-en font-bold text-ink dark:text-white truncate">{r.source.title}</span>
+                  <span className="text-xs text-ink-muted dark:text-slate-400">{fa(r.progress.percent)}٪ خوانده</span>
+                  {r.minutes > 0 && <span className="text-xs text-ink-muted dark:text-slate-400">{fa(r.minutes)} دقیقه{r.wpm ? ` · ${fa(r.wpm)} واژه در دقیقه` : ''}</span>}
+                  {r.coverage !== null && <span className="text-xs rounded-full bg-emerald-100 text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100 px-2 py-0.5">{fa(Math.round(r.coverage))}٪ واژه‌ها آشنا</span>}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {playful && <Tile value={`${fa(streak)} روز`} label="زنجیرهٔ مطالعه" tone="text-flame-500 dark:text-orange-300" />}
         <Tile value={fa(month)} label="مرور در ۳۰ روز" />
-        <Tile value={fa(learned)} label="واژهٔ آموخته (درخت و ریشه‌دار)" tone="text-emerald-700 dark:text-emerald-300" />
+        <Tile value={fa(learned)} label="واژهٔ آموخته (آشنا و بلدم)" tone="text-emerald-700 dark:text-emerald-300" />
         <Tile value={fa(live.length)} label="همهٔ کارت‌ها" />
       </div>
 
@@ -169,13 +244,13 @@ export const StatsView: React.FC<StatsViewProps> = ({ cards, sources, occurrence
           )}
         </Panel>
 
-        <Panel title="رشد واژه‌ها" hint="هر کارت با مرورهای درست از دانه تا ریشه‌دار رشد می‌کند.">
+        <Panel title="رشد واژه‌ها" hint="هر کارت با مرورهای درست از «تازه» تا «بلدم» پیش می‌رود.">
           <ul className="flex flex-col gap-2">
             {([0, 1, 2, 3, 4] as MasteryStage[]).map(stage => {
               const pct = Math.round((stages[stage] / Math.max(1, live.length)) * 100);
               return (
                 <li key={stage} className="flex items-center gap-3 text-sm">
-                  <span className="w-16 shrink-0 text-ink dark:text-slate-200">{STAGE_NAMES[stage]}</span>
+                  <span className="w-28 shrink-0 text-ink dark:text-slate-200">{STAGE_NAMES[stage]}</span>
                   <span className="flex-1 h-2.5 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden flex">
                     <span className={`rounded-full ${stage >= 3 ? 'bg-emerald-500' : 'bg-brand-400'}`} style={{ width: `${pct}%` }} />
                   </span>

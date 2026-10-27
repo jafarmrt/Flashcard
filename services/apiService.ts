@@ -15,7 +15,8 @@ export type ProxyAction =
   | 'auth-register' | 'auth-login' | 'auth-session' | 'auth-logout'
   | 'sync' | 'keys-sync' | 'chapter-put' | 'chapter-get' | 'fetch-page' | 'storage-usage'
   | 'ping' | 'ping-free-dict' | 'ping-mw' | 'gemini-generate' | 'test-ai-key' | 'list-models'
-  | 'dictionary-lookup' | 'test-dictionary' | 'fetch-audio' | 'word-frequencies' | 'free-enrich' | 'free-translate' | 'ai-speech' | 'list-speech-models';
+  | 'dictionary-lookup' | 'test-dictionary' | 'fetch-audio' | 'word-frequencies' | 'free-enrich' | 'free-translate' | 'ai-speech' | 'list-speech-models'
+  | 'telegram-status' | 'telegram-link' | 'telegram-update' | 'telegram-send' | 'telegram-unlink';
 
 // The status a request that took too long fails with. Not a "permanent"
 // status, so the AI chain goes on to the next service.

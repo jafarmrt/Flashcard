@@ -1,4 +1,4 @@
-import { Flashcard, PerformanceRating } from '../types';
+import type { Flashcard, PerformanceRating } from '../types';
 
 export type { PerformanceRating };
 

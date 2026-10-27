@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { extractKinds, KIND_LABEL } from '../services/cardKinds';
 import { Chapter, ChapterText, ExtractedWordCard, Flashcard, Settings, Source, TextNote } from '../types';
 import { newNote, noteQuote, notesAtWords, notesOfSection, savedTranslation } from '../services/notes';
@@ -11,6 +11,13 @@ import { cardsInText, isChunkOpen } from '../services/library';
 import { isKnownTerm, knownMatch } from '../services/knownWords';
 import { masteryStage, STAGE_NAMES } from '../services/masteryService';
 import { cardForTerm, indexCards } from '../services/cardLookup';
+import { isPlayful } from '../services/calm';
+import { ActiveClock, minutesFor, totalOf, wordsPerMinute } from '../services/readingTime';
+import { glossesFor } from '../services/gloss';
+import { daysAway, RECAP_AFTER_DAYS } from '../services/recap';
+import { dayString as dayKey } from '../services/streakService';
+import { RecapPanel } from './reader/Recap';
+import { ChapterCoverage } from './reader/ChapterCoverage';
 import { phraseRanges, rangeText, readerSection, sentenceOf } from '../services/readerText';
 import { analyzeSentence, grammarCards, Sense, SenseBatcher, sensesInContext } from '../services/senseService';
 import { detectGrammar, ruleById } from '../services/grammarPatterns';
@@ -40,12 +47,14 @@ interface ChunkReaderViewProps {
   onSaveCards: (cards: ExtractedWordCard[]) => Promise<void>;
   // Finishing a section; then back to the book (default), on to the next
   // section (reading on in book mode), or stay (the chapter's last page).
-  onComplete: (then?: CompleteThen) => void | Promise<void>;
+  // `activeMs`: the active reading time since the last finished section.
+  onComplete: (then?: CompleteThen, activeMs?: number) => void | Promise<void>;
   onBack: () => void;
   onOpenChunk: (index: number, entry?: ReaderEntry) => void;
   entry?: ReaderEntry; // where in the section to open (book mode)
   onReviewChapter?: () => void;
-  nextChapter?: { title: string; open: () => void };
+  nextChapter?: { id: string; title: string; open: () => void };
+  loadChapter?: (chapterId: string) => Promise<string[]>; // another chapter's sections (the next chapter's coverage)
   onEditText?: (text: string) => Promise<void>; // the reader corrected or cut the section's text
   notes?: TextNote[]; // the reader's notes and kept translations in this chapter
   onSaveNote?: (note: TextNote) => Promise<void> | void; // added, changed or removed (isDeleted)
@@ -140,7 +149,7 @@ const GRAMMAR_MARK = 'border-b-2 border-dotted border-rose-400 dark:border-rose-
 // cards, then finish the section.
 export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   source: book, chapter, chunks, index, chapterCount, settings, cards, knownTerms, onSaveCards, onComplete, onBack, onOpenChunk,
-  onMarkKnown, onUnmarkKnown, onUpdateSettings, showToast, entry = { kind: 'resume' } as ReaderEntry, onReviewChapter, nextChapter,
+  onMarkKnown, onUnmarkKnown, onUpdateSettings, showToast, entry = { kind: 'resume' } as ReaderEntry, onReviewChapter, nextChapter, loadChapter,
   onEditText, notes = [], onSaveNote,
 }) => {
   const chunk = chunks[index] || '';
@@ -209,6 +218,10 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   };
   const knownSet = useMemo(() => new Set(knownTerms), [knownTerms]);
   const cardIndex = useMemo(() => indexCards(cards), [cards]);
+  const playful = isPlayful(settings);
+  // Meanings above words with new cards (services/gloss).
+  const glosses = useMemo(() => glossesFor(section.words, cardIndex, settings.readerGloss || 'new', w => isKnownTerm(w, knownSet)),
+    [section, cardIndex, settings.readerGloss, knownSet]);
 
   // Words of this section that already have a card; finishing the section
   // adds this place to them.
@@ -902,6 +915,14 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   };
   const keepTranslation = (range: Range, text: string, by?: string) =>
     keepNote({ range, kind: 'translation', text, ...(by ? { by } : {}) });
+  // From a tapped word, its whole paragraph in Persian in one more tap (a
+  // kept translation shows without asking again).
+  const translateParagraphOf = (wordIndex: number) => {
+    const paragraph = paragraphRange(paragraphOf(wordIndex));
+    if (!paragraph) return;
+    pick(paragraph);
+    if (!savedTranslation(placedNotes, paragraph)) translateSelection(paragraph);
+  };
 
   // Under the picked words: a note on them, the translation kept, or the
   // whole paragraph translated.
@@ -1262,6 +1283,8 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
                     className="min-h-[36px] px-3 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-40">واژهٔ بعد +</button>
                   <button type="button" onClick={() => wholeSentence(detailPlace)}
                     className="min-h-[36px] px-3 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600">کل جمله</button>
+                  <button type="button" disabled={!!busy} onClick={() => translateParagraphOf(detailPlace.from)}
+                    className="min-h-[36px] px-3 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-40">ترجمهٔ پاراگراف</button>
                   {onSaveNote && (
                     <button type="button" onClick={() => startNote(detailPlace)}
                       className="min-h-[36px] px-3 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600">✎ یادداشت</button>
@@ -1295,6 +1318,8 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   const renderBook = () => {
     const chapterShare = Math.round((100 * (index + (endPage ? 1 : sectionEmpty ? 1 : (page + 1) / Math.max(1, pages)))) / Math.max(1, chunks.length));
     const sideZone = layout ? Math.max(20, (layout.roomWidth - layout.width) / 2) : 20;
+    // At the reader's own pace once there is enough reading to measure it.
+    const leftMinutes = minutesFor(chapter.wordCount * Math.max(0, 1 - chapterShare / 100), wordsPerMinute(totalOf(book.reading)));
     const toolButton = 'inline-flex items-center justify-center gap-1.5 min-h-[40px] min-w-[40px] px-2.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10';
     const pageButton = 'w-11 h-11 rounded-full flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-25';
     return (
@@ -1326,6 +1351,9 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
                 <p className="text-sm opacity-60">پایان</p>
                 <h2 dir="auto" className="font-read text-3xl font-bold">{chapterCount > 1 ? chapter.title : book.title}</h2>
                 <p className="opacity-75">{fa(chunks.length)} بخش خوانده شد.{nextChapter ? '' : chapterCount > 1 ? ' این آخرین فصل کتاب بود.' : ''}</p>
+                {nextChapter && loadChapter && (
+                  <ChapterCoverage chapterId={nextChapter.id} loadTexts={() => loadChapter(nextChapter.id)} cards={cards} knownTerms={knownTerms} userLevel={settings.userLevel} />
+                )}
                 <div className="flex flex-col gap-2 w-full mt-2">
                   {onReviewChapter && <button type="button" onClick={onReviewChapter} className="min-h-[48px] rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-bold">مرور واژه‌های {chapterCount > 1 ? 'این فصل' : 'این متن'}</button>}
                   {nextChapter && <button type="button" onClick={nextChapter.open} className="min-h-[48px] rounded-2xl border-2 border-current/20 font-bold hover:bg-black/5 dark:hover:bg-white/10">فصل بعد: <bdi dir="auto">{nextChapter.title}</bdi></button>}
@@ -1339,7 +1367,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
               </div>
             ) : layout && (
               <PageColumns layout={layout} page={page} contentRef={pageText}>
-                <ReaderText section={section} selection={selection} classFor={classFor} onTap={tapWord} onSelect={pick}
+                <ReaderText section={section} selection={selection} classFor={classFor} onTap={tapWord} onSelect={pick} glosses={glosses}
                   book={{ fontSize: READER_FONT_SIZES[fontStep], justify }} />
               </PageColumns>
             )}
@@ -1361,6 +1389,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
               <bdi>{endPage ? 'پایان فصل' : sectionEmpty ? 'بخش خالی' : `صفحهٔ ${fa(page + 1)} از ${fa(pages)}`}</bdi>
               <span aria-hidden>·</span>
               <bdi>{`${fa(chapterShare)}٪ ${chapterCount > 1 ? 'فصل' : 'متن'}`}</bdi>
+              {!endPage && chapterShare < 100 && <><span aria-hidden>·</span><bdi>{`حدود ${fa(leftMinutes)} دقیقه تا پایان ${chapterCount > 1 ? 'فصل' : 'متن'}`}</bdi></>}
             </span>
           </div>
           <button type="button" onClick={nextPage} disabled={endPage} aria-label={!endPage && page >= pages - 1 && !done ? 'پایان این بخش و رفتن به بعدی' : 'صفحهٔ بعد'} className={pageButton}><Icon.Back size={22} /></button>
@@ -1452,7 +1481,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
               {waiting > 0 && <p className="text-center text-xs text-ink-muted dark:text-slate-400">معنی {fa(waiting)} واژه در همین جمله هنوز در راه است.</p>}
               {saved && <p className="text-center text-sm text-emerald-700 dark:text-emerald-300">کارت‌ها ساخته شد و در مرور بعدی می‌آیند.</p>}
               <p className="text-xs text-ink-muted dark:text-slate-400 leading-relaxed">
-                با ورق زدن از صفحهٔ آخر، این بخش تمام می‌شود (+{fa(CHUNK_COMPLETE_XP)} امتیاز{isChestSection(index) ? ' و صندوق جایزه' : ''}) و بخش بعد می‌آید.
+                با ورق زدن از صفحهٔ آخر، این بخش تمام می‌شود{playful ? ` (+${fa(CHUNK_COMPLETE_XP)} امتیاز${isChestSection(index) ? ' و صندوق جایزه' : ''})` : ''} و بخش بعد می‌آید.
                 {!done && metAgain > 0 && <> {fa(metAgain)} واژهٔ این بخش از قبل کارت دارد؛ دیده‌شدنشان در این کتاب ثبت می‌شود.</>}
               </p>
             </aside>
@@ -1563,7 +1592,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
               )}
             </p>
           )}
-          <ReaderText section={section} selection={selection} classFor={classFor} onTap={tapWord} onSelect={pick} paragraphFooter={paragraphFooter} />
+          <ReaderText section={section} selection={selection} classFor={classFor} onTap={tapWord} onSelect={pick} glosses={glosses} paragraphFooter={paragraphFooter} />
         </article>
 
         <aside className="flex-[1_1_20rem] max-w-full lg:max-w-md flex flex-col gap-4 lg:sticky lg:top-6">
@@ -1580,7 +1609,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
             {waiting > 0 && <p className="text-center text-xs text-ink-muted dark:text-slate-400">معنی {fa(waiting)} واژه در همین جمله هنوز در راه است.</p>}
             <button type="button" onClick={finish}
               className={`min-h-[52px] rounded-2xl font-extrabold ${toSave.length === 0 ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'border-2 border-emerald-600 text-emerald-800 dark:text-emerald-200'}`}>
-              {done ? 'برگشت به مسیر' : `پایان این بخش (+${fa(CHUNK_COMPLETE_XP)} امتیاز${isChestSection(index) ? ' و صندوق جایزه' : ''})`}
+              {done ? 'برگشت به مسیر' : playful ? `پایان این بخش (+${fa(CHUNK_COMPLETE_XP)} امتیاز${isChestSection(index) ? ' و صندوق جایزه' : ''})` : 'پایان این بخش'}
             </button>
             {saved && <p className="text-center text-sm text-emerald-700 dark:text-emerald-300">کارت‌ها ساخته شد و در مرور بعدی می‌آیند.</p>}
             {!done && metAgain > 0 && (
@@ -1597,14 +1626,34 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
 
 type ReaderScreenProps = Omit<ChunkReaderViewProps, 'chunks' | 'onEditText'> & {
   loadText: (chapterId: string) => Promise<ChapterText>;
+  onReadingTime?: (activeMs: number) => void; // reading time not ended by a finished section (leaving the reader)
+  previousChapterId?: string; // for "what happened so far" at the start of a chapter
   onEditChunk?: (index: number, text: string) => Promise<string[]>; // the chapter's sections after the edit
 };
 
 // The reader, once the chapter's text is here: it is kept in this browser,
 // and fetched from the server the first time the chapter is opened on a new
 // device.
-export const ReaderScreen: React.FC<ReaderScreenProps> = ({ loadText, onEditChunk, ...props }) => {
+export const ReaderScreen: React.FC<ReaderScreenProps> = ({ loadText, onEditChunk, onReadingTime, previousChapterId, ...props }) => {
   const chapterId = props.chapter.id;
+  // Active reading time (services/readingTime): any action of the reader
+  // keeps it going; a hidden page or a minute and a half without one stops it.
+  const clock = useRef<ActiveClock | null>(null);
+  if (!clock.current) clock.current = new ActiveClock(Date.now());
+  const reportLeft = useRef(onReadingTime);
+  reportLeft.current = onReadingTime;
+  useEffect(() => {
+    const touch = () => clock.current!.touch(Date.now());
+    const events = ['pointerdown', 'keydown', 'wheel', 'touchstart'] as const;
+    events.forEach(e => window.addEventListener(e, touch, { passive: true }));
+    const timer = setInterval(() => clock.current!.tick(Date.now(), document.visibilityState === 'visible'), 5000);
+    return () => {
+      events.forEach(e => window.removeEventListener(e, touch));
+      clearInterval(timer);
+      const left = clock.current!.take(Date.now(), document.visibilityState === 'visible');
+      if (left >= 30_000) reportLeft.current?.(left);
+    };
+  }, []);
   // Bumped when the text is edited, so the section opens afresh on it.
   const [edits, setEdits] = useState(0);
   // Where the next section opens: set by the reader as it turns pages across
@@ -1616,10 +1665,24 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({ loadText, onEditChun
   };
   const complete = (then?: CompleteThen) => {
     if (then === 'next') entry.current = { kind: 'start' };
-    return props.onComplete(then);
+    return props.onComplete(then, clock.current!.take(Date.now(), document.visibilityState === 'visible'));
   };
   const [text, setText] = useState<{ id: string; chunks?: string[]; error?: string } | null>(null);
   const [attempt, setAttempt] = useState(0);
+  // Back after some days: "what happened so far", once, when the reader
+  // opens where reading stopped.
+  const [recapDays, setRecapDays] = useState<number | null>(() => {
+    if (entry.current.kind !== 'resume' || (props.index === 0 && !previousChapterId)) return null;
+    const days = daysAway(Object.keys(props.source.reading || {}), props.source.updatedAt, dayKey(new Date()));
+    return days !== null && days >= RECAP_AFTER_DAYS ? days : null;
+  });
+  const closeRecap = useCallback(() => setRecapDays(null), []);
+  const recapTexts = async (): Promise<string[]> => {
+    const own = (await loadText(chapterId)).chunks.slice(Math.max(0, props.index - 3), props.index);
+    if (own.length >= 2 || !previousChapterId) return own;
+    const before = (await loadText(previousChapterId)).chunks.slice(-(3 - own.length));
+    return [...before, ...own];
+  };
 
   useEffect(() => {
     let live = true;
@@ -1660,5 +1723,13 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({ loadText, onEditChun
     setText({ id: chapterId, chunks });
     setEdits(n => n + 1);
   });
-  return <ChunkReaderView key={`${chapterId}-${props.index}-${edits}`} {...props} chunks={text.chunks} entry={entry.current} onOpenChunk={openChunk} onComplete={complete} onEditText={editText || undefined} />;
+  return (
+    <>
+      <ChunkReaderView key={`${chapterId}-${props.index}-${edits}`} {...props} loadChapter={async id => (await loadText(id)).chunks} chunks={text.chunks} entry={entry.current} onOpenChunk={openChunk} onComplete={complete} onEditText={editText || undefined} />
+      {recapDays !== null && (
+        <RecapPanel title={props.source.title} chapterId={chapterId} chunk={props.index} days={recapDays} loadTexts={recapTexts}
+          useAi={(props.settings.extractionSource || 'ai') === 'ai'} aiOptions={aiRequestOptions(props.settings)} onClose={closeRecap} />
+      )}
+    </>
+  );
 };

@@ -10,6 +10,7 @@ import type { ChapterText, Settings } from '../types';
 import { migrateTexts } from '../services/library.js';
 import { newerSettings } from '../services/settingsSync.js';
 import { studyLogKey } from '../services/syncState.js';
+import { mergeReading } from '../services/readingTime.js';
 
 export const STORE_VERSION = 2;
 export const ROW_TABLES = ['decks', 'cards', 'sources', 'chapters', 'occurrences', 'knownWords', 'speechAttempts', 'notes'] as const;
@@ -122,6 +123,8 @@ export const mergeRow = (table: RowTable, cloud: Row | undefined, client: Row): 
     const done = new Set<number>([...(cloud.completed || []), ...(client.completed || [])]);
     merged.completed = Array.from(done).sort((a, b) => a - b);
   }
+  // Minutes read on either device are kept.
+  if (table === 'sources' && (cloud.reading || client.reading)) merged.reading = mergeReading(cloud.reading, client.reading);
   return merged;
 };
 

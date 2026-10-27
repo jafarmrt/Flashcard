@@ -1,16 +1,16 @@
 import { Flashcard } from '../types';
 import { isNewCard } from './srsService';
 
-// Five growth stages for a word, from the card's FSRS stability (days until
+// Five stages of knowing a word, named plainly, from the card's FSRS stability (days until
 // recall drops to 90%). Cards still on the old SM-2 schedule use their interval.
 export type MasteryStage = 0 | 1 | 2 | 3 | 4;
 
 export const STAGE_NAMES: Record<MasteryStage, string> = {
-  0: 'دانه',
-  1: 'جوانه',
-  2: 'نهال',
-  3: 'درخت',
-  4: 'ریشه‌دار',
+  0: 'تازه',
+  1: 'آغاز یادگیری',
+  2: 'در حال یادگیری',
+  3: 'آشنا',
+  4: 'بلدم',
 };
 
 // Upper bounds (exclusive) in days for stages 1-3; stage 4 is anything longer.

@@ -3,7 +3,8 @@
 // how each book's words grew week by week, and the words answered "again"
 // most often.
 
-import type { Flashcard, Occurrence, Source, StudyLog } from '../types';
+import type { Chapter, Flashcard, Occurrence, Source, StudyLog } from '../types';
+import { isBookFinished, isChapterFinished } from './library.js';
 import { masteryStage } from './masteryService.js';
 import { isDue } from './srsService.js';
 import { dayString } from './streakService.js';
@@ -112,4 +113,50 @@ export const reviewsPerDay = (logs: StudyLog[], days = 30, now: Date = new Date(
     const day = dayString(d);
     return { day, count: counts.get(day) || 0 };
   });
+};
+
+// --- Reading progress (calm mode's measure of progress) ---
+
+export interface ReadingSummary {
+  minutes: number;
+  words: number; // words of the sections finished
+  booksFinished: number;
+  chaptersFinished: number;
+  wordsMet: number; // cards met again in the books read
+}
+
+export const readingSummary = (sources: Source[], chapters: Chapter[], occurrences: Occurrence[]): ReadingSummary => {
+  const live = sources.filter(s => !s.isDeleted);
+  const liveIds = new Set(live.map(s => s.id));
+  const liveChapters = chapters.filter(c => !c.isDeleted && liveIds.has(c.sourceId));
+  let ms = 0;
+  let words = 0;
+  for (const s of live) for (const r of Object.values(s.reading || {})) { ms += r.ms; words += r.words; }
+  return {
+    minutes: Math.round(ms / 60_000),
+    words,
+    booksFinished: live.filter(s => isBookFinished(s, liveChapters)).length,
+    chaptersFinished: liveChapters.filter(isChapterFinished).length,
+    wordsMet: new Set(occurrences.filter(o => !o.isDeleted && liveIds.has(o.sourceId)).map(o => o.cardId)).size,
+  };
+};
+
+// A year of reading as weeks of days (Saturday first, the Persian week),
+// oldest week first; each day with its minutes, or null after today.
+export const yearGrid = (minutesByDay: Map<string, number>, now: Date = new Date(), weeks = 53): ({ day: string; minutes: number } | null)[][] => {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const sinceSaturday = (today.getDay() + 1) % 7;
+  const start = new Date(today);
+  start.setDate(today.getDate() - sinceSaturday - (weeks - 1) * 7);
+  const out: ({ day: string; minutes: number } | null)[][] = [];
+  for (let w = 0; w < weeks; w++) {
+    const week: ({ day: string; minutes: number } | null)[] = [];
+    for (let d = 0; d < 7; d++) {
+      const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + w * 7 + d);
+      const day = dayString(date);
+      week.push(date > today ? null : { day, minutes: minutesByDay.get(day) || 0 });
+    }
+    out.push(week);
+  }
+  return out;
 };

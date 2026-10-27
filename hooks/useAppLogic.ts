@@ -7,7 +7,10 @@ import { unseenReleases } from '../services/changelog';
 import { calculateLevel, calculateStreak, checkAndAwardAchievements } from '../services/gamificationService';
 import { generateNewDailyGoals, updateGoalProgress, reviewGoalId } from '../services/dailyGoalsService';
 import { availableFreezes, dayString, daysToFreeze, MAX_HELD_FREEZES } from '../services/streakService';
+import { addReading } from '../services/readingTime';
+import { tokensOf } from '../services/lemma';
 import { DEFAULT_DAILY_REVIEW_GOAL, isChestSection, SECTION_GOAL_REVIEWS } from '../services/xpRules';
+import { isPlayful } from '../services/calm';
 import { buildSource, cardIndex, cardsInText, chaptersOf, cleanEditedText, findCard, markChunkDone, migrateTexts, newOccurrence, sectionReward, SourceInput } from '../services/library';
 import { cardsOfSource, pickBookReview } from '../services/readingStats';
 import { normalizeTerm } from '../services/vocabMerge';
@@ -251,6 +254,10 @@ export const useAppLogic = () => {
     toastShownAt.current = Date.now();
     toastTimer.current = message === undefined ? null : setTimeout(nextToast, toastQueue.current.length ? TOAST_MIN_MS : TOAST_MS);
   };
+  // Points, levels, badges and streak news only in playful mode (services/calm).
+  const playfulRef = useRef(false);
+  playfulRef.current = isPlayful(settings);
+  const gameToast = (message: string) => { if (playfulRef.current) showToast(message); };
   const showToast = (message: string) => {
     const queue = toastQueue.current;
     if (queue[queue.length - 1] === message) return;
@@ -404,7 +411,7 @@ export const useAppLogic = () => {
             const achievementData = ALL_ACHIEVEMENTS.find(a => a.id === ua.achievementId);
             if (achievementData) {
                 setTimeout(() => {
-                  showToast(`نشان تازه: ${achievementData.name} ${achievementData.icon}`);
+                  gameToast(`نشان تازه: ${achievementData.name} ${achievementData.icon}`);
                 }, 500);
             }
         });
@@ -433,8 +440,8 @@ export const useAppLogic = () => {
       return { ...p, xp, level: calculateLevel(xp).level };
     });
     if (!result) return;
-    if (message) showToast(message);
-    if (result.after.level > result.before.level) showToast(`به سطح ${fa(result.after.level)} رسیدی! 🎉`);
+    if (message) gameToast(message);
+    if (result.after.level > result.before.level) gameToast(`به سطح ${fa(result.after.level)} رسیدی! 🎉`);
     handleCheckAchievements();
   };
 
@@ -459,11 +466,11 @@ export const useAppLogic = () => {
     if (xpGained > 0) await awardXP(xpGained);
 
     newlyCompletedGoals.forEach(goal => {
-        setTimeout(() => showToast(`هدف امروز کامل شد. +${fa(goal.xp)} امتیاز`), 500);
+        setTimeout(() => gameToast(`هدف امروز کامل شد. +${fa(goal.xp)} امتیاز`), 500);
     });
 
     if (result.after.dailyGoals?.allCompleteAwarded && !result.before.dailyGoals?.allCompleteAwarded) {
-        setTimeout(() => showToast(`همهٔ هدف‌های امروز کامل شد! +${fa(50)} امتیاز ✨`), newlyCompletedGoals.length > 0 ? 1000 : 500);
+        setTimeout(() => gameToast(`همهٔ هدف‌های امروز کامل شد! +${fa(50)} امتیاز ✨`), newlyCompletedGoals.length > 0 ? 1000 : 500);
     }
   };
 
@@ -1287,7 +1294,22 @@ export const useAppLogic = () => {
   // the word was seen.
   // `then`: back to the book (the default), straight on to the next section
   // (reading page after page in book mode), or stay (the chapter's end page).
-  const handleCompleteChunk = async (chapterId: string, index: number, then: 'library' | 'next' | 'stay' = 'library') => {
+  // Active reading time on the book's log (services/readingTime): with the
+  // words of a section finished for the first time, or alone.
+  const recordReading = async (sourceId: string, ms: number, words = 0, sections = 0) => {
+    if (ms <= 0 && sections === 0) return;
+    const updated = await db.transaction('rw', db.sources, async () => {
+      const source = await db.sources.get(sourceId);
+      if (!source || source.isDeleted) return null;
+      const next = addReading(source, dayString(new Date()), ms, words, sections);
+      await db.sources.put(next);
+      return next;
+    }).catch(e => { console.warn('Saving reading time failed:', e); return null; });
+    if (updated) setSources(prev => prev.map(s => (s.id === updated.id ? updated : s)));
+  };
+  const handleReadingTime = (sourceId: string, ms: number) => { recordReading(sourceId, ms); };
+
+  const handleCompleteChunk = async (chapterId: string, index: number, then: 'library' | 'next' | 'stay' = 'library', activeMs = 0) => {
     const chapter = await db.chapters.get(chapterId);
     if (!chapter) return;
     const goOn = (current: Chapter) => {
@@ -1296,6 +1318,7 @@ export const useAppLogic = () => {
       setView('TEXTS');
     };
     if (!markChunkDone(chapter, index).firstTime) {
+      await recordReading(chapter.sourceId, activeMs);
       goOn(chapter);
       return;
     }
@@ -1324,6 +1347,7 @@ export const useAppLogic = () => {
       return;
     }
     setChapters(prev => prev.map(c => (c.id === updated.id ? updated : c)));
+    await recordReading(chapter.sourceId, activeMs, tokensOf(text).length, text.trim() ? 1 : 0);
     // A section left with no text (cut out by the reader) is passed over
     // without a reward.
     if (!text.trim()) {
@@ -1341,6 +1365,11 @@ export const useAppLogic = () => {
         ? `فصل تمام شد! 📖 +${fa(xp)} امتیاز${met}`
         : `بخش ${fa(index + 1)} تمام شد. +${fa(xp)} امتیاز${met}`;
     await awardXP(xp, message);
+    // Calm mode: what was read, without points.
+    if (!playfulRef.current) {
+      const metCalm = seenAgain.length ? `؛ ${fa(seenAgain.length)} واژهٔ کارت‌دار دوباره دیده شد` : '';
+      showToast(bookDone ? 'کتاب را تمام کردی.' : chapterDone ? `فصل تمام شد${metCalm}.` : `بخش ${fa(index + 1)} خوانده شد${metCalm}.`);
+    }
     // Reading counts toward the daily goal.
     await handleGoalUpdate('STUDY', SECTION_GOAL_REVIEWS);
     if (isChestSection(index)) {
@@ -1348,7 +1377,7 @@ export const useAppLogic = () => {
         ? { ...p, streakFreezesEarned: (p.streakFreezesEarned || 0) + 1 }
         : p));
       if (result && result.after.streakFreezesEarned !== result.before.streakFreezesEarned) {
-        setTimeout(() => showToast('صندوق جایزه: یک محافظ زنجیره گرفتی.'), 1200);
+        setTimeout(() => gameToast('صندوق جایزه: یک محافظ زنجیره گرفتی.'), 1200);
       }
     }
     goOn(updated);
@@ -1502,14 +1531,17 @@ export const useAppLogic = () => {
     if (!sectionReview) return;
     const ids = new Set(sectionReview.cardIds);
     setSectionReview(null);
-    setStudyMode('flip');
+    // The words in the sentences just read, each with its gap to fill.
+    setStudyMode('cloze');
     setStudyDeckId(null);
     handleStartStudySession({ filter: 'all-cards', limit: 0 }, null, flashcards.filter(c => ids.has(c.id)), 'TEXTS');
+    setStudySourceId(sectionReview.sourceId);
   };
 
   // Review the cards of one book or chapter: the due ones, or the weakest
-  // when none is due. Back to the book afterwards.
-  const handleStartSourceReview = (sourceId: string, chapterId?: string, mode: StudyMode = 'flip') => {
+  // when none is due. Back to the book afterwards. By default each word is
+  // asked in a sentence of the book, with a gap (cloze).
+  const handleStartSourceReview = (sourceId: string, chapterId?: string, mode: StudyMode = 'cloze') => {
     const mine = cardsOfSource(occurrences, flashcards, sourceId, chapterId);
     if (mine.length === 0) {
       showToast(chapterId ? 'هنوز از این فصل کارتی نساخته‌ای.' : 'هنوز از این کتاب کارتی نساخته‌ای.');
@@ -1920,7 +1952,7 @@ export const useAppLogic = () => {
       updateSettings, handleCheckAchievements, handleGoalUpdate, handleCompleteCardDetails,
       handleAutoFixCards, handleStopAutoFix, handleCloseAutoFixReport, handleSaveExtractedCards,
       startQuickReview, openStudySetup, setStudyMode, handleAddSource, handleOpenSource, handleOpenChapter, handleOpenChunk,
-      handleDeleteSource, handleCompleteChunk, loadChapterText, handleEditChunk, handleSaveReaderCards,
+      handleDeleteSource, handleCompleteChunk, handleReadingTime, loadChapterText, handleEditChunk, handleSaveReaderCards,
       handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview: () => setSectionReview(null),
       handleCheckCards, handleStartSourceReview, handleReviewCards, handlePrestudyChapter,
       handleFillExtras, handleStopFillExtras, handleSaveCardContent, handleApplyImprovements,

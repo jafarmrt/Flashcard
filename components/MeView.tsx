@@ -17,16 +17,17 @@ interface MeViewProps {
   health: { label: string; status: HealthStatus }[];
   hasCards: boolean;
   onNavigate: (view: View) => void;
+  playful?: boolean; // level, points, streak and badges (services/calm)
 }
 
 // The phone's "Me" tab: profile, progress and every secondary section.
-export const MeView: React.FC<MeViewProps> = ({ userProfile, username, streak, earnedAchievements, syncStatus, health, hasCards, onNavigate }) => {
+export const MeView: React.FC<MeViewProps> = ({ userProfile, username, streak, earnedAchievements, syncStatus, health, hasCards, onNavigate, playful = false }) => {
   const level = calculateLevel(userProfile?.xp || 0);
   const freezes = availableFreezes(userProfile?.streakFreezesEarned, userProfile?.frozenDates);
   const links: { view: View; label: string; hint: string; icon: React.ReactNode; disabled?: boolean }[] = [
     { view: 'PRACTICE', label: 'تمرین مکالمه و آزمون', hint: 'آزمون چندگزینه‌ای و تمرین تلفظ', icon: <Icon.Chat />, disabled: !hasCards },
-    { view: 'STATS', label: 'آمار', hint: 'فعالیت هفتگی و وضعیت دانسته‌ها', icon: <Icon.Chart /> },
-    { view: 'ACHIEVEMENTS', label: 'نشان‌ها', hint: `${fa(earnedAchievements.length)} از ${fa(ALL_ACHIEVEMENTS.length)}`, icon: <Icon.Medal /> },
+    { view: 'STATS', label: playful ? 'آمار' : 'پیشرفت', hint: playful ? 'فعالیت هفتگی و وضعیت دانسته‌ها' : 'خواندن، واژه‌ها و کارنامهٔ سال', icon: <Icon.Chart /> },
+    ...(playful ? [{ view: 'ACHIEVEMENTS' as View, label: 'نشان‌ها', hint: `${fa(earnedAchievements.length)} از ${fa(ALL_ACHIEVEMENTS.length)}`, icon: <Icon.Medal /> }] : []),
     { view: 'PROFILE', label: 'پروفایل', hint: 'نام و معرفی', icon: <Icon.User /> },
     { view: 'SETTINGS', label: 'تنظیمات', hint: 'هوش مصنوعی، هدف روزانه، CSV، همگام‌سازی', icon: <Icon.Gear /> },
     { view: 'CHANGELOG', label: 'تغییرات نسخه‌ها', hint: '', icon: <Icon.Log /> },
@@ -40,19 +41,21 @@ export const MeView: React.FC<MeViewProps> = ({ userProfile, username, streak, e
         </span>
         <div className="flex-1 min-w-0">
           <h1 className="text-xl font-extrabold text-ink dark:text-white truncate">{userProfile?.firstName || username}</h1>
-          <p className="text-sm text-ink-muted dark:text-slate-400">سطح {fa(level.level)} · {fa(level.xp)} امتیاز</p>
-          <div className="mt-2 h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-            <div className="h-full bg-brand-500 rounded-full" style={{ width: `${level.progress}%` }} />
-          </div>
+          {playful && <>
+            <p className="text-sm text-ink-muted dark:text-slate-400">سطح {fa(level.level)} · {fa(level.xp)} امتیاز</p>
+            <div className="mt-2 h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+              <div className="h-full bg-brand-500 rounded-full" style={{ width: `${level.progress}%` }} />
+            </div>
+          </>}
         </div>
       </section>
 
-      <div className="flex flex-wrap gap-2">
+      {playful && <div className="flex flex-wrap gap-2">
         <StreakChip streak={streak} />
         <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 text-sky-800 dark:bg-sky-900/50 dark:text-sky-100 px-3 py-1.5 font-bold text-sm">
           <Icon.Shield size={15} />{fa(freezes)} محافظ زنجیره
         </span>
-      </div>
+      </div>}
 
       <nav className="bg-white dark:bg-slate-800 rounded-3xl divide-y divide-slate-100 dark:divide-slate-700 overflow-hidden">
         {links.map(l => (

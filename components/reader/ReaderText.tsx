@@ -12,6 +12,7 @@ interface ReaderTextProps {
   paragraphFooter?: (paragraph: number) => React.ReactNode; // shown under each paragraph (reading aloud, translation)
   // Book pages: the type the reader chose, paragraphs indented as in print.
   book?: { fontSize: number; justify: boolean };
+  glosses?: (string | undefined)[]; // a meaning written small above a word (services/gloss)
 }
 
 // A touch must rest this long on a word before dragging selects instead of
@@ -29,7 +30,8 @@ const wordAt = (x: number, y: number): number | null => {
 // The section's text, each word a button. A tap looks a word up; dragging
 // over several words (with a mouse at once, with a finger after resting on
 // the first word), or shift-clicking, picks a phrase or a sentence.
-export const ReaderText: React.FC<ReaderTextProps> = ({ section, selection, classFor, onTap, onSelect, paragraphFooter, book }) => {
+export const ReaderText: React.FC<ReaderTextProps> = ({ section, selection, classFor, onTap, onSelect, paragraphFooter, book, glosses }) => {
+  const glossed = !!glosses?.some(Boolean);
   const [drag, setDrag] = useState<Range | null>(null);
   // `last`: the last word the pointer was over, for a release on a space or
   // a full stop.
@@ -126,8 +128,8 @@ export const ReaderText: React.FC<ReaderTextProps> = ({ section, selection, clas
       onContextMenu={e => { if ((e.target as HTMLElement).closest('[data-wi]')) e.preventDefault(); }}
       style={book ? { fontSize: book.fontSize, textAlign: book.justify ? 'justify' : 'left', hyphens: book.justify ? 'auto' : 'manual', WebkitHyphens: book.justify ? 'auto' : 'manual' } : undefined}
       className={book
-        ? 'font-read leading-[1.75] select-none [-webkit-touch-callout:none]'
-        : 'font-read text-[17px] md:text-[19px] leading-[2] text-slate-800 dark:text-slate-100 max-w-[68ch] select-none [-webkit-touch-callout:none]'}>
+        ? `font-read ${glossed ? 'leading-[2.5]' : 'leading-[1.75]'} select-none [-webkit-touch-callout:none]`
+        : `font-read text-[17px] md:text-[19px] ${glossed ? 'leading-[2.6]' : 'leading-[2]'} text-slate-800 dark:text-slate-100 max-w-[68ch] select-none [-webkit-touch-callout:none]`}>
       {section.paragraphs.map((p, pi) => {
         const parts: React.ReactNode[] = [];
         let cursor = p.start;
@@ -145,9 +147,15 @@ export const ReaderText: React.FC<ReaderTextProps> = ({ section, selection, clas
           parts.push(
             <span key={w.i} className="whitespace-nowrap">
               {prefix}
-              <button type="button" data-wi={w.i} onClick={e => onClick(e, w.i)}
-                className={`inline rounded px-0.5 -mx-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${picked ? 'bg-brand-500 text-white dark:bg-brand-500' : `hover:bg-brand-100 dark:hover:bg-slate-700 ${classFor(w.i)}`}`}>
+              <button type="button" data-wi={w.i} onClick={e => onClick(e, w.i)} title={glosses?.[w.i]}
+                className={`inline rounded px-0.5 -mx-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${glosses?.[w.i] ? 'relative' : ''} ${picked ? 'bg-brand-500 text-white dark:bg-brand-500' : `hover:bg-brand-100 dark:hover:bg-slate-700 ${classFor(w.i)}`}`}>
                 {w.text}
+                {glosses?.[w.i] && (
+                  <span aria-hidden="true" dir="rtl" lang="fa"
+                    className="absolute left-1/2 -translate-x-1/2 top-[0.05em] whitespace-nowrap font-fa font-normal not-italic text-[0.6em] leading-none text-brand-700/90 dark:text-brand-300/90 pointer-events-none select-none">
+                    {glosses[w.i]}
+                  </span>
+                )}
               </button>
               {suffix}
             </span>,

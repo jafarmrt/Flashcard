@@ -167,14 +167,17 @@ export const coverageOf = (p: BookProfile, userLevel: string | undefined, knownB
 // for 10 days or more) or it is on the "I know it" list, in any form.
 export const GROWN_STAGE = 3;
 
-export const knownByFrom = (cards: Flashcard[], knownRows: KnownWord[]): ((word: string) => 'card' | 'list' | null) => {
+export const knownByFrom = (cards: Flashcard[], knownRows: KnownWord[]): ((word: string) => 'card' | 'list' | null) =>
+  knownByTerms(cards, knownTermSet(knownRows));
+
+// The same, from the "I know it" terms themselves (the reader has those).
+export const knownByTerms = (cards: Flashcard[], list: Set<string>): ((word: string) => 'card' | 'list' | null) => {
   const grown = new Set<string>();
   for (const c of cards) {
     if (c.isDeleted || c.kind === 'grammar' || masteryStage(c) < GROWN_STAGE) continue;
     const front = c.front.trim().toLowerCase();
     if (front && !/\s/.test(front)) grown.add(front);
   }
-  const list = knownTermSet(knownRows);
   return (word: string) => {
     if (grown.size && lemmaCandidates(word).some(form => grown.has(form))) return 'card';
     if (list.size && isKnownTerm(word, list)) return 'list';

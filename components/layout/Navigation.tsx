@@ -46,7 +46,7 @@ const NavLink: React.FC<{ active: boolean; onClick: () => void; icon: React.Reac
 );
 
 // Desktop side menu: every section of the app in one place.
-export const Sidebar: React.FC<SidebarProps> = ({ view, dueCount, userProfile, username, syncStatus, health, hasCards, onNavigate, onStartReview, onAddCard }) => {
+export const Sidebar: React.FC<SidebarProps & { playful?: boolean }> = ({ view, dueCount, userProfile, username, syncStatus, health, hasCards, onNavigate, onStartReview, onAddCard, playful = false }) => {
   const level = calculateLevel(userProfile?.xp || 0).level;
   return (
     <aside className="hidden md:flex flex-col gap-1 w-64 shrink-0 h-screen sticky top-0 bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 px-3 py-5">
@@ -60,7 +60,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ view, dueCount, userProfile, u
       <NavLink active={view === 'PRACTICE'} onClick={() => onNavigate('PRACTICE')} icon={<Icon.Chat size={20} />} label="تمرین مکالمه و آزمون" disabled={!hasCards} />
       <NavLink active={TEXT_VIEWS.includes(view)} onClick={() => onNavigate('TEXTS')} icon={<Icon.Book size={20} />} label="کتابخانه" />
       <NavLink active={DECK_VIEWS.includes(view)} onClick={() => onNavigate('DECKS')} icon={<Icon.Layers size={20} />} label="واژه‌ها و دسته‌ها" />
-      <NavLink active={view === 'STATS' || view === 'ACHIEVEMENTS'} onClick={() => onNavigate('STATS')} icon={<Icon.Chart size={20} />} label="آمار و نشان‌ها" />
+      <NavLink active={view === 'STATS' || view === 'ACHIEVEMENTS'} onClick={() => onNavigate('STATS')} icon={<Icon.Chart size={20} />} label={playful ? 'آمار و نشان‌ها' : 'پیشرفت'} />
       <NavLink active={['SETTINGS', 'USAGE', 'CHANGELOG', 'PROFILE'].includes(view)} onClick={() => onNavigate('SETTINGS')} icon={<Icon.Gear size={20} />} label="تنظیمات" />
 
       <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-2">
@@ -82,7 +82,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ view, dueCount, userProfile, u
           {(userProfile?.firstName || username || '?').slice(0, 1)}
         </span>
         <span className="flex flex-col gap-0.5 min-w-0">
-          <span className="text-sm font-bold text-ink dark:text-white truncate">{userProfile?.firstName || username} · سطح {fa(level)}</span>
+          <span className="text-sm font-bold text-ink dark:text-white truncate">{userProfile?.firstName || username}{playful ? ` · سطح ${fa(level)}` : ''}</span>
           <span className="flex items-center gap-1.5 text-xs text-ink-muted dark:text-slate-400">
             <span className={`w-2 h-2 rounded-full ${SYNC_DOT[syncStatus]}`} />{SYNC_LABEL[syncStatus]}
           </span>

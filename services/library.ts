@@ -154,6 +154,17 @@ export const continuePoint = (source: Source, chapters: Chapter[]): { chapter: C
   return { chapter: next, chunk: currentChunkOf(next) };
 };
 
+// The book being read: the unfinished one changed most recently, with where
+// to continue it.
+export const currentReading = (sources: Source[], chapters: Chapter[]) => sources
+  .filter(s => !s.isDeleted)
+  .map(source => {
+    const list = chaptersOf(source.id, chapters);
+    return { source, list, progress: sourceProgress(list), next: continuePoint(source, list) };
+  })
+  .filter(r => r.next && !r.progress.finished)
+  .sort((a, b) => b.source.updatedAt.localeCompare(a.source.updatedAt))[0];
+
 // --- Cards met in several places ---
 
 // Existing cards by every key a term can be matched under: the term itself
