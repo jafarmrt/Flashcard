@@ -9,7 +9,8 @@ import { lemmaCandidates, tokensOf } from '../services/lemma';
 import { enrichmentToCard, freeEnrich, FreeEnrichment } from '../services/freeExtractionService';
 import { cardsInText, isChunkOpen } from '../services/library';
 import { isKnownTerm, knownMatch } from '../services/knownWords';
-import { masteryStage } from '../services/masteryService';
+import { masteryStage, STAGE_NAMES } from '../services/masteryService';
+import { cardForTerm, indexCards } from '../services/cardLookup';
 import { phraseRanges, rangeText, readerSection, sentenceOf } from '../services/readerText';
 import { analyzeSentence, grammarCards, Sense, SenseBatcher, sensesInContext } from '../services/senseService';
 import { detectGrammar, ruleById } from '../services/grammarPatterns';
@@ -207,6 +208,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     return deckKeys.has(key) || (!key.includes(' ') && lemmaCandidates(key).some(form => deckKeys.has(normalizeTerm(form))));
   };
   const knownSet = useMemo(() => new Set(knownTerms), [knownTerms]);
+  const cardIndex = useMemo(() => indexCards(cards), [cards]);
 
   // Words of this section that already have a card; finishing the section
   // adds this place to them.
@@ -352,8 +354,22 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     const term = single ? section.words[from].text.toLowerCase().replace(/’/g, "'") : rangeText(section, from, to);
     const surface = term.toLowerCase();
     if (pending.current.has(surface)) return;
-    pending.current.add(surface);
     const sentence = sentenceOf(section, from)?.text || '';
+    // A word with a card shows the card at once: the meaning the user is
+    // learning, also offline. It used to go to the dictionary like a new
+    // word, so the sheet showed another meaning, or nothing when the
+    // dictionary could not be reached.
+    const own = cardForTerm(cardIndex, surface);
+    if (own) {
+      const item = toItem({ front: own.front, back: own.back, kind: own.kind || (single ? 'word' : 'phrase'), sourceSentence: sentence, selected: false, alreadyInDeck: true }, {
+        forms: single ? [surface] : [], ranges: single ? undefined : [[from, to]], at: from,
+      });
+      setItems(prev => [...prev, item]);
+      setSelectedUid(item.uid);
+      setSelection(null);
+      return;
+    }
+    pending.current.add(surface);
     const inDeck = hasCard(surface);
     const wantSense = useAi && !aiOff.current && !inDeck;
     const temp = toItem({ front: term, back: '…', kind: single ? 'word' : 'phrase', sourceSentence: sentence, selected: !inDeck, alreadyInDeck: inDeck }, {
@@ -1144,6 +1160,21 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   // small screens), or a card in the side column of a wide scrolling page.
   const sheets = (floating: boolean) => {
     const wide = floating ? '' : 'xl:hidden';
+    // A word with a card shows what the card says (also when the word came
+    // from "find hard words", which looked it up in a dictionary).
+    const ownCard = detail?.alreadyInDeck && detail.kind !== 'grammar' ? cardForTerm(cardIndex, detail.front) : undefined;
+    const shown: Item | undefined = detail && ownCard ? {
+      ...detail,
+      front: ownCard.front,
+      back: ownCard.back,
+      pronunciation: ownCard.pronunciation || detail.pronunciation,
+      partOfSpeech: ownCard.partOfSpeech || detail.partOfSpeech,
+      definition: ownCard.definition?.length ? ownCard.definition : detail.definition,
+      notes: ownCard.notes,
+      collocations: ownCard.collocations?.length ? ownCard.collocations : detail.collocations,
+      inContext: false,
+      senseLoading: false,
+    } : detail;
     if (noteDraft) return noteEditor(floating);
     if (notesOpenAt !== null && notesAt[notesOpenAt]?.length) return noteViewer(floating);
     return (
@@ -1171,27 +1202,32 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
               onOpenStructure={uid => { setSelection(null); setSelectedUid(uid); }}
               onClose={() => setSelection(null)}
             />
-          ) : detail && !detail.loading && (
+          ) : shown && !shown.loading && (
             // Below xl the list sits under the text, so the tapped word opens
             // as a sheet at the bottom of the screen, where the reader is.
             <section aria-label="جزئیات واژه"
               className={`${sheetClass(floating)} gap-2.5`}>
               <div dir="ltr" className="flex items-baseline gap-2.5 flex-wrap">
-                <span className="font-en font-bold text-2xl text-ink dark:text-white">{detail.front}</span>
-                {detail.pronunciation && <span className="text-ink-muted dark:text-slate-400">{detail.pronunciation}</span>}
-                {detail.level && <span className="font-en text-xs rounded-full bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-100 px-2 py-0.5" title="سطح واژه">{detail.level}</span>}
-                {isSpeechSupported() && detail.kind !== 'grammar' && (
-                  <button type="button" onClick={() => { readAloud.pause(); speakText(detail.front, { rate: 0.9 }); }} aria-label="پخش تلفظ" className="text-brand-500 dark:text-brand-300"><Icon.Speaker size={18} /></button>
+                <span className="font-en font-bold text-2xl text-ink dark:text-white">{shown.front}</span>
+                {shown.pronunciation && <span className="text-ink-muted dark:text-slate-400">{shown.pronunciation}</span>}
+                {shown.level && <span className="font-en text-xs rounded-full bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-100 px-2 py-0.5" title="سطح واژه">{shown.level}</span>}
+                {isSpeechSupported() && shown.kind !== 'grammar' && (
+                  <button type="button" onClick={() => { readAloud.pause(); speakText(shown.front, { rate: 0.9 }); }} aria-label="پخش تلفظ" className="text-brand-500 dark:text-brand-300"><Icon.Speaker size={18} /></button>
                 )}
                 <span className="flex-1" />
                 <button type="button" onClick={() => setSelectedUid(null)} aria-label="بستن" className={`${wide} w-9 h-9 -m-1.5 rounded-xl flex items-center justify-center text-ink-muted hover:bg-slate-100 dark:hover:bg-slate-700`}><Icon.Close size={18} /></button>
               </div>
-              <p className="text-ink dark:text-white">{detail.back}</p>
-              {(detail.inContext || detail.senseLoading) && (
-                <p className={`self-start text-xs rounded-full px-2.5 py-0.5 ${detail.inContext ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200' : 'bg-slate-100 text-ink-muted dark:bg-slate-700 dark:text-slate-300'}`}>
-                  {detail.kind === 'grammar'
-                    ? (detail.inContext ? 'توضیح برای همین جمله' : 'در حال نوشتن توضیح برای همین جمله…')
-                    : (detail.inContext ? 'معنی در همین جمله' : 'در حال پیدا کردن معنی در همین جمله…')}
+              <p className="text-ink dark:text-white">{shown.back}</p>
+              {ownCard && (
+                <p className="self-start text-xs rounded-full px-2.5 py-0.5 bg-brand-50 text-brand-800 dark:bg-brand-900/40 dark:text-brand-200">
+                  از کارت خودت · {STAGE_NAMES[masteryStage(ownCard)]}
+                </p>
+              )}
+              {(shown.inContext || shown.senseLoading) && (
+                <p className={`self-start text-xs rounded-full px-2.5 py-0.5 ${shown.inContext ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200' : 'bg-slate-100 text-ink-muted dark:bg-slate-700 dark:text-slate-300'}`}>
+                  {shown.kind === 'grammar'
+                    ? (shown.inContext ? 'توضیح برای همین جمله' : 'در حال نوشتن توضیح برای همین جمله…')
+                    : (shown.inContext ? 'معنی در همین جمله' : 'در حال پیدا کردن معنی در همین جمله…')}
                 </p>
               )}
               {detailRules.length > 0 && (
@@ -1203,22 +1239,22 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
                   ))}
                 </div>
               )}
-              {detail.grammarPattern && <p dir="ltr" className="font-mono text-sm text-rose-700 dark:text-rose-300">{detail.grammarPattern}</p>}
-              {detail.definition && detail.definition[0] && <p dir="ltr" className="text-sm text-ink-muted dark:text-slate-400">{detail.definition[0]}</p>}
-              {detail.collocations && detail.collocations.length > 0 && (
+              {shown.grammarPattern && <p dir="ltr" className="font-mono text-sm text-rose-700 dark:text-rose-300">{shown.grammarPattern}</p>}
+              {shown.definition && shown.definition[0] && <p dir="ltr" className="text-sm text-ink-muted dark:text-slate-400">{shown.definition[0]}</p>}
+              {shown.collocations && shown.collocations.length > 0 && (
                 <div dir="ltr" className="flex flex-wrap gap-1.5">
-                  {detail.collocations.slice(0, 5).map((c, i) => (
+                  {shown.collocations.slice(0, 5).map((c, i) => (
                     <span key={i} className="rounded-full border border-slate-200 dark:border-slate-600 px-2.5 py-0.5 text-[13px]">{c.phrase}</span>
                   ))}
                 </div>
               )}
-              {detail.notes && <p className="text-sm text-ink dark:text-slate-200">{detail.notes}</p>}
-              {detail.practicePrompt && (
-                <p className="text-sm rounded-xl bg-rose-50 dark:bg-rose-900/30 text-rose-900 dark:text-rose-100 px-3 py-2">تمرین: {detail.practicePrompt}</p>
+              {shown.notes && <p className="text-sm text-ink dark:text-slate-200">{shown.notes}</p>}
+              {shown.practicePrompt && (
+                <p className="text-sm rounded-xl bg-rose-50 dark:bg-rose-900/30 text-rose-900 dark:text-rose-100 px-3 py-2">تمرین: {shown.practicePrompt}</p>
               )}
-              {detail.exampleSentenceTarget?.[0] && detail.kind === 'grammar' && <p dir="ltr" className="text-sm text-ink dark:text-slate-200">{detail.exampleSentenceTarget[0]}</p>}
-              {detail.sourceSentence && <p dir="ltr" className="font-read text-sm italic text-ink-muted dark:text-slate-400 border-t border-slate-100 dark:border-slate-700 pt-2">“{detail.sourceSentence}”</p>}
-              {detailPlace && detail.kind !== 'grammar' && (
+              {shown.exampleSentenceTarget?.[0] && shown.kind === 'grammar' && <p dir="ltr" className="text-sm text-ink dark:text-slate-200">{shown.exampleSentenceTarget[0]}</p>}
+              {shown.sourceSentence && <p dir="ltr" className="font-read text-sm italic text-ink-muted dark:text-slate-400 border-t border-slate-100 dark:border-slate-700 pt-2">“{shown.sourceSentence}”</p>}
+              {detailPlace && shown.kind !== 'grammar' && (
                 <div className="flex flex-wrap gap-1.5">
                   <button type="button" disabled={detailPlace.from === 0} onClick={() => pick({ ...detailPlace, from: detailPlace.from - 1 })}
                     className="min-h-[36px] px-3 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-40">+ واژهٔ قبل</button>
@@ -1233,15 +1269,15 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
                 </div>
               )}
               <div className="flex flex-wrap items-center gap-3 pt-1">
-                {!detail.alreadyInDeck && (
+                {!shown.alreadyInDeck && (
                   <label className={`${wide} flex items-center gap-2 text-sm`}>
-                    <input type="checkbox" checked={!!detail.selected} onChange={() => toggle(detail.uid)} className="w-[18px] h-[18px] accent-brand-500" />
+                    <input type="checkbox" checked={!!shown.selected} onChange={() => toggle(shown.uid)} className="w-[18px] h-[18px] accent-brand-500" />
                     کارت ساخته شود
                   </label>
                 )}
-                {detail.kind !== 'grammar' && (detailKnownAs
+                {shown.kind !== 'grammar' && (detailKnownAs
                   ? <button type="button" onClick={() => onUnmarkKnown(detailKnownAs)} className="min-h-[40px] px-3 rounded-xl text-sm border border-slate-200 dark:border-slate-600">در فهرست «بلدم» است؛ بردار</button>
-                  : !detail.alreadyInDeck && <button type="button" onClick={() => markKnown(detail)} className="min-h-[40px] px-3 rounded-xl text-sm font-bold bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-900/40 dark:text-emerald-200">بلدم</button>)}
+                  : !shown.alreadyInDeck && <button type="button" onClick={() => markKnown(shown)} className="min-h-[40px] px-3 rounded-xl text-sm font-bold bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-900/40 dark:text-emerald-200">بلدم</button>)}
                 <span className="flex-1" />
                 {toSave.length > 0 && (
                   <button type="button" onClick={save} disabled={saving} className={`${wide} min-h-[44px] px-4 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-bold disabled:opacity-60`}>

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { KIND_LABEL } from '../services/cardKinds';
-import type { Chapter, ChapterText, Deck, ExtractedWordCard, Flashcard, KnownWord, Occurrence, Settings, Source, SourceKind } from '../types';
+import type { Chapter, ChapterText, Deck, ExtractedWordCard, Flashcard, KnownWord, Occurrence, Settings, Source, SourceKind, TextNote } from '../types';
 import type { StudyMode, View } from '../hooks/useAppLogic';
 import type { ImportedSource } from '../services/importers';
 import { chaptersOf, continuePoint, currentChunkOf, isChapterFinished, isChunkOpen, originText, sourceProgress } from '../services/library';
@@ -15,6 +15,7 @@ import { isDue } from '../services/srsService';
 import { coverageOf, knownByFrom, savedProfile } from '../services/coverage';
 import { AddSourceForm } from './AddSourceForm';
 import { BookCoverage } from './library/BookCoverage';
+import { SourceNotes } from './library/SourceNotes';
 import { ChapterPrestudy } from './library/ChapterPrestudy';
 import { CardCheckPanel } from './CardCheckPanel';
 import { fa, Icon, StageDots } from './common/ui';
@@ -54,6 +55,7 @@ interface LibraryViewProps {
   loadText: (chapterId: string) => Promise<ChapterText>;
   onStartSourceReview: (sourceId: string, chapterId?: string, mode?: StudyMode) => void;
   onPrestudyChapter: (chapterId: string, picks: { item: ExtractedWordCard; chunk: number }[]) => Promise<void>;
+  notes?: TextNote[]; // notes and kept translations, for a book's notes tab
 }
 
 // Cards met in each source: card id -> set of source ids, without deleted rows.
@@ -206,7 +208,7 @@ const SourceWords: React.FC<{ source: Source; chapters: Chapter[]; occurrences: 
 
 const SourcePage: React.FC<LibraryViewProps & { source: Source }> = props => {
   const { source, chapters: allChapters, occurrences, cards, decks, activeChapterId, onOpenSource, onOpenChapter, onOpenChunk, onDeleteSource } = props;
-  const [tab, setTab] = useState<'read' | 'words' | 'check'>('read');
+  const [tab, setTab] = useState<'read' | 'words' | 'notes' | 'check'>('read');
   const chapters = chaptersOf(source.id, allChapters);
   // This source's cards, each with the sentence of this source it was met in.
   const sourceCards: Flashcard[] = useMemo(() => {
@@ -234,6 +236,7 @@ const SourcePage: React.FC<LibraryViewProps & { source: Source }> = props => {
   const existingFronts: string[] = useMemo(() => cards.filter(c => !c.isDeleted).map(c => c.front), [cards]);
   // A section just finished here: its cards, for a short review.
   const review = props.sectionReview?.sourceId === source.id ? props.sectionReview : null;
+  const noteCount = useMemo(() => (props.notes || []).filter(n => n.sourceId === source.id && !n.isDeleted).length, [props.notes, source.id]);
   const reviewCount = useMemo(() => {
     if (!review) return 0;
     const live = new Set(cards.filter(c => !c.isDeleted).map(c => c.id));
@@ -292,7 +295,7 @@ const SourcePage: React.FC<LibraryViewProps & { source: Source }> = props => {
       )}
 
       <div role="tablist" className="flex gap-1 p-1 rounded-2xl bg-white dark:bg-slate-800 self-start">
-        {([['read', single ? 'مسیر خواندن' : 'فصل‌ها'], ['words', `واژه‌ها (${fa(cardCount)})`], ['check', flagged ? `بررسی (${fa(flagged)})` : 'بررسی']] as const).map(([id, label]) => (
+        {([['read', single ? 'مسیر خواندن' : 'فصل‌ها'], ['words', `واژه‌ها (${fa(cardCount)})`], ['notes', noteCount ? `یادداشت‌ها (${fa(noteCount)})` : 'یادداشت‌ها'], ['check', flagged ? `بررسی (${fa(flagged)})` : 'بررسی']] as const).map(([id, label]) => (
           <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
             className={`min-h-[40px] px-4 rounded-xl text-sm ${tab === id ? 'bg-brand-100 text-brand-700 font-bold dark:bg-brand-900/60 dark:text-brand-200' : 'text-ink-muted dark:text-slate-400'}`}>
             {label}
@@ -301,7 +304,9 @@ const SourcePage: React.FC<LibraryViewProps & { source: Source }> = props => {
         ))}
       </div>
 
-      {tab === 'check' ? (
+      {tab === 'notes' ? (
+        <SourceNotes source={source} chapters={chapters} notes={props.notes || []} onOpenChunk={onOpenChunk} />
+      ) : tab === 'check' ? (
         <CardCheckPanel cards={sourceCards} aiOptions={props.aiOptions} onCheckCards={props.onCheckCards} onEditCard={props.onEditCard} />
       ) : tab === 'words' ? (
         <SourceWords source={source} chapters={chapters} occurrences={occurrences} cards={cards} decks={decks} onEditCard={props.onEditCard} />

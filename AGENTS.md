@@ -4,6 +4,10 @@ Read this first. It is the hand-over from earlier sessions: what the project
 is, how to work on it, and what is still open. Keep it up to date when
 something here changes.
 
+The same notes serve opencode (reads AGENTS.md, MCP in `opencode.json` and
+the global `~/.config/opencode/opencode.jsonc`) and Claude Code (CLAUDE.md
+imports this file, MCP in `.mcp.json`). Keep both MCP lists alike.
+
 ## The user
 
 - Speaks Persian: answer in Persian, short and clear. Code, comments and
@@ -31,7 +35,12 @@ something here changes.
 ## Commands (Windows, PowerShell 5.1)
 
 - `npm install`, `npx tsc --noEmit` (type-check), `npm test` (node:test, ~290
-  tests), `npm run build`.
+  tests), `npm run build`, `npm run lint:hooks` (ESLint with only the two
+  React hooks rules; 7 old exhaustive-deps warnings still to review).
+- A changed package.json also needs bun.lock updated:
+  `npx -y bun@1 install --lockfile-only` (bun is not installed globally).
+- Context7 MCP gives current docs for Dexie, React 19, Vite, Tailwind: use it
+  before writing code against a library API you are unsure of.
 - The npm test output is long; write it to a file and read the tail:
   `npm test *> "$env:TEMP\opencode\test.log"; Get-Content "$env:TEMP\opencode\test.log" -Tail 8`
 - Do not rewrite files with `Set-Content`/`Out-File` (they add a BOM / break
@@ -99,6 +108,18 @@ exists; otherwise register). Stop it with
 
 ## What is done (latest first)
 
+- 7.7.0: a word that has a card shows the card in the reader
+  (services/cardLookup.ts, ChunkReaderView `lookUp` short-circuit and the
+  `shown` item in the sheet) and in a review's sentences (StudyView
+  `LinkedText`); "today's plan" (services/todayPlan.ts, TodayView); a book's
+  notes tab with Markdown export (components/library/SourceNotes.tsx,
+  services/notes.ts `notesMarkdown`); FSRS: "Again" = 10-minute step the
+  same day (interval 0), calendar days (`calendarDaysBetween`), a lapse only
+  for a learned card once a day; fixes: failed review save, `callProxy`
+  timeouts (25 s / 70 s, status 408), service worker trims least recently
+  used and never the start files, `fillEmptyFields` for "complete all",
+  file store hands out copies so rollback works. Tooling: ESLint hooks rules,
+  Context7, CLAUDE.md, .mcp.json.
 - 7.6.0: books as pages (components/reader/BookPages.tsx, book layout in
   components/ChunkReaderView.tsx), continuous sections, end-of-chapter page,
   Aa panel (type size, paper, justify), editing a section's text
@@ -112,21 +133,30 @@ exists; otherwise register). Stop it with
   its own review schedule; safe sign-out (another account's data is cleared);
   versions read from CHANGELOG.md.
 
+## Direction (from the user, 7.7.0)
+
+The app is first a way to read English books with ease; learning grows out
+of reading. The user does not like the Duolingo-style parts: XP, levels,
+combo, streak and freezes, achievements, confetti, "chest" sections, the
+word "garden". A plan to replace them was proposed (see the reply that
+shipped 7.7.0; phases A–D below). Ask before removing anything.
+
+- A. Calm mode: hide all game parts behind one setting, Today becomes
+  "continue reading" + plan; the end-of-session screen shows what was
+  learned, not points.
+- B. Reading flow: the reader as the home; pre-reading of a section's hard
+  words; a gloss over words with cards (meaning in the margin / above the
+  line, by stage); "what happened so far" recap when a book is reopened;
+  paragraph translation on long-press; reading speed and time per book.
+- C. Learning from the book: review inside the book (cards met on the page
+  just read), sentences from the book as cloze, coverage meter ("you know
+  93% of the words in the next chapter").
+- D. Progress that means something: words met in books, chapters read,
+  minutes read, known-word coverage per book, a yearly reading log.
+
 ## Open ideas (ask the user before starting)
 
-1. A page in the library listing all notes and kept translations of a book,
-   with export.
-2. One "today's plan" on the Today screen: due cards, due pronunciation items
-   and a reading section.
-3. FSRS fixes: lapses counted too often (services/srsService.ts), "same day"
-   measured as 24 h instead of the calendar date, no learning steps.
-4. From the first code review, still open: a failed save freezes a study
-   session (components/StudyView.tsx `rate`, no try/finally); no timeout on
-   `/api/proxy` requests (services/apiService.ts); the service worker trims
-   its cache oldest-first and can drop the main bundle
-   (public/service-worker.js); "auto-fix all" can overwrite reviews made
-   meanwhile (hooks/useAppLogic.ts handleCompleteCardDetails); the JSON file
-   store's rollback on a failed write does nothing (server/api.ts setKey,
-   getKey returns the cached object).
-5. Pronunciation has not yet been tried with a real voice and a real Gemini /
+1. The phases above.
+2. Pronunciation has not yet been tried with a real voice and a real Gemini /
    OpenRouter key on the deployed site; ask the user how it went.
+3. 7 old exhaustive-deps warnings (`npm run lint:hooks`).

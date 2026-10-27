@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateSrs, previewIntervals, memoryState, intervalForStability, retrievability, formatInterval } from '../services/srsService';
+import { calculateSrs, calendarDaysBetween, previewIntervals, memoryState, intervalForStability, retrievability, formatInterval } from '../services/srsService';
 import type { Flashcard } from '../types';
 
 const NOW = new Date('2026-10-08T10:00:00Z');
@@ -15,7 +15,7 @@ const days = (card: Flashcard) => card.interval;
 
 test('a new card gets the FSRS starting intervals, longer for easier answers', () => {
   const p = previewIntervals(newCard(), NOW);
-  assert.deepEqual(p, { AGAIN: 1, HARD: 1, GOOD: 3, EASY: 16 });
+  assert.deepEqual(p, { AGAIN: 0, HARD: 1, GOOD: 3, EASY: 16 });
   const good = calculateSrs(newCard(), 'GOOD', NOW);
   assert.ok(good.stability! > 3 && good.stability! < 3.3);
   assert.ok(good.difficulty! >= 1 && good.difficulty! <= 10);
@@ -47,7 +47,33 @@ test('forgetting a learned card lowers stability, counts a lapse and resets repe
   assert.ok(forgot.stability! < card.stability!);
   assert.equal(forgot.lapses, 1);
   assert.equal(forgot.repetition, 0);
-  assert.ok(forgot.interval >= 1);
+  assert.equal(forgot.interval, 0);
+  // Back the same day after a short step, not tomorrow.
+  assert.equal(Date.parse(forgot.dueDate) - t, 10 * 60 * 1000);
+});
+
+test('only forgetting a learned card is a lapse, once per day', () => {
+  // "Again" on a new card, and again while relearning it: no lapse.
+  const a1 = calculateSrs(newCard(), 'AGAIN', NOW);
+  const a2 = calculateSrs(a1, 'AGAIN', new Date(NOW.getTime() + 10 * 60 * 1000));
+  assert.equal(a2.lapses || 0, 0);
+  // Learned, then forgotten twice in one session: one lapse.
+  let card = calculateSrs(newCard(), 'GOOD', NOW);
+  const due = NOW.getTime() + card.interval * DAY;
+  card = calculateSrs(card, 'AGAIN', new Date(due));
+  card = calculateSrs(card, 'AGAIN', new Date(due + 10 * 60 * 1000));
+  assert.equal(card.lapses, 1);
+});
+
+test('days are counted on the calendar, not in 24-hour spans', () => {
+  const evening = new Date(2026, 9, 8, 23, 0);
+  const morning = new Date(2026, 9, 9, 8, 0); // 9 hours later, but the next day
+  const first = calculateSrs(newCard(), 'GOOD', evening);
+  const next = calculateSrs(first, 'GOOD', morning);
+  const sameDay = calculateSrs(first, 'GOOD', new Date(2026, 9, 8, 23, 30));
+  assert.ok(next.stability! > sameDay.stability!, 'the next morning counts as a day later');
+  assert.equal(calendarDaysBetween(evening.getTime(), morning.getTime()), 1);
+  assert.equal(calendarDaysBetween(new Date(2026, 9, 8, 8).getTime(), new Date(2026, 9, 8, 21).getTime()), 0);
 });
 
 test('a same-day repeat after Again uses the short-term rule and stays small', () => {
@@ -82,6 +108,7 @@ test('due dates fall on local midnight', () => {
 });
 
 test('intervals are labelled compactly', () => {
+  assert.equal(formatInterval(0), '10m');
   assert.equal(formatInterval(3), '3d');
   assert.equal(formatInterval(60), '2mo');
   assert.equal(formatInterval(365), '1y');

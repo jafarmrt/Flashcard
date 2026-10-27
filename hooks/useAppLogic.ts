@@ -35,7 +35,7 @@ import { AutoFixStats } from '../components/AutoFixReportModal';
 import { fa } from '../components/common/ui';
 import { EXTRA_FIELDS, EXTRAS_BATCH, extrasForCards, hasExtras, lacksExtras, parseSynonymsText, parseFamilyText, withExtras } from '../services/cardExtras';
 import { isPermanentAiError } from '../services/aiClient';
-import { applyProposal, withEditedContent } from '../services/cardRefresh';
+import { applyProposal, fillEmptyFields, withEditedContent } from '../services/cardRefresh';
 import type { ImprovementPick } from '../components/ImproveCardsPanel';
 
 // Types used within the hook and exported for the App component
@@ -1718,22 +1718,31 @@ export const useAppLogic = () => {
         if ((!cardToComplete.definition || cardToComplete.definition.length === 0) && details.definitions.length > 0) updates.def = true;
         if ((!cardToComplete.exampleSentenceTarget || cardToComplete.exampleSentenceTarget.length === 0) && details.exampleSentences.length > 0) updates.ex = true;
 
-        const updatedCard: Flashcard = {
-            ...cardToComplete,
-            pronunciation: cardToComplete.pronunciation || details.pronunciation,
-            partOfSpeech: cardToComplete.partOfSpeech || details.partOfSpeech,
-            definition: (cardToComplete.definition && cardToComplete.definition.length > 0) ? cardToComplete.definition : details.definitions,
-            exampleSentenceTarget: (cardToComplete.exampleSentenceTarget && cardToComplete.exampleSentenceTarget.length > 0) ? cardToComplete.exampleSentenceTarget : details.exampleSentences,
+        const found: Partial<Flashcard> = {
+            pronunciation: details.pronunciation,
+            partOfSpeech: details.partOfSpeech,
+            definition: details.definitions,
+            exampleSentenceTarget: details.exampleSentences,
             audioSrc: audioUrl,
             back: persianDetails.back,
-            notes: persianDetails.notes || '',
-            collocations: needsCollocations && enrichment?.collocations.length ? enrichment.collocations : cardToComplete.collocations,
-            updatedAt: new Date().toISOString()
+            notes: persianDetails.notes,
+            ...(needsCollocations && enrichment?.collocations.length ? { collocations: enrichment.collocations } : {}),
         };
 
-        await db.flashcards.put(updatedCard);
-        
-        // Performance Fix: Surgically update the state instead of re-fetching everything.
+        // The lookups above take seconds: the card is read again and only
+        // its still-empty parts are filled, so a review made meanwhile (or
+        // during "auto-fix all") keeps its new schedule.
+        const updatedCard = await db.transaction('rw', db.flashcards, async () => {
+            const stored = await db.flashcards.get(cardId);
+            if (!stored || stored.isDeleted) return null;
+            const { card, filled } = fillEmptyFields(stored, found);
+            if (filled.length === 0) return stored;
+            const next = { ...card, updatedAt: new Date().toISOString() };
+            await db.flashcards.put(next);
+            return next;
+        });
+        if (!updatedCard) return { success: false, updates };
+
         setFlashcards(prev => prev.map(c => c.id === updatedCard.id ? updatedCard : c));
 
         if (!options.silent) showToast(`کارت «${cardToComplete.front}» کامل شد.`);

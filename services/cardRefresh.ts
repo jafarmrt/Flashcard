@@ -239,6 +239,23 @@ export const parseCollocations = (value: string): Collocation[] =>
     return meaning ? { phrase, meaning } : { phrase };
   }).filter(c => c.phrase);
 
+const isEmptyValue = (v: unknown): boolean => v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0);
+
+// Content found for a card's empty parts, put on the card as the database
+// holds it now. Filling takes many seconds per card, and a review, an edit
+// or a sync may land meanwhile: the stored schedule and anything filled in
+// the meantime win, only parts still empty take the found value.
+export const fillEmptyFields = (stored: Flashcard, found: Partial<Flashcard>): { card: Flashcard; filled: (keyof Flashcard)[] } => {
+  const card: Flashcard = { ...stored };
+  const filled: (keyof Flashcard)[] = [];
+  for (const [field, value] of Object.entries(found) as [keyof Flashcard, unknown][]) {
+    if (isEmptyValue(value) || !isEmptyValue(stored[field])) continue;
+    (card as any)[field] = value;
+    filled.push(field);
+  }
+  return { card, filled };
+};
+
 const SCHEDULE_FIELDS = ['repetition', 'easinessFactor', 'interval', 'dueDate', 'stability', 'difficulty', 'lastReviewed', 'lapses'] as const;
 
 // An edited card's new content on one of a review session's copies of it,
