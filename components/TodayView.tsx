@@ -7,7 +7,7 @@ import type { StudyMode, View } from '../hooks/useAppLogic';
 import { calculateLevel } from '../services/gamificationService';
 import { stageCounts, STAGE_NAMES, MasteryStage } from '../services/masteryService';
 import { availableFreezes, dayString, weekStrip, weeklyReviewCounts } from '../services/streakService';
-import { chaptersOf, continuePoint, sourceProgress } from '../services/library';
+import { currentReading } from '../services/library';
 import { DEFAULT_DAILY_REVIEW_GOAL, SECTION_GOAL_REVIEWS } from '../services/xpRules';
 import { fa, GoalRing, Icon, Kbd, STAGE_COLORS, StreakChip } from './common/ui';
 
@@ -114,17 +114,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
   const totalWords = cards.length;
 
   // The book or article read most recently and not finished yet.
-  const reading = useMemo(() => {
-    const open = sources
-      .filter(s => !s.isDeleted)
-      .map(source => {
-        const list = chaptersOf(source.id, chapters);
-        return { source, list, progress: sourceProgress(list), next: continuePoint(source, list) };
-      })
-      .filter(r => r.next && !r.progress.finished)
-      .sort((a, b) => b.source.updatedAt.localeCompare(a.source.updatedAt));
-    return open[0];
-  }, [sources, chapters]);
+  const reading = useMemo(() => currentReading(sources, chapters), [sources, chapters]);
 
   // Today's plan: the next section, the due cards, the due sentences.
   const plan = useMemo(() => {

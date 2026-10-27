@@ -16,7 +16,7 @@ import { Sidebar, BottomTabs, AddFab } from './components/layout/Navigation';
 import { TodayView } from './components/TodayView';
 import { MeView } from './components/MeView';
 import { LibraryView } from './components/LibraryView';
-import { chaptersOf, currentChunkOf, placesByCard } from './services/library';
+import { chaptersOf, currentChunkOf, currentReading, placesByCard } from './services/library';
 import { knownTermSet } from './services/knownWords';
 import { isDue, isNewCard } from './services/srsService';
 import { dayString } from './services/streakService';
@@ -86,7 +86,7 @@ const App: React.FC = () => {
         syncStatus, studyMode, studySourceId, studyLogs, studySessionId, sources, chapters, occurrences,
         activeSourceId, activeChapterId, activeChunk, startQuickReview, openStudySetup,
         handleAddSource, handleOpenSource, handleOpenChapter, handleOpenChunk, handleDeleteSource,
-        handleCompleteChunk, loadChapterText, handleEditChunk, handleSaveReaderCards,
+        handleCompleteChunk, handleReadingTime, loadChapterText, handleEditChunk, handleSaveReaderCards,
         knownWords, speechAttempts, handleSaveSpeechAttempt, notes, handleSaveNote, sectionReview, handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview, handleCheckCards,
         handleStartSourceReview, handleReviewCards, handlePrestudyChapter,
         overlayEdit, openCardEditor, closeCardEditor, saveOverlayEdit,
@@ -113,6 +113,18 @@ const App: React.FC = () => {
     const existingFronts = useMemo(() => visibleFlashcards.map(c => c.front), [flashcards]);
     // Where each card was met while reading, shown on the card.
     const places = useMemo(() => placesByCard(occurrences, sources, chapters), [occurrences, sources, chapters]);
+
+    // "Open the app on the book": once, when the data is in, the page where
+    // reading stopped opens instead of Today.
+    const openedOnStart = useRef(false);
+    useEffect(() => {
+        if (openedOnStart.current || appLoading || !isLoggedIn) return;
+        openedOnStart.current = true;
+        if (!settings.openBookOnStart || view !== 'TODAY') return;
+        const reading = currentReading(sources, chapters);
+        if (reading?.next) handleOpenChunk(reading.next.chapter, reading.next.chunk);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [appLoading, isLoggedIn]);
 
     useEffect(() => {
         // The reader is fetched at once so a book opens offline even right
@@ -206,14 +218,16 @@ const App: React.FC = () => {
                     onUnmarkKnown={handleUnmarkKnown}
                     onUpdateSettings={updateSettings}
                     onSaveCards={cards => handleSaveReaderCards(cards, activeChapter.id, activeChunk)}
-                    onComplete={then => handleCompleteChunk(activeChapter.id, activeChunk, then)}
+                    onComplete={(then, ms) => handleCompleteChunk(activeChapter.id, activeChunk, then, ms)}
+                    onReadingTime={ms => handleReadingTime(activeSource.id, ms)}
+                    previousChapterId={bookChapters[bookChapters.findIndex(c => c.id === activeChapter.id) - 1]?.id}
                     onEditChunk={(i, text) => handleEditChunk(activeChapter.id, i, text)}
                     notes={notes.filter(n => n.chapterId === activeChapter.id)}
                     onSaveNote={handleSaveNote}
                     onBack={() => handleOpenChapter(activeChapter.id)}
                     onOpenChunk={i => handleOpenChunk(activeChapter, i)}
                     onReviewChapter={() => handleStartSourceReview(activeSource.id, bookChapters.length > 1 ? activeChapter.id : undefined)}
-                    nextChapter={following ? { title: following.title, open: () => handleOpenChunk(following, currentChunkOf(following)) } : undefined}
+                    nextChapter={following ? { id: following.id, title: following.title, open: () => handleOpenChunk(following, currentChunkOf(following)) } : undefined}
                     showToast={showToast}
                 />;
                 }

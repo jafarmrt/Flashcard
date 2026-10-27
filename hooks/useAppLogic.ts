@@ -7,6 +7,8 @@ import { unseenReleases } from '../services/changelog';
 import { calculateLevel, calculateStreak, checkAndAwardAchievements } from '../services/gamificationService';
 import { generateNewDailyGoals, updateGoalProgress, reviewGoalId } from '../services/dailyGoalsService';
 import { availableFreezes, dayString, daysToFreeze, MAX_HELD_FREEZES } from '../services/streakService';
+import { addReading } from '../services/readingTime';
+import { tokensOf } from '../services/lemma';
 import { DEFAULT_DAILY_REVIEW_GOAL, isChestSection, SECTION_GOAL_REVIEWS } from '../services/xpRules';
 import { isPlayful } from '../services/calm';
 import { buildSource, cardIndex, cardsInText, chaptersOf, cleanEditedText, findCard, markChunkDone, migrateTexts, newOccurrence, sectionReward, SourceInput } from '../services/library';
@@ -1292,7 +1294,22 @@ export const useAppLogic = () => {
   // the word was seen.
   // `then`: back to the book (the default), straight on to the next section
   // (reading page after page in book mode), or stay (the chapter's end page).
-  const handleCompleteChunk = async (chapterId: string, index: number, then: 'library' | 'next' | 'stay' = 'library') => {
+  // Active reading time on the book's log (services/readingTime): with the
+  // words of a section finished for the first time, or alone.
+  const recordReading = async (sourceId: string, ms: number, words = 0, sections = 0) => {
+    if (ms <= 0 && sections === 0) return;
+    const updated = await db.transaction('rw', db.sources, async () => {
+      const source = await db.sources.get(sourceId);
+      if (!source || source.isDeleted) return null;
+      const next = addReading(source, dayString(new Date()), ms, words, sections);
+      await db.sources.put(next);
+      return next;
+    }).catch(e => { console.warn('Saving reading time failed:', e); return null; });
+    if (updated) setSources(prev => prev.map(s => (s.id === updated.id ? updated : s)));
+  };
+  const handleReadingTime = (sourceId: string, ms: number) => { recordReading(sourceId, ms); };
+
+  const handleCompleteChunk = async (chapterId: string, index: number, then: 'library' | 'next' | 'stay' = 'library', activeMs = 0) => {
     const chapter = await db.chapters.get(chapterId);
     if (!chapter) return;
     const goOn = (current: Chapter) => {
@@ -1301,6 +1318,7 @@ export const useAppLogic = () => {
       setView('TEXTS');
     };
     if (!markChunkDone(chapter, index).firstTime) {
+      await recordReading(chapter.sourceId, activeMs);
       goOn(chapter);
       return;
     }
@@ -1329,6 +1347,7 @@ export const useAppLogic = () => {
       return;
     }
     setChapters(prev => prev.map(c => (c.id === updated.id ? updated : c)));
+    await recordReading(chapter.sourceId, activeMs, tokensOf(text).length, text.trim() ? 1 : 0);
     // A section left with no text (cut out by the reader) is passed over
     // without a reward.
     if (!text.trim()) {
@@ -1512,14 +1531,17 @@ export const useAppLogic = () => {
     if (!sectionReview) return;
     const ids = new Set(sectionReview.cardIds);
     setSectionReview(null);
-    setStudyMode('flip');
+    // The words in the sentences just read, each with its gap to fill.
+    setStudyMode('cloze');
     setStudyDeckId(null);
     handleStartStudySession({ filter: 'all-cards', limit: 0 }, null, flashcards.filter(c => ids.has(c.id)), 'TEXTS');
+    setStudySourceId(sectionReview.sourceId);
   };
 
   // Review the cards of one book or chapter: the due ones, or the weakest
-  // when none is due. Back to the book afterwards.
-  const handleStartSourceReview = (sourceId: string, chapterId?: string, mode: StudyMode = 'flip') => {
+  // when none is due. Back to the book afterwards. By default each word is
+  // asked in a sentence of the book, with a gap (cloze).
+  const handleStartSourceReview = (sourceId: string, chapterId?: string, mode: StudyMode = 'cloze') => {
     const mine = cardsOfSource(occurrences, flashcards, sourceId, chapterId);
     if (mine.length === 0) {
       showToast(chapterId ? 'هنوز از این فصل کارتی نساخته‌ای.' : 'هنوز از این کتاب کارتی نساخته‌ای.');
@@ -1930,7 +1952,7 @@ export const useAppLogic = () => {
       updateSettings, handleCheckAchievements, handleGoalUpdate, handleCompleteCardDetails,
       handleAutoFixCards, handleStopAutoFix, handleCloseAutoFixReport, handleSaveExtractedCards,
       startQuickReview, openStudySetup, setStudyMode, handleAddSource, handleOpenSource, handleOpenChapter, handleOpenChunk,
-      handleDeleteSource, handleCompleteChunk, loadChapterText, handleEditChunk, handleSaveReaderCards,
+      handleDeleteSource, handleCompleteChunk, handleReadingTime, loadChapterText, handleEditChunk, handleSaveReaderCards,
       handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview: () => setSectionReview(null),
       handleCheckCards, handleStartSourceReview, handleReviewCards, handlePrestudyChapter,
       handleFillExtras, handleStopFillExtras, handleSaveCardContent, handleApplyImprovements,

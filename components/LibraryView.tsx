@@ -302,15 +302,15 @@ const SourcePage: React.FC<LibraryViewProps & { source: Source }> = props => {
         {source.url && <a href={source.url} target="_blank" rel="noopener noreferrer" dir="ltr" className="font-en text-xs text-brand-500 dark:text-brand-300 truncate hover:underline">{source.url}</a>}
         {scopeCards.length > 0 && (
           <div className="flex flex-wrap gap-2 pt-1">
-            <button type="button" onClick={() => props.onStartSourceReview(source.id, scopeChapter?.id, 'flip')}
+            <button type="button" onClick={() => props.onStartSourceReview(source.id, scopeChapter?.id, 'cloze')} title="هر واژه در جمله‌ای از همین کتاب، با جای خالی"
               className="min-h-[44px] px-4 rounded-xl bg-ink text-white dark:bg-white dark:text-ink font-bold inline-flex items-center gap-2">
               {scopeChapter ? 'مرور واژه‌های این فصل' : 'مرور واژه‌های این کتاب'}
               <span className="rounded-full bg-white/20 dark:bg-ink/10 text-xs px-2 py-0.5">{scopeDue > 0 ? `${fa(scopeDue)} موعد` : `${fa(scopeCards.length)} کارت`}</span>
             </button>
-            <button type="button" onClick={() => props.onStartSourceReview(source.id, scopeChapter?.id, 'cloze')}
-              title="واژه در جمله‌ای از همین کتاب جا افتاده؛ بنویسش"
+            <button type="button" onClick={() => props.onStartSourceReview(source.id, scopeChapter?.id, 'flip')}
+              title="کارت‌ها را برگردان و ببین یادت هست یا نه"
               className="min-h-[44px] px-4 rounded-xl border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 font-bold">
-              جای خالی در جمله‌های کتاب
+              مرور با برگرداندن کارت
             </button>
           </div>
         )}

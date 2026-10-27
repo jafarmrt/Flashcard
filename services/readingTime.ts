@@ -15,14 +15,14 @@ const MAX_SECTION_MS = 45 * 60_000;
 
 export const emptyDay = (): ReadingDay => ({ ms: 0, words: 0, sections: 0 });
 
-// One finished section on the book's log.
-export const addReading = (source: Source, day: string, ms: number, words: number, now: Date = new Date()): Source => {
+// Reading time on the book's log, with the words and sections finished in it.
+export const addReading = (source: Source, day: string, ms: number, words: number, sections = 1, now: Date = new Date()): Source => {
   const log = { ...(source.reading || {}) };
   const before = log[day] || emptyDay();
   log[day] = {
     ms: before.ms + Math.max(0, Math.min(ms, MAX_SECTION_MS)),
     words: before.words + Math.max(0, words),
-    sections: before.sections + 1,
+    sections: before.sections + sections,
   };
   return { ...source, reading: log, updatedAt: now.toISOString() };
 };
