@@ -7,6 +7,8 @@ import { chaptersOf, continuePoint, currentChunkOf, isChapterFinished, isChunkOp
 import { masteryStage, STAGE_NAMES } from '../services/masteryService';
 import { convertToCSV, downloadCSV } from '../services/csvService';
 import { isChestSection } from '../services/xpRules';
+import { isPlayful } from '../services/calm';
+import { minutes, minutesFor, totalOf, wordsPerMinute } from '../services/readingTime';
 import { knownList } from '../services/knownWords';
 import { needsCheck } from '../services/cardCheck';
 import type { AiRequestOptions } from '../services/geminiService';
@@ -79,9 +81,36 @@ const ProgressBar: React.FC<{ percent: number; done?: boolean }> = ({ percent, d
 
 // --- A chapter as a path of 300-word sections, a chest every third ---
 
-const ChapterPath: React.FC<{ chapter: Chapter; onOpenChunk: (i: number) => void }> = ({ chapter, onOpenChunk }) => {
+const ChapterPath: React.FC<{ chapter: Chapter; onOpenChunk: (i: number) => void; playful?: boolean; wpm?: number | null }> = ({ chapter, onOpenChunk, playful = false, wpm = null }) => {
   const current = currentChunkOf(chapter);
   const finished = isChapterFinished(chapter);
+  if (!playful) {
+    // Calm mode: the sections as a table of contents, with the time each
+    // takes at the reader's own pace.
+    const perSection = minutesFor(chapter.wordCount / Math.max(1, chapter.chunkCount), wpm);
+    return (
+      <ol className="bg-white dark:bg-slate-800 rounded-3xl p-2 flex flex-col" aria-label="بخش‌های فصل">
+        {Array.from({ length: chapter.chunkCount }, (_, i) => {
+          const done = chapter.completed.includes(i);
+          const isCurrent = !finished && i === current;
+          const open = isChunkOpen(chapter, i);
+          return (
+            <li key={i}>
+              <button type="button" disabled={!open} onClick={() => onOpenChunk(i)}
+                className={`w-full flex items-center gap-3 min-h-[52px] px-3 rounded-2xl text-right disabled:opacity-50 ${isCurrent ? 'bg-brand-50 dark:bg-brand-900/40' : 'hover:bg-slate-50 dark:hover:bg-slate-700/50'}`}>
+                <span className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${done ? 'bg-emerald-600 text-white' : isCurrent ? 'bg-brand-500 text-white' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300'}`}>
+                  {done ? <Icon.Check size={16} /> : fa(i + 1)}
+                </span>
+                <span className={`flex-1 ${isCurrent ? 'font-bold text-ink dark:text-white' : 'text-ink dark:text-slate-200'}`}>بخش {fa(i + 1)}{isCurrent ? ' · اینجایی' : ''}</span>
+                <span className="text-xs text-ink-muted dark:text-slate-400 whitespace-nowrap">{done ? 'خوانده شد' : `حدود ${fa(perSection)} دقیقه`}</span>
+              </button>
+            </li>
+          );
+        })}
+        {finished && <li className="text-center font-bold text-emerald-700 dark:text-emerald-300 py-3">همهٔ بخش‌های این فصل را خواندی.</li>}
+      </ol>
+    );
+  }
   const offsets = [0, 56, 84, 56, 0, -56, -84, -56]; // zigzag in px
   return (
     <div className="flex flex-col gap-5">
@@ -223,6 +252,9 @@ const SourcePage: React.FC<LibraryViewProps & { source: Source }> = props => {
   }, [cards, occurrences, source.id]);
   const flagged: number = useMemo(() => sourceCards.filter(needsCheck).length, [sourceCards]);
   const progress = sourceProgress(chapters);
+  const readTotal = totalOf(source.reading);
+  const wpm = wordsPerMinute(readTotal);
+  const wordsLeft = Math.max(0, progress.words - Math.round(progress.words * progress.done / Math.max(1, progress.sections)));
   const cardCount = useCardsBySource(occurrences, cards).get(source.id)?.size || 0;
   const single = chapters.length === 1;
   const activeChapter = chapters.find(c => c.id === activeChapterId) || (single ? chapters[0] : undefined);
@@ -264,6 +296,8 @@ const SourcePage: React.FC<LibraryViewProps & { source: Source }> = props => {
           <span className="rounded-full bg-slate-100 dark:bg-slate-700 px-3 py-1">{fa(progress.words)} واژه، {chapters.length > 1 ? `${fa(chapters.length)} فصل، ` : ''}{fa(progress.sections)} بخش</span>
           <span className="rounded-full bg-emerald-100 text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100 px-3 py-1">{fa(progress.percent)}٪ خوانده شده</span>
           <span className="rounded-full bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100 px-3 py-1">{fa(cardCount)} کارت</span>
+          {readTotal.ms > 0 && <span className="rounded-full bg-slate-100 dark:bg-slate-700 px-3 py-1" title="زمان خواندن فعال">{fa(minutes(readTotal.ms))} دقیقه خوانده‌ای{wpm ? ` · ${fa(wpm)} واژه در دقیقه` : ''}</span>}
+          {!progress.finished && progress.done > 0 && <span className="rounded-full bg-slate-100 dark:bg-slate-700 px-3 py-1">حدود {fa(minutesFor(wordsLeft, wpm))} دقیقه تا پایان</span>}
         </div>
         {source.url && <a href={source.url} target="_blank" rel="noopener noreferrer" dir="ltr" className="font-en text-xs text-brand-500 dark:text-brand-300 truncate hover:underline">{source.url}</a>}
         {scopeCards.length > 0 && (
@@ -317,7 +351,7 @@ const SourcePage: React.FC<LibraryViewProps & { source: Source }> = props => {
             <ChapterPrestudy chapter={activeChapter} settings={props.settings} existingFronts={existingFronts} knownTerms={props.knownTerms}
               loadText={props.loadText} onPrestudy={props.onPrestudyChapter} />
           )}
-          <ChapterPath chapter={activeChapter} onOpenChunk={i => onOpenChunk(activeChapter, i)} />
+          <ChapterPath chapter={activeChapter} onOpenChunk={i => onOpenChunk(activeChapter, i)} playful={isPlayful(props.settings)} wpm={wpm} />
           {!isChapterFinished(activeChapter) && (
             <button type="button" onClick={() => onOpenChunk(activeChapter, currentChunkOf(activeChapter))}
               className="sticky bottom-24 md:bottom-6 self-center min-h-[56px] px-10 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold text-lg shadow-lg">

@@ -21,6 +21,7 @@ import { knownTermSet } from './services/knownWords';
 import { isDue, isNewCard } from './services/srsService';
 import { dayString } from './services/streakService';
 import { DEFAULT_DAILY_REVIEW_GOAL } from './services/xpRules';
+import { isPlayful } from './services/calm';
 import { AutoFixReportModal } from './components/AutoFixReportModal';
 
 // Screens opened now and then load on first use, so the app starts faster.
@@ -92,6 +93,7 @@ const App: React.FC = () => {
         handleFillExtras, handleStopFillExtras, extrasProgress, handleSaveCardContent, handleApplyImprovements,
     } = useAppLogic();
 
+    const playful = isPlayful(settings);
     const visibleFlashcards = useMemo(() => flashcards.filter(c => !c.isDeleted), [flashcards]);
     const knownTerms = useMemo(() => Array.from(knownTermSet(knownWords)), [knownWords]);
     const visibleDecks = decks.filter(d => !d.isDeleted);
@@ -142,9 +144,11 @@ const App: React.FC = () => {
                     onNavigate={handleNavigate}
                     onOpenChunk={handleOpenChunk}
                     speechAttempts={speechAttempts}
+                    playful={playful}
                 />;
             case 'ME':
                 return <MeView
+                    playful={playful}
                     userProfile={userProfile}
                     username={currentUser?.username}
                     streak={streak}
@@ -228,6 +232,7 @@ const App: React.FC = () => {
                     onEditCard={openCardEditor}
                     onSaveCard={handleSaveCardContent}
                     allCards={visibleFlashcards}
+                    playful={playful}
                 />;
             case 'PRACTICE':
                 return <PracticeView cards={visibleFlashcards} occurrences={occurrences} speechAttempts={speechAttempts} onSaveSpeechAttempt={handleSaveSpeechAttempt} aiOptions={aiRequestOptions(settings)} audioOptions={pronunciationOptions(settings)} awardXP={userProfile ? (points) => handleGoalUpdate('QUIZ', points, true) : () => {}} onQuizComplete={(score) => {
@@ -296,6 +301,7 @@ const App: React.FC = () => {
                 return <AchievementsView earnedAchievements={earnedAchievements} onBack={() => setView('SETTINGS')} />;
             case 'PROFILE':
                 return <ProfileView
+                    playful={playful}
                     userProfile={userProfile}
                     streak={streak}
                     onSave={handleSaveProfile}
@@ -366,6 +372,7 @@ const App: React.FC = () => {
         <div dir="rtl" className="min-h-screen flex bg-[#F5F6FA] dark:bg-slate-950 font-fa">
             {!fullScreen && (
                 <Sidebar
+                    playful={playful}
                     view={view}
                     dueCount={dueCards.length}
                     userProfile={userProfile}

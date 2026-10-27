@@ -11,6 +11,7 @@ import { cardsInText, isChunkOpen } from '../services/library';
 import { isKnownTerm, knownMatch } from '../services/knownWords';
 import { masteryStage, STAGE_NAMES } from '../services/masteryService';
 import { cardForTerm, indexCards } from '../services/cardLookup';
+import { isPlayful } from '../services/calm';
 import { phraseRanges, rangeText, readerSection, sentenceOf } from '../services/readerText';
 import { analyzeSentence, grammarCards, Sense, SenseBatcher, sensesInContext } from '../services/senseService';
 import { detectGrammar, ruleById } from '../services/grammarPatterns';
@@ -209,6 +210,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   };
   const knownSet = useMemo(() => new Set(knownTerms), [knownTerms]);
   const cardIndex = useMemo(() => indexCards(cards), [cards]);
+  const playful = isPlayful(settings);
 
   // Words of this section that already have a card; finishing the section
   // adds this place to them.
@@ -1452,7 +1454,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
               {waiting > 0 && <p className="text-center text-xs text-ink-muted dark:text-slate-400">معنی {fa(waiting)} واژه در همین جمله هنوز در راه است.</p>}
               {saved && <p className="text-center text-sm text-emerald-700 dark:text-emerald-300">کارت‌ها ساخته شد و در مرور بعدی می‌آیند.</p>}
               <p className="text-xs text-ink-muted dark:text-slate-400 leading-relaxed">
-                با ورق زدن از صفحهٔ آخر، این بخش تمام می‌شود (+{fa(CHUNK_COMPLETE_XP)} امتیاز{isChestSection(index) ? ' و صندوق جایزه' : ''}) و بخش بعد می‌آید.
+                با ورق زدن از صفحهٔ آخر، این بخش تمام می‌شود{playful ? ` (+${fa(CHUNK_COMPLETE_XP)} امتیاز${isChestSection(index) ? ' و صندوق جایزه' : ''})` : ''} و بخش بعد می‌آید.
                 {!done && metAgain > 0 && <> {fa(metAgain)} واژهٔ این بخش از قبل کارت دارد؛ دیده‌شدنشان در این کتاب ثبت می‌شود.</>}
               </p>
             </aside>
@@ -1580,7 +1582,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
             {waiting > 0 && <p className="text-center text-xs text-ink-muted dark:text-slate-400">معنی {fa(waiting)} واژه در همین جمله هنوز در راه است.</p>}
             <button type="button" onClick={finish}
               className={`min-h-[52px] rounded-2xl font-extrabold ${toSave.length === 0 ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'border-2 border-emerald-600 text-emerald-800 dark:text-emerald-200'}`}>
-              {done ? 'برگشت به مسیر' : `پایان این بخش (+${fa(CHUNK_COMPLETE_XP)} امتیاز${isChestSection(index) ? ' و صندوق جایزه' : ''})`}
+              {done ? 'برگشت به مسیر' : playful ? `پایان این بخش (+${fa(CHUNK_COMPLETE_XP)} امتیاز${isChestSection(index) ? ' و صندوق جایزه' : ''})` : 'پایان این بخش'}
             </button>
             {saved && <p className="text-center text-sm text-emerald-700 dark:text-emerald-300">کارت‌ها ساخته شد و در مرور بعدی می‌آیند.</p>}
             {!done && metAgain > 0 && (

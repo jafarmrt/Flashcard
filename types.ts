@@ -196,12 +196,18 @@ export interface Settings {
     readerJustify?: boolean; // justified text in book mode (default on)
     pronunciationService?: 'auto' | 'gemini' | 'openrouter'; // who listens in pronunciation practice; auto: Gemini, then OpenRouter
     orAudioModel?: string; // the OpenRouter model that listens (one that takes audio)
+    playful?: boolean; // points, levels, streaks, combos, badges and confetti; off (unset): calm mode
+    readerGloss?: 'off' | 'new' | 'learning'; // a word's meaning from its card above it in the text, while the card is new (default) or still being learned
+    openBookOnStart?: boolean; // the app opens on the page of the book being read
     updatedAt?: string; // when settings last changed; the newest wins across devices
 }
 
 // A book, an article or a pasted text in the library. Its words go to one
 // deck (by id, so renaming the deck keeps the link).
 export type SourceKind = 'book' | 'article' | 'text';
+
+// One day of reading a book: active minutes, words and sections finished.
+export interface ReadingDay { ms: number; words: number; sections: number }
 
 export interface Source {
   id: string;
@@ -211,6 +217,7 @@ export interface Source {
   url?: string; // where an article came from
   deckId: string;
   position?: { chapterId: string; chunk: number }; // where reading stopped
+  reading?: Record<string, ReadingDay>; // active reading time per local day (services/readingTime)
   createdAt: string;
   updatedAt: string;
   isDeleted?: boolean;

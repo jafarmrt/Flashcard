@@ -8,6 +8,7 @@ import { calculateLevel, calculateStreak, checkAndAwardAchievements } from '../s
 import { generateNewDailyGoals, updateGoalProgress, reviewGoalId } from '../services/dailyGoalsService';
 import { availableFreezes, dayString, daysToFreeze, MAX_HELD_FREEZES } from '../services/streakService';
 import { DEFAULT_DAILY_REVIEW_GOAL, isChestSection, SECTION_GOAL_REVIEWS } from '../services/xpRules';
+import { isPlayful } from '../services/calm';
 import { buildSource, cardIndex, cardsInText, chaptersOf, cleanEditedText, findCard, markChunkDone, migrateTexts, newOccurrence, sectionReward, SourceInput } from '../services/library';
 import { cardsOfSource, pickBookReview } from '../services/readingStats';
 import { normalizeTerm } from '../services/vocabMerge';
@@ -251,6 +252,10 @@ export const useAppLogic = () => {
     toastShownAt.current = Date.now();
     toastTimer.current = message === undefined ? null : setTimeout(nextToast, toastQueue.current.length ? TOAST_MIN_MS : TOAST_MS);
   };
+  // Points, levels, badges and streak news only in playful mode (services/calm).
+  const playfulRef = useRef(false);
+  playfulRef.current = isPlayful(settings);
+  const gameToast = (message: string) => { if (playfulRef.current) showToast(message); };
   const showToast = (message: string) => {
     const queue = toastQueue.current;
     if (queue[queue.length - 1] === message) return;
@@ -404,7 +409,7 @@ export const useAppLogic = () => {
             const achievementData = ALL_ACHIEVEMENTS.find(a => a.id === ua.achievementId);
             if (achievementData) {
                 setTimeout(() => {
-                  showToast(`نشان تازه: ${achievementData.name} ${achievementData.icon}`);
+                  gameToast(`نشان تازه: ${achievementData.name} ${achievementData.icon}`);
                 }, 500);
             }
         });
@@ -433,8 +438,8 @@ export const useAppLogic = () => {
       return { ...p, xp, level: calculateLevel(xp).level };
     });
     if (!result) return;
-    if (message) showToast(message);
-    if (result.after.level > result.before.level) showToast(`به سطح ${fa(result.after.level)} رسیدی! 🎉`);
+    if (message) gameToast(message);
+    if (result.after.level > result.before.level) gameToast(`به سطح ${fa(result.after.level)} رسیدی! 🎉`);
     handleCheckAchievements();
   };
 
@@ -459,11 +464,11 @@ export const useAppLogic = () => {
     if (xpGained > 0) await awardXP(xpGained);
 
     newlyCompletedGoals.forEach(goal => {
-        setTimeout(() => showToast(`هدف امروز کامل شد. +${fa(goal.xp)} امتیاز`), 500);
+        setTimeout(() => gameToast(`هدف امروز کامل شد. +${fa(goal.xp)} امتیاز`), 500);
     });
 
     if (result.after.dailyGoals?.allCompleteAwarded && !result.before.dailyGoals?.allCompleteAwarded) {
-        setTimeout(() => showToast(`همهٔ هدف‌های امروز کامل شد! +${fa(50)} امتیاز ✨`), newlyCompletedGoals.length > 0 ? 1000 : 500);
+        setTimeout(() => gameToast(`همهٔ هدف‌های امروز کامل شد! +${fa(50)} امتیاز ✨`), newlyCompletedGoals.length > 0 ? 1000 : 500);
     }
   };
 
@@ -1341,6 +1346,11 @@ export const useAppLogic = () => {
         ? `فصل تمام شد! 📖 +${fa(xp)} امتیاز${met}`
         : `بخش ${fa(index + 1)} تمام شد. +${fa(xp)} امتیاز${met}`;
     await awardXP(xp, message);
+    // Calm mode: what was read, without points.
+    if (!playfulRef.current) {
+      const metCalm = seenAgain.length ? `؛ ${fa(seenAgain.length)} واژهٔ کارت‌دار دوباره دیده شد` : '';
+      showToast(bookDone ? 'کتاب را تمام کردی.' : chapterDone ? `فصل تمام شد${metCalm}.` : `بخش ${fa(index + 1)} خوانده شد${metCalm}.`);
+    }
     // Reading counts toward the daily goal.
     await handleGoalUpdate('STUDY', SECTION_GOAL_REVIEWS);
     if (isChestSection(index)) {
@@ -1348,7 +1358,7 @@ export const useAppLogic = () => {
         ? { ...p, streakFreezesEarned: (p.streakFreezesEarned || 0) + 1 }
         : p));
       if (result && result.after.streakFreezesEarned !== result.before.streakFreezesEarned) {
-        setTimeout(() => showToast('صندوق جایزه: یک محافظ زنجیره گرفتی.'), 1200);
+        setTimeout(() => gameToast('صندوق جایزه: یک محافظ زنجیره گرفتی.'), 1200);
       }
     }
     goOn(updated);

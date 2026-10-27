@@ -725,10 +725,20 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                         {LEVELS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
                     </select>
                 </Row>
-                <Row title="هدف روزانهٔ مرور" hint="تعداد مرور در روز برای حلقهٔ هدف در صفحهٔ امروز؛ هر بخشی که می‌خوانی ۵ مرور حساب می‌شود. تغییر از همین امروز حساب می‌شود، مگر هدف امروز کامل شده باشد.">
+                <Row title="معنی بالای واژه‌های کارت‌دار" hint="هنگام خواندن، معنی کوتاه کارت خودت با خط ریز بالای واژه نوشته می‌شود تا لازم نباشد رویش بزنی؛ وقتی واژه را یاد گرفتی، خودش کنار می‌رود.">
+                    <Segmented label="معنی بالای واژه" value={settings.readerGloss || 'new'} onChange={readerGloss => onUpdateSettings({ readerGloss })}
+                        options={[{ value: 'off', label: 'هیچ‌کدام' }, { value: 'new', label: 'واژه‌های تازه' }, { value: 'learning', label: 'تا وقتی آشنا شود' }]} />
+                </Row>
+                <Row title="باز شدن برنامه روی کتاب" hint="با باز کردن برنامه، مستقیم به صفحه‌ای از کتاب بروی که آن‌جا ماندی.">
+                    <input type="checkbox" checked={!!settings.openBookOnStart} onChange={e => onUpdateSettings({ openBookOnStart: e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="باز شدن برنامه روی کتاب" />
+                </Row>
+                <Row title="امتیاز، سطح، زنجیره و نشان‌ها" hint="خاموش (حالت آرام): پیشرفت به شکل خواندن و یادگیری نشان داده می‌شود. روشن: امتیاز، سطح، زنجیرهٔ روزها، پیاپی‌ها، نشان‌ها و جشن پایان هدف هم دیده می‌شوند. چیزی پاک نمی‌شود؛ امتیازها در هر دو حالت شمرده می‌شوند.">
+                    <input type="checkbox" checked={!!settings.playful} onChange={e => onUpdateSettings({ playful: e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="امتیاز، سطح، زنجیره و نشان‌ها" />
+                </Row>
+                {settings.playful && <Row title="هدف روزانهٔ مرور" hint="تعداد مرور در روز برای حلقهٔ هدف در صفحهٔ امروز؛ هر بخشی که می‌خوانی ۵ مرور حساب می‌شود. تغییر از همین امروز حساب می‌شود، مگر هدف امروز کامل شده باشد.">
                     <Segmented label="هدف روزانه" value={settings.dailyReviewGoal || 20} onChange={goal => onUpdateSettings({ dailyReviewGoal: goal })}
                         options={[10, 20, 30, 50].map(n => ({ value: n, label: fa(n) }))} />
-                </Row>
+                </Row>}
                 <ExtractKinds settings={settings} onUpdateSettings={onUpdateSettings} />
                 <Row title="پیش‌خوانی خودکار" hint="پیش از هر بخش کتاب، واژه‌های سخت آن یک بار نشان داده شود.">
                     <input type="checkbox" checked={!!settings.preReadAuto} onChange={e => onUpdateSettings({ preReadAuto: e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="پیش‌خوانی خودکار" />
@@ -799,9 +809,9 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                 <Row title="پروفایل" hint="نام، معرفی و پیشرفت.">
                     <button type="button" onClick={onNavigateToProfile} className={button}>پروفایل</button>
                 </Row>
-                <Row title="نشان‌ها" hint="نشان‌ها و رکوردهایی که گرفته‌ای.">
+                {settings.playful && <Row title="نشان‌ها" hint="نشان‌ها و رکوردهایی که گرفته‌ای.">
                     <button type="button" onClick={onNavigateToAchievements} className={button}>نشان‌ها</button>
-                </Row>
+                </Row>}
                 <Row title="نسخهٔ برنامه" hint="تغییرات هر نسخه.">
                     <div className="flex items-center gap-2">
                         <span dir="ltr" className="font-en text-sm rounded-full bg-slate-100 dark:bg-slate-700 px-3 py-1">{APP_VERSION}</span>

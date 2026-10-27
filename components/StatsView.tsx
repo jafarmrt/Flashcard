@@ -111,7 +111,7 @@ export const StatsView: React.FC<StatsViewProps> = ({ cards, sources, occurrence
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Tile value={`${fa(streak)} روز`} label="زنجیرهٔ مطالعه" tone="text-flame-500 dark:text-orange-300" />
         <Tile value={fa(month)} label="مرور در ۳۰ روز" />
-        <Tile value={fa(learned)} label="واژهٔ آموخته (درخت و ریشه‌دار)" tone="text-emerald-700 dark:text-emerald-300" />
+        <Tile value={fa(learned)} label="واژهٔ آموخته (آشنا و بلدم)" tone="text-emerald-700 dark:text-emerald-300" />
         <Tile value={fa(live.length)} label="همهٔ کارت‌ها" />
       </div>
 
@@ -169,7 +169,7 @@ export const StatsView: React.FC<StatsViewProps> = ({ cards, sources, occurrence
           )}
         </Panel>
 
-        <Panel title="رشد واژه‌ها" hint="هر کارت با مرورهای درست از دانه تا ریشه‌دار رشد می‌کند.">
+        <Panel title="رشد واژه‌ها" hint="هر کارت با مرورهای درست از «تازه» تا «بلدم» پیش می‌رود.">
           <ul className="flex flex-col gap-2">
             {([0, 1, 2, 3, 4] as MasteryStage[]).map(stage => {
               const pct = Math.round((stages[stage] / Math.max(1, live.length)) * 100);
