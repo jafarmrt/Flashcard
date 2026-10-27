@@ -128,8 +128,8 @@ export const ReaderText: React.FC<ReaderTextProps> = ({ section, selection, clas
       onContextMenu={e => { if ((e.target as HTMLElement).closest('[data-wi]')) e.preventDefault(); }}
       style={book ? { fontSize: book.fontSize, textAlign: book.justify ? 'justify' : 'left', hyphens: book.justify ? 'auto' : 'manual', WebkitHyphens: book.justify ? 'auto' : 'manual' } : undefined}
       className={book
-        ? `font-read ${glossed ? 'leading-[2.15]' : 'leading-[1.75]'} select-none [-webkit-touch-callout:none]`
-        : `font-read text-[17px] md:text-[19px] ${glossed ? 'leading-[2.3]' : 'leading-[2]'} text-slate-800 dark:text-slate-100 max-w-[68ch] select-none [-webkit-touch-callout:none]`}>
+        ? `font-read ${glossed ? 'leading-[2.5]' : 'leading-[1.75]'} select-none [-webkit-touch-callout:none]`
+        : `font-read text-[17px] md:text-[19px] ${glossed ? 'leading-[2.6]' : 'leading-[2]'} text-slate-800 dark:text-slate-100 max-w-[68ch] select-none [-webkit-touch-callout:none]`}>
       {section.paragraphs.map((p, pi) => {
         const parts: React.ReactNode[] = [];
         let cursor = p.start;
@@ -152,7 +152,7 @@ export const ReaderText: React.FC<ReaderTextProps> = ({ section, selection, clas
                 {w.text}
                 {glosses?.[w.i] && (
                   <span aria-hidden="true" dir="rtl" lang="fa"
-                    className="absolute left-1/2 -translate-x-1/2 -top-[0.95em] whitespace-nowrap font-fa font-normal not-italic text-[0.55em] leading-none text-brand-700/90 dark:text-brand-300/90 pointer-events-none select-none">
+                    className="absolute left-1/2 -translate-x-1/2 top-[0.05em] whitespace-nowrap font-fa font-normal not-italic text-[0.6em] leading-none text-brand-700/90 dark:text-brand-300/90 pointer-events-none select-none">
                     {glosses[w.i]}
                   </span>
                 )}

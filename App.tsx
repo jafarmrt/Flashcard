@@ -305,7 +305,7 @@ const App: React.FC = () => {
                     audioOptions={pronunciationOptions(settings)}
                 />;
             case 'STATS':
-                return <StatsView cards={visibleFlashcards} sources={sources} occurrences={occurrences}
+                return <StatsView cards={visibleFlashcards} sources={sources} occurrences={occurrences} chapters={chapters} knownWords={knownWords} userLevel={settings.userLevel} playful={playful}
                     onReviewCards={ids => { handleReviewCards(ids, 'STATS'); }} onOpenSource={handleOpenSource} />;
             case 'USAGE':
                 return <UsageView cards={visibleFlashcards} onBack={() => setView('SETTINGS')} />;

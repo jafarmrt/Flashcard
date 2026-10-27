@@ -17,6 +17,7 @@ export interface Recap { summary?: string; persian?: string; lastLines: string; 
 // The newest day before today with reading on the book's log, or (for books
 // read before the log existed) the day the book last changed.
 export const daysAway = (readingDays: string[], fallbackIso: string | undefined, today: string): number | null => {
+  if (readingDays.includes(today)) return null; // read earlier today
   const before = readingDays.filter(d => d < today).sort();
   const last = before[before.length - 1] || fallbackIso?.slice(0, 10);
   if (!last || last >= today) return null;

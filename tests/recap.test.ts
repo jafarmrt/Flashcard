@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { daysAway, lastLines, makeRecap, parseRecap, recapPrompt } from '../services/recap';
 
 test('days away: from the reading log, else from when the book last changed', () => {
-  assert.equal(daysAway(['2026-10-20', '2026-10-24', '2026-10-27'], undefined, '2026-10-27'), 3);
+  assert.equal(daysAway(['2026-10-20', '2026-10-24'], undefined, '2026-10-27'), 3);
   assert.equal(daysAway([], '2026-10-25T09:00:00Z', '2026-10-27'), 2);
   assert.equal(daysAway(['2026-10-27'], '2026-10-27T01:00:00Z', '2026-10-27'), null, 'read today');
+  assert.equal(daysAway(['2026-10-20', '2026-10-27'], undefined, '2026-10-27'), null, 'read earlier today, after days away');
 });
 
 test('without AI, the last lines read; with AI, a summary in English and Persian', async () => {

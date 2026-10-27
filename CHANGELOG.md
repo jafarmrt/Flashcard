@@ -9,6 +9,19 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.8.0] - 2026-10-27 - Reading First: Calm Mode, Meanings in the Margin, Your Words in Telegram
+- **Your words in Telegram:** Every day 5 to 10 of your cards come to Telegram, about 8 in the morning: the word in the sentence of the book it was met in, the meaning one tap away, then «دوباره / سخت / خوب / آسان» as in the app. The answers reach your account and every device; "Again" brings the word back at the end of the day's list. In the bot, /review starts a review any time, /stop and /resume turn the daily one off and on. Link it once in Settings › Telegram and pick how many words a day. (The server needs `TELEGRAM_BOT_TOKEN` from @BotFather, and `CRON_SECRET` for the daily message on Vercel.)
+- **Calm mode, by default:** Points, levels, the streak and its shields, combos, badges, confetti and reward chests are hidden; nothing is deleted, and Settings › «امتیاز، سطح، زنجیره و نشان‌ها» brings them back. Today starts with your book; a chapter is a table of contents with the minutes each section takes; a review ends with the words you now know better and the ones still hard, with the book each came from.
+- **Plain stage names:** «تازه، آغاز یادگیری، در حال یادگیری، آشنا، بلدم» instead of seed, sprout, sapling, tree and rooted.
+- **Meanings in the margin:** While reading, a word whose card is new has its short meaning written small above it, from your own card, once per section; it goes away by itself as you learn the word (Settings: new words, until familiar, or off).
+- **What happened so far:** Opening a book after two days or more shows a short reminder of the pages you read last: a summary in simple English and Persian with AI, else the last lines you read.
+- **Reading time and pace:** Active reading time is kept per book and per day (a book left open on the table does not count) and syncs. The book page shows minutes read, your words per minute and the time to the end; the reader's footer shows the minutes to the end of the chapter, at your own pace.
+- **The next chapter, measured:** The end of a chapter says how much of the next one you already know («۹۳٪ واژه‌های فصل بعد را می‌شناسی») and how many new words to expect in each section.
+- **Book reviews in the book's sentences:** Reviewing a book, a chapter or the section just read now asks each word in a sentence of the book, with a gap to fill; flipping cards is the other button.
+- **A paragraph in Persian from a word:** The sheet of a tapped word has «ترجمهٔ پاراگراف», which translates its whole paragraph (in book pages too).
+- **Open on the book:** An option opens the app on the page where you stopped, instead of Today.
+- **Progress that means something:** «پیشرفت» shows minutes read, chapters and books finished, words read, the words with cards you met again in books, reading minutes per day, a year of reading day by day, and for each book how far you are, your pace and how much of its words you know.
+
 ## [7.7.0] - 2026-10-27 - Your Own Cards While Reading, a Plan for the Day, a Book's Notes
 - **Your card, in the book:** Tapping a word that already has a card now shows what your card says (its meaning, notes and how well you know it) at once, also offline. It used to look the word up in a dictionary as if it were new, so it showed another meaning, or nothing when the dictionary could not be reached.
 - **…and in the review:** In a card's sentences during a review, words that have a card of their own are underlined with dots; a tap shows that card's meaning.
