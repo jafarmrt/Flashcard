@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { KIND_LABEL } from '../services/cardKinds';
 import { Flashcard } from '../types';
 import type { SessionSummary, StudyMode } from '../hooks/useAppLogic';
-import { calculateSrs, previewIntervals, PerformanceRating } from '../services/srsService';
+import { calculateSrs, previewIntervals, PerformanceRating, RELEARN_STEP_MINUTES } from '../services/srsService';
 import { masteryStage, stageChanges, STAGE_NAMES } from '../services/masteryService';
 import { nextCombo, reviewXp } from '../services/xpRules';
 import { db } from '../services/localDBService';
@@ -17,6 +17,8 @@ import { GrammarPractice } from './GrammarPractice';
 import { blankOf, checkCloze, clozeFor, type ClozeResult } from '../services/cloze';
 import { withEditedContent } from '../services/cardRefresh';
 import { applyLeechHelp, LeechHelp, leechHelpFor, needsLeechHelp } from '../services/cardExtras';
+import { cardForTerm, indexCards, type CardIndex } from '../services/cardLookup';
+import { WORD_TOKEN } from '../services/lemma';
 
 const MODE_NAMES: Record<StudyMode, string> = { flip: 'برگرداندن', type: 'نوشتنی', cloze: 'جای خالی' };
 
@@ -27,8 +29,10 @@ const RATINGS: { rating: PerformanceRating; label: string; key: string; classNam
   { rating: 'EASY', label: 'آسان', key: '4', className: 'bg-emerald-100 text-emerald-900 hover:bg-emerald-200 dark:bg-emerald-900/50 dark:text-emerald-100' },
 ];
 
-// "1 روز", "3 ماه": when the card comes back for each answer.
+// "1 روز", "3 ماه": when the card comes back for each answer ("Again": in
+// a few minutes, today).
 const intervalLabel = (days: number): string => {
+  if (days <= 0) return `${fa(RELEARN_STEP_MINUTES)} دقیقه`;
   if (days < 30) return `${fa(days)} روز`;
   if (days < 365) return `${fa(Math.round(days / 30))} ماه`;
   return `${fa(Math.round((days / 365) * 10) / 10)} سال`;
@@ -46,6 +50,7 @@ interface StudyViewProps {
   aiOptions?: AiRequestOptions; // checks sentences written for grammar cards
   onEditCard?: (card: Flashcard, onDone: (saved: Flashcard | null) => void) => void; // the card form over the session
   onSaveCard?: (card: Flashcard) => Promise<Flashcard>; // a changed card's content (a stubborn card's new memory aid)
+  allCards?: Flashcard[]; // every card, so a word of a sentence that has its own card shows its meaning
 }
 
 // Reads a word, phrase or sentence aloud with the browser's speech synthesis.
@@ -60,6 +65,44 @@ const SpeakButton: React.FC<{ text: string; size?: number }> = ({ text, size = 1
 };
 
 const asList = (v: string[] | string | undefined): string[] => (Array.isArray(v) ? v : v ? [String(v)] : []);
+
+// The other cards, for the words of a card's sentences.
+interface Linked { index: CardIndex; currentId: string }
+const LinkedContext = React.createContext<Linked | null>(null);
+const SPLIT_WORDS = new RegExp(`(${WORD_TOKEN.source})`, 'u');
+
+// A sentence whose words that have a card of their own can be tapped to see
+// that card's meaning, as in the reader. The card under review is left out,
+// so its answer is not given away.
+const LinkedText: React.FC<{ text: string }> = ({ text }) => {
+  const linked = React.useContext(LinkedContext);
+  const [open, setOpen] = useState<Flashcard | null>(null);
+  const parts = useMemo(() => text.split(SPLIT_WORDS).map((part, i) => {
+    const card = i % 2 === 1 && linked ? cardForTerm(linked.index, part) : undefined;
+    return { part, card: card && card.id !== linked?.currentId ? card : undefined };
+  }), [text, linked]);
+  if (!linked || !parts.some(p => p.card)) return <>{text}</>;
+  // A button may end a line, so the punctuation after it ("house.") is kept
+  // with it, or the full stop would start the next line alone.
+  const glued = (i: number) => (parts[i - 1]?.card ? /^\S*/.exec(parts[i].part)![0] : '');
+  return (
+    <>
+      {parts.map(({ part, card }, i) => card ? (
+        <span key={i} className="whitespace-nowrap">
+          <button type="button" onClick={e => { e.stopPropagation(); setOpen(o => (o?.id === card.id ? null : card)); }}
+            aria-expanded={open?.id === card.id} title="معنی از کارت خودت"
+            className="inline underline decoration-dotted decoration-brand-400 underline-offset-4 hover:bg-brand-50 dark:hover:bg-slate-700 rounded">{part}</button>
+          {i + 1 < parts.length && glued(i + 1)}
+        </span>
+      ) : <React.Fragment key={i}>{part.slice(glued(i).length)}</React.Fragment>)}
+      {open && (
+        <span dir="rtl" role="status" className="block mt-1 not-italic text-sm rounded-xl bg-brand-50 dark:bg-brand-900/40 text-ink dark:text-slate-100 px-3 py-1.5">
+          <bdi dir="ltr" className="font-en font-bold">{open.front}</bdi>: {open.back}
+        </span>
+      )}
+    </>
+  );
+};
 
 const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
   <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl p-4 flex flex-col gap-2 min-w-0">
@@ -84,7 +127,7 @@ const Places: React.FC<{ places: CardPlace[] }> = ({ places }) => {
             </p>
             {p.sentence && (
               <p dir="ltr" className="flex items-start gap-1 text-[15px] leading-7 text-slate-700 dark:text-slate-200">
-                <span className="flex-1">{p.sentence}</span><SpeakButton text={p.sentence} />
+                <span className="flex-1"><LinkedText text={p.sentence} /></span><SpeakButton text={p.sentence} />
               </p>
             )}
           </li>
@@ -117,7 +160,7 @@ const CardAnswer: React.FC<{ card: Flashcard; places?: CardPlace[] }> = ({ card,
         {card.sourceSentence && !sentenceInPlaces && (
           <Section title="در متن خودت">
             <p dir="ltr" className="flex items-start gap-1 text-[15px] leading-7 text-slate-700 dark:text-slate-200">
-              <span className="flex-1">{card.sourceSentence}</span><SpeakButton text={card.sourceSentence} />
+              <span className="flex-1"><LinkedText text={card.sourceSentence} /></span><SpeakButton text={card.sourceSentence} />
             </p>
           </Section>
         )}
@@ -179,7 +222,7 @@ const CardAnswer: React.FC<{ card: Flashcard; places?: CardPlace[] }> = ({ card,
         {examples.length > 0 && (
           <Section title="مثال">
             <ul dir="ltr" className="flex flex-col gap-1 text-sm text-slate-700 dark:text-slate-200">
-              {examples.map((ex, i) => <li key={i} className="flex items-start gap-1"><span className="flex-1 italic">{ex}</span><SpeakButton text={ex} size={14} /></li>)}
+              {examples.map((ex, i) => <li key={i} className="flex items-start gap-1"><span className="flex-1 italic"><LinkedText text={ex} /></span><SpeakButton text={ex} size={14} /></li>)}
             </ul>
           </Section>
         )}
@@ -287,7 +330,7 @@ interface Snapshot {
   card?: Flashcard; // the card as it was before this answer
 }
 
-export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak, studiedToday, goal, onExit, places, sourceId, aiOptions, onEditCard, onSaveCard }) => {
+export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak, studiedToday, goal, onExit, places, sourceId, aiOptions, onEditCard, onSaveCard, allCards }) => {
   const [queue, setQueue] = useState<Flashcard[]>([]);
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
@@ -306,7 +349,9 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
   const [suggested, setSuggested] = useState<PerformanceRating | undefined>(undefined);
   const [clozeResult, setClozeResult] = useState<ClozeResult | null>(null);
   const [editing, setEditing] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const startedAt = useRef(Date.now());
+  const cardIndex = useMemo(() => indexCards(allCards || []), [allCards]);
   const busy = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -367,11 +412,23 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
     const next = { ...calculateSrs(current, rating), updatedAt: new Date().toISOString() };
     // Saved at once, so closing the app mid-session keeps every answer. The
     // new schedule goes over the stored card, so content filled meanwhile stays.
-    const logId = await db.transaction('rw', db.studyHistory, db.flashcards, async () => {
-      const stored = await db.flashcards.get(card.id);
-      await db.flashcards.put(stored ? { ...withEditedContent(next, stored), updatedAt: next.updatedAt } : next);
-      return await db.studyHistory.add({ uid: crypto.randomUUID(), cardId: card.id, date: dayString(new Date()), rating }) as number;
-    });
+    // A failed save (full disk, a closed database) leaves the card where it
+    // is to be answered again; without the finally the lock stayed on and
+    // every later answer was ignored.
+    let logId: number;
+    try {
+      logId = await db.transaction('rw', db.studyHistory, db.flashcards, async () => {
+        const stored = await db.flashcards.get(card.id);
+        await db.flashcards.put(stored ? { ...withEditedContent(next, stored), updatedAt: next.updatedAt } : next);
+        return await db.studyHistory.add({ uid: crypto.randomUUID(), cardId: card.id, date: dayString(new Date()), rating }) as number;
+      });
+    } catch (error) {
+      console.error('Saving a review failed:', error);
+      setSaveError('این جواب ذخیره نشد. دوباره امتیاز بده.');
+      busy.current = false;
+      return;
+    }
+    setSaveError('');
     const gained = reviewXp(rating, combo);
 
     setHistory(h => [...h.slice(-20), { ...snapshot, logId, card: current }]);
@@ -401,13 +458,23 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
   const undo = async () => {
     const last = history[history.length - 1];
     if (!last || busy.current) return;
-    await db.transaction('rw', db.studyHistory, db.flashcards, async () => {
-      if (last.logId !== undefined) await db.studyHistory.delete(last.logId);
-      if (last.card) {
-        const stored = await db.flashcards.get(last.card.id);
-        await db.flashcards.put({ ...(stored ? withEditedContent(last.card, stored) : last.card), updatedAt: new Date().toISOString() });
-      }
-    });
+    busy.current = true;
+    try {
+      await db.transaction('rw', db.studyHistory, db.flashcards, async () => {
+        if (last.logId !== undefined) await db.studyHistory.delete(last.logId);
+        if (last.card) {
+          const stored = await db.flashcards.get(last.card.id);
+          await db.flashcards.put({ ...(stored ? withEditedContent(last.card, stored) : last.card), updatedAt: new Date().toISOString() });
+        }
+      });
+    } catch (error) {
+      console.error('Undoing a review failed:', error);
+      setSaveError('واگرد ذخیره نشد. دوباره امتحان کن.');
+      return;
+    } finally {
+      busy.current = false;
+    }
+    setSaveError('');
     setHistory(h => h.slice(0, -1));
     setQueue(last.queue);
     setIndex(last.index);
@@ -528,6 +595,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
           {history.length > 0 && (
             <button type="button" onClick={undo} className="text-sm text-slate-300 hover:text-white">واگرد آخرین امتیاز</button>
           )}
+          {saveError && <p role="alert" className="text-center text-sm text-red-200">{saveError}</p>}
         </div>
       </div>
     );
@@ -538,9 +606,11 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
   }
 
   const stage = masteryStage(current);
+  const linked: Linked = { index: cardIndex, currentId: card.id };
   const progress = Math.round((index / queue.length) * 100);
 
   return (
+    <LinkedContext.Provider value={linked}>
     <div dir="rtl" className="font-fa flex flex-col min-h-[calc(100vh-2rem)] md:min-h-screen">
       <header className="flex items-center gap-2 md:gap-4 px-1 md:px-8 py-3 md:py-4 md:bg-white md:dark:bg-slate-900 md:border-b border-slate-200 dark:border-slate-800">
         <button type="button" onClick={exitEarly} aria-label="خروج از جلسه" className="flex items-center gap-1.5 min-h-[44px] min-w-[44px] px-2 rounded-xl text-ink-muted hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800">
@@ -613,7 +683,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
               </div>
             )}
             {!revealed && cardMode !== 'cloze' && card.kind !== 'grammar' && card.sourceSentence && (
-              <p className="mt-1 max-w-xl text-sm italic text-ink-muted dark:text-slate-400 line-clamp-3">{card.sourceSentence}</p>
+              <p className="mt-1 max-w-xl text-sm italic text-ink-muted dark:text-slate-400 "><LinkedText text={card.sourceSentence} /></p>
             )}
           </div>
 
@@ -652,6 +722,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
             </form>
           )}
 
+          {saveError && <p role="alert" dir="rtl" className="text-center text-sm font-bold text-red-700 dark:text-red-300">{saveError}</p>}
           {revealed && (
             <div className="grid grid-cols-4 gap-2 md:gap-2.5">
               {RATINGS.map(r => (
@@ -699,5 +770,6 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
         {history.length > 0 && <button type="button" onClick={undo} className="text-ink-muted dark:text-slate-400">واگرد</button>}
       </div>
     </div>
+    </LinkedContext.Provider>
   );
 };

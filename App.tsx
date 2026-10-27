@@ -141,6 +141,7 @@ const App: React.FC = () => {
                     onOpenSetup={() => openStudySetup()}
                     onNavigate={handleNavigate}
                     onOpenChunk={handleOpenChunk}
+                    speechAttempts={speechAttempts}
                 />;
             case 'ME':
                 return <MeView
@@ -181,6 +182,7 @@ const App: React.FC = () => {
                     loadText={loadChapterText}
                     onStartSourceReview={handleStartSourceReview}
                     onPrestudyChapter={handlePrestudyChapter}
+                    notes={notes}
                 />;
             case 'READER':
                 if (!activeSource || !activeChapter) return null;
@@ -225,6 +227,7 @@ const App: React.FC = () => {
                     aiOptions={aiRequestOptions(settings)}
                     onEditCard={openCardEditor}
                     onSaveCard={handleSaveCardContent}
+                    allCards={visibleFlashcards}
                 />;
             case 'PRACTICE':
                 return <PracticeView cards={visibleFlashcards} occurrences={occurrences} speechAttempts={speechAttempts} onSaveSpeechAttempt={handleSaveSpeechAttempt} aiOptions={aiRequestOptions(settings)} audioOptions={pronunciationOptions(settings)} awardXP={userProfile ? (points) => handleGoalUpdate('QUIZ', points, true) : () => {}} onQuizComplete={(score) => {

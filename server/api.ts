@@ -115,17 +115,24 @@ async function kvCommand(kv: { url: string; token: string }, command: (string | 
   return (await kvResponse.json()).result;
 }
 
+// The file store hands out and keeps copies, as Redis does. It used to give
+// the caller the stored object itself: a caller that changed it and then
+// failed to save had already changed the store, and the rollback in setKey
+// put back the very same (changed) object, so memory said "saved" while
+// the disk did not.
+const copyOf = <T>(value: T): T => (value === undefined || value === null ? value : JSON.parse(JSON.stringify(value)));
+
 // A KV error is thrown, not hidden: falling back to memory would lose data.
-async function getKey(key: string): Promise<any | null> {
+export async function getKey(key: string): Promise<any | null> {
   const kv = kvConfig();
   if (kv) {
     const result = await kvCommand(kv, ['GET', key]);
     return result ? JSON.parse(result) : null;
   }
-  return loadFileStore().get(key) ?? null;
+  return copyOf(loadFileStore().get(key)) ?? null;
 }
 
-async function setKey(key: string, value: unknown): Promise<void> {
+export async function setKey(key: string, value: unknown): Promise<void> {
   const kv = kvConfig();
   if (kv) {
     await kvCommand(kv, ['SET', key, JSON.stringify(value)]);
@@ -133,7 +140,7 @@ async function setKey(key: string, value: unknown): Promise<void> {
   }
   const store = loadFileStore();
   const previous = store.get(key);
-  store.set(key, value);
+  store.set(key, copyOf(value));
   try {
     persistStore(store);
   } catch (e) {

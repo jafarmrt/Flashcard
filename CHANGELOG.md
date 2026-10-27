@@ -9,6 +9,18 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.7.0] - 2026-10-27 - Your Own Cards While Reading, a Plan for the Day, a Book's Notes
+- **Your card, in the book:** Tapping a word that already has a card now shows what your card says (its meaning, notes and how well you know it) at once, also offline. It used to look the word up in a dictionary as if it were new, so it showed another meaning, or nothing when the dictionary could not be reached.
+- **…and in the review:** In a card's sentences during a review, words that have a card of their own are underlined with dots; a tap shows that card's meaning.
+- **Today's plan:** The Today screen starts with a short plan: the next section of your book, the cards due, and the sentences due for pronunciation, each with about how many minutes it takes and one tap to start. Parts done today are ticked off.
+- **A book's notes:** A new tab «یادداشت‌ها» on a book lists every note and kept translation in reading order, each a tap away from its place in the text. Copy them, or save them as a Markdown file.
+- **Fairer review schedule:** "Again" brings a card back in 10 minutes, the same day, instead of tomorrow. Days between reviews are counted on the calendar, not in 24-hour spans (a card seen at night and again next morning was seen a day later). Only forgetting a learned card counts as a lapse, once a day, so one bad session no longer makes a card "stubborn".
+- **A failed save:** If saving an answer fails during a review, the app says so and the card can be answered again; before, the session stopped taking answers.
+- **No endless waiting:** A request to the server that gets no answer gives up after 25 seconds (70 for AI, sync and uploads), so a dead connection no longer leaves a screen waiting for ever.
+- **Offline start:** The offline copy no longer drops the app's main files when it trims old ones, so the app keeps opening without a connection.
+- **"Complete all cards":** Filling empty parts of many cards no longer undoes a review or an edit made while it runs: only parts still empty are filled.
+- **Server data file:** When saving the data file fails, the server's memory goes back to what is on disk, so nothing looks saved that is not.
+
 ## [7.6.0] - 2026-10-16 - Reading Like a Book: Pages, Your Own Text, Notes and Kept Translations
 - **Pages:** Books now open as pages that fill the screen, with nothing around them but a thin bar: one page on a phone, two facing pages with a spine on a wide screen. Turn pages by swiping, by tapping the edge of the page, or with the arrow keys; the footer shows the page and how far into the chapter you are. The old scrolling page is still there (Aa › continuous).
 - **One continuous book:** Turning past the last page of a section finishes it (the same XP and progress as before) and the next section follows; paging back from the first page opens the previous section on its last page. A chapter ends on a page of its own, with a review of its words and the next chapter.

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyProposal, buildCardRefreshPrompt, parseCardRefresh, parseCollocations, proposalChanges, refreshErrorText,
-  refreshSources, refreshWithAi, shownValue, withEditedContent, type CardContent, type CardProposal,
+  refreshSources, refreshWithAi, shownValue, withEditedContent, fillEmptyFields, type CardContent, type CardProposal,
 } from '../services/cardRefresh';
 import { originText } from '../services/library';
 import type { Flashcard, Settings } from '../types';
@@ -146,6 +146,21 @@ test('an edit made during a review keeps each copy\'s own schedule', () => {
   assert.equal(withEditedContent(answered, saved).interval, 3);
   const other = card({ id: 'c2' });
   assert.equal(withEditedContent(other, saved), other);
+});
+
+test('filling empty parts keeps a review and an edit made meanwhile', () => {
+  // The card when "auto-fix" started: no meaning, no example, new.
+  // Meanwhile it was reviewed and the user wrote a pronunciation.
+  const stored = card({ back: '', interval: 9, repetition: 3, stability: 9.4, pronunciation: '/bæŋk/', exampleSentenceTarget: [] });
+  const { card: next, filled } = fillEmptyFields(stored, {
+    back: 'بانک؛ ساحل رود', pronunciation: '/baŋk/', exampleSentenceTarget: ['the river bank'], definition: [], notes: '',
+  });
+  assert.equal(next.interval, 9);
+  assert.equal(next.stability, 9.4);
+  assert.equal(next.pronunciation, '/bæŋk/');
+  assert.equal(next.back, 'بانک؛ ساحل رود');
+  assert.deepEqual(next.exampleSentenceTarget, ['the river bank']);
+  assert.deepEqual(filled.sort(), ['back', 'exampleSentenceTarget']);
 });
 
 test('a card filled from Merriam-Webster says so', () => {

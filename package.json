@@ -1,12 +1,13 @@
 {
   "name": "lingua-cards",
   "private": true,
-  "version": "7.6.0",
+  "version": "7.7.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
     "lint": "tsc --noEmit",
+    "lint:hooks": "eslint .",
     "test": "node --import tsx --test tests/*.test.ts",
     "start": "NODE_ENV=production tsx server.ts",
     "preview": "vite preview"
@@ -33,10 +34,13 @@
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "autoprefixer": "^10.4.20",
+    "eslint": "^10.13.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.23.15",
     "typescript": "~5.8.2",
+    "typescript-eslint": "^8.72.1",
     "vite": "^6.2.0"
   }
 }

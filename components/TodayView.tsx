@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo } from 'react';
-import { Chapter, Flashcard, Source, StudyLog, UserProfile } from '../types';
+import { Chapter, Flashcard, Source, SpeechAttempt, StudyLog, UserProfile } from '../types';
+import { dueSchedules, liveAttempts } from '../services/speechPractice';
+import { minutesLeft, todayPlan, type PlanStep } from '../services/todayPlan';
 import type { StudyMode, View } from '../hooks/useAppLogic';
 import { calculateLevel } from '../services/gamificationService';
 import { stageCounts, STAGE_NAMES, MasteryStage } from '../services/masteryService';
@@ -22,6 +24,7 @@ interface TodayViewProps {
   onOpenSetup: () => void;
   onNavigate: (view: View) => void;
   onOpenChunk: (chapter: Chapter, index: number) => void;
+  speechAttempts?: SpeechAttempt[];
 }
 
 const WEEKDAYS = ['ش', 'ی', 'د', 'س', 'چ', 'پ', 'ج'];
@@ -37,8 +40,54 @@ const Card: React.FC<{ children: React.ReactNode; className?: string }> = ({ chi
   <section className={`bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-3 min-w-0 ${className}`}>{children}</section>
 );
 
+type Reading = { source: Source; next: { chapter: Chapter; chunk: number } | null } | undefined;
+
+const STEP_TEXT: Record<PlanStep['id'], { title: string; done: string }> = {
+  read: { title: 'خواندن بخش بعدی', done: 'بخش امروز خوانده شد' },
+  review: { title: 'مرور کارت‌ها', done: 'کارت‌های امروز مرور شد' },
+  speak: { title: 'تمرین تلفظ', done: 'تلفظ امروز تمرین شد' },
+};
+
+// The day's plan as a short checklist: what to do, roughly how long, one tap
+// to start each part.
+const TodayPlan: React.FC<{ steps: PlanStep[]; reading: Reading; onRead: () => void; onReview: () => void; onSpeak: () => void }> = ({ steps, reading, onRead, onReview, onSpeak }) => {
+  const left = minutesLeft(steps);
+  const start: Record<PlanStep['id'], () => void> = { read: onRead, review: onReview, speak: onSpeak };
+  const detail = (s: PlanStep): string => {
+    if (s.id === 'read') return reading?.next ? `${reading.source.title}${reading.next.chapter.title && reading.next.chapter.title !== reading.source.title ? ` · ${reading.next.chapter.title}` : ''}` : '';
+    if (s.id === 'review') return `${fa(s.count)} کارت`;
+    return `${fa(s.count)} جمله از کتاب‌هایت`;
+  };
+  return (
+    <section aria-label="برنامهٔ امروز" className="bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-3">
+      <div className="flex justify-between items-baseline gap-3">
+        <h2 className="font-bold text-ink dark:text-white">برنامهٔ امروز</h2>
+        <span className="text-sm text-ink-muted dark:text-slate-400">{left > 0 ? `حدود ${fa(left)} دقیقه` : 'تمام شد'}</span>
+      </div>
+      <ol className="flex flex-col gap-1.5">
+        {steps.map((s, i) => (
+          <li key={s.id}>
+            <button type="button" onClick={start[s.id]} disabled={s.id === 'read' ? !reading?.next : s.done}
+              className={`w-full flex items-center gap-3 min-h-[56px] px-3 rounded-2xl text-right ${s.done ? 'opacity-70' : 'hover:bg-slate-50 dark:hover:bg-slate-700/50'}`}>
+              <span aria-hidden="true" className={`w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-sm font-bold ${s.done ? 'bg-emerald-600 text-white' : 'bg-brand-100 text-brand-700 dark:bg-brand-900/60 dark:text-brand-200'}`}>
+                {s.done ? '✓' : fa(i + 1)}
+              </span>
+              <span className="flex-1 min-w-0 flex flex-col">
+                <span className={`font-bold text-ink dark:text-white ${s.done ? 'line-through decoration-1' : ''}`}>{s.done ? STEP_TEXT[s.id].done : STEP_TEXT[s.id].title}</span>
+                {!s.done && <span dir="auto" className="text-sm text-ink-muted dark:text-slate-400 truncate">{detail(s)}</span>}
+              </span>
+              {!s.done && <span className="text-sm text-ink-muted dark:text-slate-400 whitespace-nowrap">{fa(s.minutes)} دقیقه</span>}
+              {s.done && s.id === 'read' && reading?.next && <span className="text-sm text-brand-600 dark:text-brand-300 whitespace-nowrap">ادامه بخوان</span>}
+            </button>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+};
+
 export const TodayView: React.FC<TodayViewProps> = ({
-  userProfile, username, streak, cards, studyLogs, sources, chapters, dueCount, newDueCount, onStartReview, onOpenSetup, onNavigate, onOpenChunk,
+  userProfile, username, streak, cards, studyLogs, sources, chapters, dueCount, newDueCount, onStartReview, onOpenSetup, onNavigate, onOpenChunk, speechAttempts = [],
 }) => {
   const level = calculateLevel(userProfile?.xp || 0);
   const goal = userProfile?.dailyGoals?.goals.find(g => g.type === 'STUDY');
@@ -67,6 +116,21 @@ export const TodayView: React.FC<TodayViewProps> = ({
       .sort((a, b) => b.source.updatedAt.localeCompare(a.source.updatedAt));
     return open[0];
   }, [sources, chapters]);
+
+  // Today's plan: the next section, the due cards, the due sentences.
+  const plan = useMemo(() => {
+    const cardIds = new Set(cards.map(c => c.id));
+    const live = liveAttempts(speechAttempts);
+    return todayPlan({
+      hasBook: !!reading,
+      // A section finished today moves its chapter's date to today.
+      readToday: chapters.some(c => !c.isDeleted && c.completed.length > 0 && dayString(new Date(c.updatedAt)) === today),
+      dueCards: dueCount,
+      reviewedToday: studyLogs.filter(l => l.date === today).length,
+      dueSpeech: dueSchedules(live, today).filter(x => !!x.cardId && cardIds.has(x.cardId)).length,
+      speechToday: live.filter(a => dayString(new Date(a.createdAt)) === today).length,
+    });
+  }, [cards, speechAttempts, reading, chapters, today, dueCount, studyLogs]);
 
   // Space starts the review from anywhere on this screen (not while typing).
   useEffect(() => {
@@ -98,6 +162,11 @@ export const TodayView: React.FC<TodayViewProps> = ({
           </span>
         </div>
       </header>
+
+      {plan.length > 0 && (
+        <TodayPlan steps={plan} reading={reading} onRead={() => reading?.next && onOpenChunk(reading.next.chapter, reading.next.chunk)}
+          onReview={() => onStartReview('flip')} onSpeak={() => onNavigate('PRACTICE')} />
+      )}
 
       <div className="grid gap-5 md:grid-cols-2">
         <section className="md:col-span-2 bg-brand-500 text-white rounded-3xl p-5 md:p-7 flex flex-wrap items-center gap-5 md:gap-7">

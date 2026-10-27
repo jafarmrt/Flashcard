@@ -84,6 +84,18 @@ function startOfDay(ms: number): Date {
   return d;
 }
 
+// Whole calendar days between two moments, on the user's clock. FSRS counts
+// days, not 24-hour spans: a card seen at 23:00 and again at 08:00 next
+// morning was seen "a day later", and two reviews at 08:00 and 21:00 are
+// on the same day. (Rounded, so a daylight-saving change does not matter.)
+export const calendarDaysBetween = (fromMs: number, toMs: number): number =>
+  Math.max(0, Math.round((startOfDay(toMs).getTime() - startOfDay(fromMs).getTime()) / DAY_MS));
+
+// A forgotten card (or a new one answered "Again") comes back after a short
+// step on the same day instead of tomorrow: learning needs a second try
+// soon, and closing the session must not push it to the next day.
+export const RELEARN_STEP_MINUTES = 10;
+
 export function calculateSrs(card: Flashcard, rating: PerformanceRating, now: Date = new Date()): Flashcard {
   const g = GRADE[rating];
   const nowMs = now.getTime();
@@ -91,13 +103,15 @@ export function calculateSrs(card: Flashcard, rating: PerformanceRating, now: Da
 
   let stability: number;
   let difficulty: number;
+  let sameDay = false;
   if (!state) {
     stability = initialStability(g);
     difficulty = initialDifficulty(g);
   } else {
-    const elapsedDays = Math.max(0, (nowMs - state.lastReviewed) / DAY_MS);
+    const elapsedDays = calendarDaysBetween(state.lastReviewed, nowMs);
+    sameDay = elapsedDays < 1;
     difficulty = nextDifficulty(state.difficulty, g);
-    if (elapsedDays < 1) {
+    if (sameDay) {
       stability = sameDayStability(state.stability, g);
     } else {
       const r = retrievability(elapsedDays, state.stability);
@@ -106,16 +120,23 @@ export function calculateSrs(card: Flashcard, rating: PerformanceRating, now: Da
   }
   stability = clamp(stability, 0.1, MAX_INTERVAL_DAYS);
 
-  const interval = intervalForStability(stability);
+  // "Again": back in a few minutes, today (interval 0 = "today").
+  const interval = g === 1 ? 0 : intervalForStability(stability);
   const dueDate = startOfDay(nowMs);
-  dueDate.setDate(dueDate.getDate() + interval);
+  if (g === 1) dueDate.setTime(nowMs + RELEARN_STEP_MINUTES * 60_000);
+  else dueDate.setDate(dueDate.getDate() + interval);
+  // A lapse is forgetting a card that had been learned. "Again" on a new
+  // card, again during relearning (the same card in one session), or a
+  // second time on the same day is not one more lapse: counting those made
+  // cards look "stubborn" after one bad session.
+  const lapsed = g === 1 && !!state && card.repetition > 0 && !sameDay;
 
   return {
     ...card,
     stability,
     difficulty,
     lastReviewed: now.toISOString(),
-    lapses: (card.lapses || 0) + (g === 1 && state ? 1 : 0),
+    lapses: (card.lapses || 0) + (lapsed ? 1 : 0),
     // Kept for the study filters: repetition 0 means "forgotten or new", interval > 0 means "seen".
     repetition: g === 1 ? 0 : card.repetition + 1,
     interval,
@@ -130,6 +151,7 @@ export function previewIntervals(card: Flashcard, now: Date = new Date()): Recor
 }
 
 export function formatInterval(days: number): string {
+  if (days <= 0) return `${RELEARN_STEP_MINUTES}m`;
   if (days < 30) return `${days}d`;
   if (days < 365) return `${Math.round(days / 30)}mo`;
   return `${(days / 365).toFixed(1).replace(/\.0$/, '')}y`;

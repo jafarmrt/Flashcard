@@ -78,3 +78,25 @@ export const notesInOrder = (notes: TextNote[], chapterOrder: Map<string, number
   notes
     .filter(n => !n.isDeleted)
     .sort((a, b) => (chapterOrder.get(a.chapterId) ?? 0) - (chapterOrder.get(b.chapterId) ?? 0) || a.chunk - b.chunk || a.from - b.from);
+
+// --- A book's notes on one page, and as a file ---
+
+export interface NotesChapter { id: string; order: number; title: string }
+
+// A book's notes as Markdown: chapter headings, each passage quoted, then
+// the comment or the kept translation. Opens in any notes app, prints well.
+export const notesMarkdown = (title: string, notes: TextNote[], chapters: NotesChapter[], now: Date = new Date()): string => {
+  const order = new Map(chapters.map(c => [c.id, c.order]));
+  const names = new Map(chapters.map(c => [c.id, c.title]));
+  const lines: string[] = [`# ${title}`, '', `Notes exported ${now.toISOString().slice(0, 10)}`];
+  let chapter: string | null = null;
+  for (const n of notesInOrder(notes, order)) {
+    if (n.chapterId !== chapter && chapters.length > 1) {
+      chapter = n.chapterId;
+      lines.push('', `## ${names.get(n.chapterId) || `Chapter ${order.get(n.chapterId) ?? ''}`.trim()}`);
+    }
+    lines.push('', ...n.quote.split('\n').map(l => `> ${l}`), '');
+    lines.push(n.kind === 'translation' ? `ترجمه${n.by ? ` (${n.by})` : ''}: ${n.text}` : n.text);
+  }
+  return `${lines.join('\n')}\n`;
+};

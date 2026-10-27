@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { locateNote, newNote, notesAtWords, notesInOrder, notesOfSection, savedTranslation } from '../services/notes';
+import { locateNote, newNote, notesAtWords, notesInOrder, notesMarkdown, notesOfSection, savedTranslation } from '../services/notes';
 import { readerSection } from '../services/readerText';
 import { cleanEditedText } from '../services/library';
 import { pageOfOffset, pageLayout } from '../components/reader/BookPages';
@@ -42,6 +42,17 @@ test('the notes of a section, per word, and the translation kept for a passage',
   assert.equal(savedTranslation(placed, { from: 7, to: 8 }), undefined, 'a comment is not a translation');
   const order = new Map([['c', 1], ['c0', 0]]);
   assert.deepEqual(notesInOrder([note({ chunk: 2 }, 'b'), note({ chapterId: 'c0' }, 'a'), note({ from: 1, to: 1, quote: 'was' }, 'c1')], order).map(n => n.id), ['a', 'c1', 'b']);
+});
+
+test("a book's notes export as Markdown, in reading order, under chapter headings", () => {
+  const chapters = [{ id: 'c0', order: 1, title: 'Morning' }, { id: 'c', order: 2, title: 'Night' }];
+  const md = notesMarkdown('The Book', [
+    note({ chunk: 1, kind: 'translation', text: 'بی‌میل', by: 'Gemini' }, 'b'),
+    note({ chapterId: 'c0', text: 'first' }, 'a'),
+    { ...note({}, 'gone'), isDeleted: true },
+  ], chapters, T);
+  assert.equal(md, '# The Book\n\nNotes exported 2026-10-16\n\n## Morning\n\n> reluctant to\n\nfirst\n\n## Night\n\n> reluctant to\n\nترجمه (Gemini): بی‌میل\n');
+  assert.ok(!notesMarkdown('One', [note()], [chapters[1]], T).includes('##'), 'one chapter: no heading');
 });
 
 test('an edited section: one blank line between paragraphs, no stray spaces', () => {
