@@ -1,5 +1,9 @@
 {
   "functions": {
-    "api/proxy.ts": { "maxDuration": 60 }
-  }
+    "api/proxy.ts": { "maxDuration": 60 },
+    "api/telegram.ts": { "maxDuration": 60 }
+  },
+  "crons": [
+    { "path": "/api/telegram?cron=1", "schedule": "30 4 * * *" }
+  ]
 }

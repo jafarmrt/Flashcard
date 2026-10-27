@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { Buffer } from 'buffer';
-import { randomUUID } from 'crypto';
+import { createHmac, randomUUID } from 'crypto';
+import { clampWords, cleanTz, handleUpdate, newLinkCode, runDaily, startReview, TG_DEFAULT_WORDS, type TgDeps, type TgLink, unlink, userKey } from './telegram.js';
 import { freeEnrich, freeTranslate, lookupFrequencies } from './freeLookup.js';
 import { lookupChain, lookupSingle, mwKey } from './dictionaries.js';
 import { cleanDictionaryRequest, DEFAULT_DICTIONARY_ORDER, DICTIONARY_IDS, DictionaryRequest, dictionarySignature } from '../services/dictionaryCatalog.js';
@@ -23,6 +24,8 @@ import {
 
 // The parts of Express's and Vercel's request/response objects the API uses.
 export interface ProxyRequest {
+  method?: string;
+  query?: Record<string, unknown>;
   body?: any;
   headers: Record<string, string | string[] | undefined>;
   secure?: boolean; // Express sets it (trusting nginx); Vercel does not
@@ -150,6 +153,35 @@ export async function setKey(key: string, value: unknown): Promise<void> {
   }
 }
 
+export async function delKey(key: string): Promise<void> {
+  const kv = kvConfig();
+  if (kv) {
+    await kvCommand(kv, ['DEL', key]);
+    return;
+  }
+  const store = loadFileStore();
+  if (!store.has(key)) return;
+  const previous = store.get(key);
+  store.delete(key);
+  try {
+    persistStore(store);
+  } catch (e) {
+    store.set(key, previous);
+    throw e;
+  }
+}
+
+// Every key that starts with `prefix` (a few dozen at most: used for the
+// Telegram links).
+export async function listKeys(prefix: string): Promise<string[]> {
+  const kv = kvConfig();
+  if (kv) {
+    const result = await kvCommand(kv, ['KEYS', `${prefix}*`]);
+    return Array.isArray(result) ? result.filter((k: unknown): k is string => typeof k === 'string') : [];
+  }
+  return Array.from(loadFileStore().keys()).filter(k => k.startsWith(prefix));
+}
+
 // How long each dictionary may take: the bulk-add setting, within limits.
 const lookupTimeout = (value: unknown): number | undefined => {
   const ms = Number(value);
@@ -262,6 +294,119 @@ export async function withUserLock<T>(username: string, work: () => Promise<T>):
 
 class BusyError extends Error {
   constructor() { super('Another device is syncing this account. Try again in a moment.'); }
+}
+
+// --- Telegram (server/telegram.ts) ---
+
+const telegramToken = () => process.env.TELEGRAM_BOT_TOKEN || '';
+let telegramBot = '';
+
+async function telegramApi(method: string, body: Record<string, unknown>): Promise<any> {
+  const response = await fetch(`https://api.telegram.org/bot${telegramToken()}/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(method === 'getUpdates' ? 40_000 : 15_000),
+  });
+  const reply = await response.json().catch(() => ({}));
+  if (!response.ok || !reply.ok) throw new Error(`Telegram ${method}: ${reply.description || response.status}`);
+  return reply.result;
+}
+
+export const telegramDeps = (): TgDeps => ({
+  get: getKey,
+  set: setKey,
+  del: delKey,
+  keys: listKeys,
+  readData: async username => {
+    const user = await getUser(username);
+    return user ? upgradeStore(user.data, randomUUID).store : null;
+  },
+  changeData: (username, make) => withUserLock(username, async () => {
+    const user = await getUser(username);
+    if (!user) return false;
+    const { store } = upgradeStore(user.data, randomUUID);
+    const changes = make(store);
+    if (!changes) return false;
+    applyChanges(store, changes);
+    user.data = store;
+    await setUser(user);
+    return true;
+  }),
+  api: telegramApi,
+  botName: async () => {
+    if (process.env.TELEGRAM_BOT_USERNAME) return process.env.TELEGRAM_BOT_USERNAME.replace(/^@/, '');
+    if (!telegramBot) telegramBot = (await telegramApi('getMe', {})).username;
+    return telegramBot;
+  },
+  now: () => new Date(),
+});
+
+// The header Telegram sends with every update, set with the webhook.
+const webhookSecret = (secret: string) => createHmac('sha256', secret).update('telegram-webhook').digest('hex').slice(0, 48);
+
+// The webhook points at this deployment; set again on every link, which
+// also moves it after a change of address. A server that polls (TELEGRAM_POLLING)
+// never sets one.
+async function ensureWebhook(req: ProxyRequest, secret: string) {
+  if (process.env.TELEGRAM_POLLING === 'true') return;
+  const host = firstHeader(req.headers['x-forwarded-host']) || firstHeader(req.headers.host);
+  if (!host || /^(localhost|127\.|\[::1\])/.test(host)) return; // Telegram cannot reach this machine
+  const url = process.env.TELEGRAM_WEBHOOK_URL || `https://${host}/api/telegram`;
+  await telegramApi('setWebhook', { url, secret_token: webhookSecret(secret), allowed_updates: ['message', 'callback_query'] });
+}
+
+// /api/telegram: updates from Telegram (POST, with the webhook's secret) and
+// the daily cron (GET ?cron=1, with Vercel's CRON_SECRET).
+export async function handleTelegram(req: ProxyRequest, res: ProxyResponse) {
+  if (!telegramToken()) return res.status(404).json({ error: 'Telegram is not set up on this server (TELEGRAM_BOT_TOKEN).' });
+  let secret: string;
+  try {
+    secret = getSessionSecret(dataDir());
+  } catch (e) {
+    return res.status(500).json({ error: (e as Error).message });
+  }
+  try {
+    if (req.method === 'GET') {
+      const cronSecret = process.env.CRON_SECRET;
+      if (!cronSecret || firstHeader(req.headers.authorization) !== `Bearer ${cronSecret}`) return res.status(401).json({ error: 'Not allowed.' });
+      const sent = await runDaily(telegramDeps(), true);
+      return res.status(200).json({ sent });
+    }
+    if (firstHeader(req.headers['x-telegram-bot-api-secret-token']) !== webhookSecret(secret)) return res.status(401).json({ error: 'Not allowed.' });
+    await handleUpdate(telegramDeps(), req.body);
+    return res.status(200).json({ ok: true });
+  } catch (e) {
+    console.error('Telegram update failed:', e);
+    // A 200 all the same: Telegram would otherwise send the same update again and again.
+    return res.status(200).json({ ok: false });
+  }
+}
+
+// A server without a public address (or that prefers it) asks Telegram for
+// updates itself, and sends the day's words once the local hour comes.
+export function startTelegramWorker(): void {
+  if (!telegramToken() || process.env.VERCEL) return;
+  const deps = telegramDeps();
+  setInterval(() => { runDaily(deps).catch(e => console.warn('Telegram daily run failed:', e.message)); }, 10 * 60_000);
+  if (process.env.TELEGRAM_POLLING !== 'true') return;
+  let offset = 0;
+  const poll = async () => {
+    try {
+      await telegramApi('deleteWebhook', {}).catch(() => undefined);
+      for (;;) {
+        const updates = await telegramApi('getUpdates', { offset, timeout: 30, allowed_updates: ['message', 'callback_query'] });
+        for (const update of updates || []) {
+          offset = Math.max(offset, update.update_id + 1);
+          await handleUpdate(deps, update).catch(e => console.warn('Telegram update failed:', e.message));
+        }
+      }
+    } catch (e) {
+      console.warn('Telegram polling stopped; trying again in a minute:', (e as Error).message);
+      setTimeout(poll, 60_000);
+    }
+  };
+  poll();
 }
 
 // Whether any account exists yet; registration closes after the first one.
@@ -828,6 +973,47 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         const text = await getKey(chapterKey(signedInUser!, id));
         if (!text) return res.status(404).json({ error: 'This chapter is not on the server yet. Open the app on the device that added it.' });
         return res.status(200).json(unpackChapter(text));
+      }
+
+      // The daily review in Telegram: whether it is set up and linked, a
+      // code to link it, its settings.
+      case 'telegram-status': {
+        if (!telegramToken()) return res.status(200).json({ available: false });
+        const state: TgLink | null = await getKey(userKey(signedInUser!));
+        let bot = '';
+        try { bot = await telegramDeps().botName(); } catch (e) { console.warn('Telegram getMe failed:', (e as Error).message); }
+        return res.status(200).json({ available: true, bot, linked: !!state, words: state?.words ?? TG_DEFAULT_WORDS, paused: !!state?.paused });
+      }
+
+      case 'telegram-link': {
+        if (!telegramToken()) return res.status(404).json({ error: 'Telegram is not set up on this server (TELEGRAM_BOT_TOKEN).' });
+        const deps = telegramDeps();
+        await ensureWebhook(req, secret);
+        return res.status(200).json(await newLinkCode(deps, signedInUser!, cleanTz(payload.tz)));
+      }
+
+      case 'telegram-update': {
+        const state: TgLink | null = await getKey(userKey(signedInUser!));
+        if (!state) return res.status(404).json({ error: 'Telegram is not linked.' });
+        const next: TgLink = {
+          ...state,
+          ...(payload.words !== undefined ? { words: clampWords(payload.words) } : {}),
+          ...(typeof payload.paused === 'boolean' ? { paused: payload.paused } : {}),
+          ...(payload.tz !== undefined ? { tz: cleanTz(payload.tz) } : {}),
+        };
+        await setKey(userKey(signedInUser!), next);
+        return res.status(200).json({ linked: true, words: next.words, paused: !!next.paused });
+      }
+
+      case 'telegram-send': {
+        if (!telegramToken()) return res.status(404).json({ error: 'Telegram is not set up on this server (TELEGRAM_BOT_TOKEN).' });
+        return res.status(200).json({ result: await startReview(telegramDeps(), signedInUser!, true) });
+      }
+
+      case 'telegram-unlink': {
+        if (telegramToken()) await unlink(telegramDeps(), signedInUser!);
+        else { await delKey(userKey(signedInUser!)); }
+        return res.status(200).json({ linked: false });
       }
 
       // How much this account keeps on the server, for the usage page.
