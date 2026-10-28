@@ -6,8 +6,6 @@ import type { ImportedSource } from '../services/importers';
 import { chaptersOf, continuePoint, currentChunkOf, isChapterFinished, isChunkOpen, originText, sourceProgress } from '../services/library';
 import { masteryStage, STAGE_NAMES } from '../services/masteryService';
 import { convertToCSV, downloadCSV } from '../services/csvService';
-import { isChestSection } from '../services/xpRules';
-import { isPlayful } from '../services/calm';
 import { minutes, minutesFor, totalOf, wordsPerMinute } from '../services/readingTime';
 import { knownList } from '../services/knownWords';
 import { needsCheck } from '../services/cardCheck';
@@ -79,74 +77,34 @@ const ProgressBar: React.FC<{ percent: number; done?: boolean }> = ({ percent, d
   </span>
 );
 
-// --- A chapter as a path of 300-word sections, a chest every third ---
+// --- A chapter as a table of contents of its 300-word sections ---
 
-const ChapterPath: React.FC<{ chapter: Chapter; onOpenChunk: (i: number) => void; playful?: boolean; wpm?: number | null }> = ({ chapter, onOpenChunk, playful = false, wpm = null }) => {
+const ChapterSections: React.FC<{ chapter: Chapter; onOpenChunk: (i: number) => void; wpm?: number | null }> = ({ chapter, onOpenChunk, wpm = null }) => {
   const current = currentChunkOf(chapter);
   const finished = isChapterFinished(chapter);
-  if (!playful) {
-    // Calm mode: the sections as a table of contents, with the time each
-    // takes at the reader's own pace.
-    const perSection = minutesFor(chapter.wordCount / Math.max(1, chapter.chunkCount), wpm);
-    return (
-      <ol className="bg-white dark:bg-slate-800 rounded-3xl p-2 flex flex-col" aria-label="بخش‌های فصل">
-        {Array.from({ length: chapter.chunkCount }, (_, i) => {
-          const done = chapter.completed.includes(i);
-          const isCurrent = !finished && i === current;
-          const open = isChunkOpen(chapter, i);
-          return (
-            <li key={i}>
-              <button type="button" disabled={!open} onClick={() => onOpenChunk(i)}
-                className={`w-full flex items-center gap-3 min-h-[52px] px-3 rounded-2xl text-right disabled:opacity-50 ${isCurrent ? 'bg-brand-50 dark:bg-brand-900/40' : 'hover:bg-slate-50 dark:hover:bg-slate-700/50'}`}>
-                <span className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${done ? 'bg-emerald-600 text-white' : isCurrent ? 'bg-brand-500 text-white' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300'}`}>
-                  {done ? <Icon.Check size={16} /> : fa(i + 1)}
-                </span>
-                <span className={`flex-1 ${isCurrent ? 'font-bold text-ink dark:text-white' : 'text-ink dark:text-slate-200'}`}>بخش {fa(i + 1)}{isCurrent ? ' · اینجایی' : ''}</span>
-                <span className="text-xs text-ink-muted dark:text-slate-400 whitespace-nowrap">{done ? 'خوانده شد' : `حدود ${fa(perSection)} دقیقه`}</span>
-              </button>
-            </li>
-          );
-        })}
-        {finished && <li className="text-center font-bold text-emerald-700 dark:text-emerald-300 py-3">همهٔ بخش‌های این فصل را خواندی.</li>}
-      </ol>
-    );
-  }
-  const offsets = [0, 56, 84, 56, 0, -56, -84, -56]; // zigzag in px
+  // Each section with the time it takes at the reader's own pace.
+  const perSection = minutesFor(chapter.wordCount / Math.max(1, chapter.chunkCount), wpm);
   return (
-    <div className="flex flex-col gap-5">
-      <ol className="flex flex-col items-center gap-5 py-4" aria-label="بخش‌های فصل">
-        {Array.from({ length: chapter.chunkCount }, (_, i) => {
-          const done = chapter.completed.includes(i);
-          const isCurrent = !finished && i === current;
-          const open = isChunkOpen(chapter, i);
-          return (
-            <React.Fragment key={i}>
-              <li className="flex flex-col items-center gap-1.5" style={{ transform: `translateX(${offsets[i % offsets.length]}px)` }}>
-                {isCurrent && <span className="rounded-xl bg-ink text-white dark:bg-white dark:text-ink px-3 py-1 text-xs font-bold">اینجایی</span>}
-                <button type="button" disabled={!open} onClick={() => onOpenChunk(i)}
-                  aria-label={`بخش ${fa(i + 1)}${done ? '، تمام شده' : open ? '' : '، قفل'}`}
-                  className={`rounded-full flex items-center justify-center transition-transform hover:scale-105 disabled:hover:scale-100 ${isCurrent
-                    ? 'w-20 h-20 bg-brand-500 text-white shadow-[0_6px_0_#2E2591] ring-8 ring-brand-200 dark:ring-brand-900'
-                    : done ? 'w-16 h-16 bg-emerald-600 text-white shadow-[0_5px_0_#1D6B40]'
-                    : 'w-16 h-16 bg-slate-200 text-slate-500 shadow-[0_5px_0_#CDD1DE] dark:bg-slate-700 dark:text-slate-400 dark:shadow-[0_5px_0_#334155]'}`}>
-                  {done ? <Icon.Check size={26} /> : isCurrent ? <Icon.Book size={32} /> : <Icon.Lock size={22} />}
-                </button>
-                <span className={`text-xs ${isCurrent ? 'font-bold text-ink dark:text-white' : 'text-ink-muted dark:text-slate-400'}`}>بخش {fa(i + 1)}</span>
-              </li>
-              {isChestSection(i) && i < chapter.chunkCount - 1 && (
-                <li className="flex flex-col items-center gap-1" aria-label="صندوق جایزه">
-                  <span className={`w-14 h-14 rounded-2xl flex items-center justify-center ${done ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200' : 'bg-amber-50 text-amber-700 dark:bg-slate-800 dark:text-amber-300'}`}>
-                    <Icon.Gift size={26} />
-                  </span>
-                  <span className="text-[11px] text-ink-muted dark:text-slate-400">{done ? 'محافظ زنجیره گرفتی' : 'جایزه: محافظ زنجیره'}</span>
-                </li>
-              )}
-            </React.Fragment>
-          );
-        })}
-      </ol>
-      {finished && <p className="text-center font-bold text-emerald-700 dark:text-emerald-300">همهٔ بخش‌های این فصل را تمام کردی.</p>}
-    </div>
+    <ol className="bg-white dark:bg-slate-800 rounded-3xl p-2 flex flex-col" aria-label="بخش‌های فصل">
+      {Array.from({ length: chapter.chunkCount }, (_, i) => {
+        const done = chapter.completed.includes(i);
+        const isCurrent = !finished && i === current;
+        const open = isChunkOpen(chapter, i);
+        return (
+          <li key={i}>
+            <button type="button" disabled={!open} onClick={() => onOpenChunk(i)}
+              className={`w-full flex items-center gap-3 min-h-[52px] px-3 rounded-2xl text-right disabled:opacity-50 ${isCurrent ? 'bg-brand-50 dark:bg-brand-900/40' : 'hover:bg-slate-50 dark:hover:bg-slate-700/50'}`}>
+              <span className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${done ? 'bg-emerald-600 text-white' : isCurrent ? 'bg-brand-500 text-white' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300'}`}>
+                {done ? <Icon.Check size={16} /> : fa(i + 1)}
+              </span>
+              <span className={`flex-1 ${isCurrent ? 'font-bold text-ink dark:text-white' : 'text-ink dark:text-slate-200'}`}>بخش {fa(i + 1)}{isCurrent ? ' · اینجایی' : ''}</span>
+              <span className="text-xs text-ink-muted dark:text-slate-400 whitespace-nowrap">{done ? 'خوانده شد' : `حدود ${fa(perSection)} دقیقه`}</span>
+            </button>
+          </li>
+        );
+      })}
+      {finished && <li className="text-center font-bold text-emerald-700 dark:text-emerald-300 py-3">همهٔ بخش‌های این فصل را خواندی.</li>}
+    </ol>
   );
 };
 
@@ -351,7 +309,7 @@ const SourcePage: React.FC<LibraryViewProps & { source: Source }> = props => {
             <ChapterPrestudy chapter={activeChapter} settings={props.settings} existingFronts={existingFronts} knownTerms={props.knownTerms}
               loadText={props.loadText} onPrestudy={props.onPrestudyChapter} />
           )}
-          <ChapterPath chapter={activeChapter} onOpenChunk={i => onOpenChunk(activeChapter, i)} playful={isPlayful(props.settings)} wpm={wpm} />
+          <ChapterSections chapter={activeChapter} onOpenChunk={i => onOpenChunk(activeChapter, i)} wpm={wpm} />
           {!isChapterFinished(activeChapter) && (
             <button type="button" onClick={() => onOpenChunk(activeChapter, currentChunkOf(activeChapter))}
               className="sticky bottom-24 md:bottom-6 self-center min-h-[56px] px-10 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold text-lg shadow-lg">

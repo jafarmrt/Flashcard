@@ -1,8 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { masteryStage, stageCounts, stageChanges } from '../services/masteryService';
-import { computeStreak, daysToFreeze, weekStrip, weeklyReviewCounts, availableFreezes, addDays } from '../services/streakService';
-import { reviewXp, nextCombo, comboBonus, isChestSection } from '../services/xpRules';
+import { weekStrip, weeklyReviewCounts, addDays } from '../services/calendar';
 import type { Flashcard } from '../types';
 
 const card = (over: Partial<Flashcard> = {}): Flashcard => ({
@@ -33,42 +32,14 @@ test('stage counts skip deleted cards and stage changes list only promotions', (
 const set = (...d: string[]) => new Set(d);
 const TODAY = '2026-10-08';
 
-test('streak counts studied days ending today or yesterday; frozen days bridge without counting', () => {
-  assert.equal(computeStreak(set('2026-10-06', '2026-10-07', TODAY), set(), TODAY), 3);
-  assert.equal(computeStreak(set('2026-10-06', '2026-10-07'), set(), TODAY), 2);
-  assert.equal(computeStreak(set('2026-10-05', '2026-10-06'), set(), TODAY), 0);
-  assert.equal(computeStreak(set('2026-10-05', '2026-10-07'), set('2026-10-06'), TODAY), 2);
-});
-
-test('freezes cover a short gap when enough are held, never a broken streak', () => {
-  const studied = set('2026-10-04', '2026-10-05');
-  assert.deepEqual(daysToFreeze(studied, set(), 2, TODAY), ['2026-10-06', '2026-10-07']);
-  assert.deepEqual(daysToFreeze(studied, set(), 1, TODAY), []); // gap of 2, only 1 freeze
-  assert.deepEqual(daysToFreeze(set('2026-10-07'), set(), 2, TODAY), []); // nothing missed
-  assert.deepEqual(daysToFreeze(set(), set(), 2, TODAY), []); // no streak at all
-  const frozenAfter = set('2026-10-06', '2026-10-07');
-  assert.equal(computeStreak(studied, frozenAfter, TODAY), 2);
-  assert.equal(availableFreezes(3, ['2026-10-06', '2026-10-07']), 1);
-});
-
 test('week strip runs Saturday to Friday and marks each day', () => {
   // 2026-10-08 is a Thursday, so the week starts on Saturday 2026-10-03.
-  const strip = weekStrip(set('2026-10-03', '2026-10-05'), set('2026-10-06'), TODAY);
+  const strip = weekStrip(set('2026-10-03', '2026-10-05', '2026-10-06'), TODAY);
   assert.equal(strip[0].day, '2026-10-03');
-  assert.deepEqual(strip.map(s => s.status), ['studied', 'missed', 'studied', 'frozen', 'missed', 'today', 'future']);
+  assert.deepEqual(strip.map(s => s.status), ['active', 'missed', 'active', 'active', 'missed', 'today', 'future']);
 });
 
 test('weekly review counts compare the last 7 days with the 7 before', () => {
   const logs = [TODAY, TODAY, addDays(TODAY, -6), addDays(TODAY, -7), addDays(TODAY, -13), addDays(TODAY, -14)];
   assert.deepEqual(weeklyReviewCounts(logs, TODAY), { thisWeek: 3, lastWeek: 2 });
-});
-
-test('review XP rewards correct answers and grows with a combo', () => {
-  assert.equal(reviewXp('AGAIN', 9), 1);
-  assert.equal(reviewXp('GOOD', 0), 6);
-  assert.equal(reviewXp('GOOD', 4), 7); // 5th in a row
-  assert.equal(comboBonus(40), 3);
-  assert.equal(nextCombo('AGAIN', 7), 0);
-  assert.equal(nextCombo('HARD', 7), 8);
-  assert.deepEqual([0, 1, 2, 5].map(isChestSection), [false, false, true, true]);
 });

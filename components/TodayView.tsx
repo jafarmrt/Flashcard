@@ -4,17 +4,14 @@ import { dueSchedules, liveAttempts } from '../services/speechPractice';
 import { minutesLeft, todayPlan, type PlanStep } from '../services/todayPlan';
 import { lastDays, minutes, readingByDay } from '../services/readingTime';
 import type { StudyMode, View } from '../hooks/useAppLogic';
-import { calculateLevel } from '../services/gamificationService';
 import { stageCounts, STAGE_NAMES, MasteryStage } from '../services/masteryService';
-import { availableFreezes, dayString, weekStrip, weeklyReviewCounts } from '../services/streakService';
+import { dayString, weekStrip, weeklyReviewCounts } from '../services/calendar';
 import { currentReading } from '../services/library';
-import { DEFAULT_DAILY_REVIEW_GOAL, SECTION_GOAL_REVIEWS } from '../services/xpRules';
-import { fa, GoalRing, Icon, Kbd, STAGE_COLORS, StreakChip } from './common/ui';
+import { fa, Icon, Kbd, STAGE_COLORS } from './common/ui';
 
 interface TodayViewProps {
   userProfile: UserProfile | null;
   username?: string;
-  streak: number;
   cards: Flashcard[];
   studyLogs: StudyLog[];
   sources: Source[];
@@ -26,17 +23,9 @@ interface TodayViewProps {
   onNavigate: (view: View) => void;
   onOpenChunk: (chapter: Chapter, index: number) => void;
   speechAttempts?: SpeechAttempt[];
-  playful?: boolean; // points, level, streak (services/calm)
 }
 
 const WEEKDAYS = ['ش', 'ی', 'د', 'س', 'چ', 'پ', 'ج'];
-const DAY_STYLE = {
-  studied: 'bg-flame-500',
-  frozen: 'bg-sky-200 text-sky-800 dark:bg-sky-800 dark:text-sky-100',
-  missed: 'bg-slate-200 dark:bg-slate-700',
-  today: 'border-2 border-dashed border-flame-500',
-  future: 'bg-slate-100 dark:bg-slate-800',
-};
 
 const Card: React.FC<{ children: React.ReactNode; className?: string }> = ({ children, className = '' }) => (
   <section className={`bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-3 min-w-0 ${className}`}>{children}</section>
@@ -89,20 +78,13 @@ const TodayPlan: React.FC<{ steps: PlanStep[]; reading: Reading; onRead: () => v
 };
 
 export const TodayView: React.FC<TodayViewProps> = ({
-  userProfile, username, streak, cards, studyLogs, sources, chapters, dueCount, newDueCount, onStartReview, onOpenSetup, onNavigate, onOpenChunk, speechAttempts = [], playful = false,
+  userProfile, username, cards, studyLogs, sources, chapters, dueCount, newDueCount, onStartReview, onOpenSetup, onNavigate, onOpenChunk, speechAttempts = [],
 }) => {
-  const level = calculateLevel(userProfile?.xp || 0);
-  const goal = userProfile?.dailyGoals?.goals.find(g => g.type === 'STUDY');
-  const goalTarget = goal?.target || DEFAULT_DAILY_REVIEW_GOAL;
-  const goalDone = goal?.progress || 0;
-  const remaining = Math.max(0, goalTarget - goalDone);
 
   const today = dayString(new Date());
   const studied = useMemo(() => new Set(studyLogs.map(l => l.date)), [studyLogs]);
-  const frozen = useMemo(() => new Set(userProfile?.frozenDates || []), [userProfile]);
-  const week = weekStrip(studied, frozen, today);
+  const week = weekStrip(studied, today);
   const weekly = weeklyReviewCounts(studyLogs.map(l => l.date), today);
-  const freezes = availableFreezes(userProfile?.streakFreezesEarned, userProfile?.frozenDates);
   const stages = stageCounts(cards);
   // This week's reading, from every book's log.
   const readWeek = useMemo(() => {
@@ -153,13 +135,6 @@ export const TodayView: React.FC<TodayViewProps> = ({
           <p className="text-sm text-ink-muted dark:text-slate-400">{dateLabel}</p>
           <h1 className="text-2xl md:text-3xl font-extrabold text-ink dark:text-white">سلام{greeting ? ` ${greeting}` : ''}</h1>
         </div>
-        {playful && <div className="flex flex-wrap gap-2">
-          <StreakChip streak={streak} />
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-100 text-brand-700 dark:bg-brand-900/60 dark:text-brand-200 px-3 py-1.5 font-bold text-sm">
-            <Icon.Star size={15} />سطح {fa(level.level)}
-            <span className="hidden sm:inline font-normal">· {fa(level.xpForNextLevel - level.xp)} امتیاز تا سطح بعد</span>
-          </span>
-        </div>}
       </header>
 
       {plan.length > 0 && (
@@ -169,17 +144,15 @@ export const TodayView: React.FC<TodayViewProps> = ({
 
       <div className="grid gap-5 md:grid-cols-2">
         <section className="md:col-span-2 bg-brand-500 text-white rounded-3xl p-5 md:p-7 flex flex-wrap items-center gap-5 md:gap-7">
-          {playful && <GoalRing value={goalDone} target={goalTarget} size={104} />}
           <div className="flex-1 min-w-[15rem] flex flex-col gap-3">
             <div>
               <h2 className="text-xl md:text-2xl font-extrabold">
-                {!playful ? (dueCount > 0 ? 'مرور کارت‌ها' : 'مرور') : remaining > 0 ? `هدف امروز: ${fa(remaining)} مرور دیگر` : 'هدف امروز کامل شد'}
+                {dueCount > 0 ? 'مرور کارت‌ها' : 'مرور'}
               </h2>
               <p className="mt-1 text-sm md:text-base text-white/90">
                 {dueCount > 0
                   ? `${fa(dueCount)} کارت موعد دارد${newDueCount > 0 ? `، ${fa(newDueCount)} تا تازه` : ''}.`
                   : 'کارت موعدداری نمانده. با مرور آزاد یا یک بخش تازه از متن ادامه بده.'}
-                {playful && remaining > 0 && ` هر بخشی که بخوانی ${fa(SECTION_GOAL_REVIEWS)} مرور حساب می‌شود.`}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -211,31 +184,19 @@ export const TodayView: React.FC<TodayViewProps> = ({
         <Card>
           <div className="flex justify-between items-center">
             <h2 className="font-bold text-ink dark:text-white">این هفته</h2>
-            {playful && <span className="flex items-center gap-1 text-xs text-ink-muted dark:text-slate-400">
-              <Icon.Shield size={14} />{freezes > 0 ? `${fa(freezes)} محافظ زنجیره` : 'محافظی نداری'}
-            </span>}
           </div>
           <div className="grid grid-cols-7 gap-1.5 text-center text-xs text-ink-muted dark:text-slate-400">
             {week.map((d, i) => (
               <div key={d.day} className={`flex flex-col items-center gap-1.5 ${d.status === 'today' ? 'font-bold text-ink dark:text-white' : ''}`}>
                 <span>{WEEKDAYS[i]}</span>
-                <span className={`w-8 h-8 rounded-[10px] flex items-center justify-center ${playful ? DAY_STYLE[d.status] : readWeek.days.has(d.day) ? 'bg-emerald-600 text-white' : studied.has(d.day) ? 'bg-emerald-200 dark:bg-emerald-800' : d.status === 'today' ? 'border-2 border-dashed border-slate-300 dark:border-slate-600' : 'bg-slate-100 dark:bg-slate-800'}`}
-                  title={d.status === 'frozen' ? 'محافظ زنجیره' : undefined}>
-                  {playful && d.status === 'frozen' && <Icon.Shield size={15} />}
-                </span>
+                <span className={`w-8 h-8 rounded-[10px] flex items-center justify-center ${readWeek.days.has(d.day) ? 'bg-emerald-600 text-white' : studied.has(d.day) ? 'bg-emerald-200 dark:bg-emerald-800' : d.status === 'today' ? 'border-2 border-dashed border-slate-300 dark:border-slate-600' : 'bg-slate-100 dark:bg-slate-800'}`}
+                  title={readWeek.days.has(d.day) ? 'کتاب خواندی' : studied.has(d.day) ? 'مرور کردی' : undefined} />
               </div>
             ))}
           </div>
-          {playful ? (
-            <p className="text-sm text-ink-muted dark:text-slate-400">
-              {fa(weekly.thisWeek)} مرور در ۷ روز گذشته، {fa(weekly.lastWeek)} در هفتهٔ قبلش.
-              {weekly.thisWeek > weekly.lastWeek && weekly.lastWeek > 0 ? ' از خودت جلو افتادی.' : ''}
-            </p>
-          ) : (
-            <p className="text-sm text-ink-muted dark:text-slate-400">
+          <p className="text-sm text-ink-muted dark:text-slate-400">
               در ۷ روز گذشته: {fa(minutes(readWeek.ms))} دقیقه خواندن، {fa(readWeek.sections)} بخش، {fa(weekly.thisWeek)} مرور. روزهای پررنگ روزهایی است که کتاب خواندی.
-            </p>
-          )}
+          </p>
         </Card>
 
         <Card>
@@ -260,7 +221,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
           )}
         </Card>
 
-        <Card className={`md:col-span-2 ${playful ? '' : 'order-first'}`}>
+        <Card className="md:col-span-2 order-first">
           <div className="flex justify-between items-center">
             <h2 className="font-bold text-ink dark:text-white">{reading ? 'ادامهٔ خواندن' : 'خواندن کتاب و مقاله'}</h2>
             <button type="button" onClick={() => onNavigate('TEXTS')} className="text-sm text-brand-500 dark:text-brand-300 hover:underline">کتابخانه</button>

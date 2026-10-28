@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { db } from '../services/localDBService';
 import type { Chapter, Flashcard, KnownWord, Occurrence, Source, StudyLog } from '../types';
-import { calculateStreak } from '../services/gamificationService';
 import { stageCounts, STAGE_NAMES, type MasteryStage } from '../services/masteryService';
 import { bookGrowth, hardestWords, isLearned, readingSummary, reviewsPerDay, yearGrid, type BookGrowth } from '../services/readingStats';
 import { lastDays, minutes as toMinutes, readingByDay, totalOf, wordsPerMinute } from '../services/readingTime';
@@ -18,7 +17,6 @@ interface StatsViewProps {
   chapters?: Chapter[];
   knownWords?: KnownWord[];
   userLevel?: string;
-  playful?: boolean; // the streak tile (services/calm)
 }
 
 const WEEKS = 12;
@@ -100,18 +98,14 @@ const GrowthChart: React.FC<{ books: BookGrowth[] }> = ({ books }) => {
   );
 };
 
-export const StatsView: React.FC<StatsViewProps> = ({ cards, sources, occurrences, onReviewCards, onOpenSource, chapters = [], knownWords = [], userLevel, playful = false }) => {
+export const StatsView: React.FC<StatsViewProps> = ({ cards, sources, occurrences, onReviewCards, onOpenSource, chapters = [], knownWords = [], userLevel }) => {
   const [logs, setLogs] = useState<StudyLog[] | null>(null);
-  const [streak, setStreak] = useState(0);
 
   useEffect(() => {
     let alive = true;
     (async () => {
       const all = await db.studyHistory.toArray();
-      const profile = await db.userProfile.get(1);
-      if (!alive) return;
-      setLogs(all);
-      setStreak(calculateStreak(all, profile?.frozenDates));
+      if (alive) setLogs(all);
     })();
     return () => { alive = false; };
   }, []);
@@ -149,7 +143,7 @@ export const StatsView: React.FC<StatsViewProps> = ({ cards, sources, occurrence
 
   return (
     <div dir="rtl" className="font-fa max-w-4xl mx-auto w-full flex flex-col gap-5">
-      <h1 className="text-2xl font-extrabold text-ink dark:text-white">{playful ? 'آمار' : 'پیشرفت'}</h1>
+      <h1 className="text-2xl font-extrabold text-ink dark:text-white">پیشرفت</h1>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Tile value={fa(summary.minutes)} label="دقیقه خواندن" tone="text-brand-600 dark:text-brand-300" />
@@ -184,7 +178,6 @@ export const StatsView: React.FC<StatsViewProps> = ({ cards, sources, occurrence
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {playful && <Tile value={`${fa(streak)} روز`} label="زنجیرهٔ مطالعه" tone="text-flame-500 dark:text-orange-300" />}
         <Tile value={fa(month)} label="مرور در ۳۰ روز" />
         <Tile value={fa(learned)} label="واژهٔ آموخته (آشنا و بلدم)" tone="text-emerald-700 dark:text-emerald-300" />
         <Tile value={fa(live.length)} label="همهٔ کارت‌ها" />

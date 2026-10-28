@@ -7,7 +7,6 @@ import type { CardOrigin, Chapter, ChapterText, Deck, Flashcard, Occurrence, Sou
 import { findSentence, splitIntoChunks, wordCount } from './textChunker.js';
 import { lemmaCandidates, termWords, tokensOf } from './lemma.js';
 import { normalizeTerm } from './vocabMerge.js';
-import { BOOK_COMPLETE_XP, CHAPTER_COMPLETE_XP, CHUNK_COMPLETE_XP } from './xpRules.js';
 
 export interface ChapterInput {
   title: string;
@@ -85,13 +84,12 @@ export const isBookFinished = (source: Pick<Source, 'id' | 'kind'>, chapters: Ch
   return list.length > 0 && list.every(isChapterFinished);
 };
 
-// What a finished section earns: its own XP, plus a bonus when it was the
-// last of its chapter, and another when that chapter was the last of a book.
-export const sectionReward = (chapter: Chapter, source: Pick<Source, 'id' | 'kind'> | undefined, chapters: Chapter[]) => {
+// What a finished section ends: its chapter, when it was the last one, and
+// the book, when that chapter was the last of a book.
+export const sectionEnds = (chapter: Chapter, source: Pick<Source, 'id' | 'kind'> | undefined, chapters: Chapter[]) => {
   const chapterDone = isChapterFinished(chapter);
   const bookDone = chapterDone && !!source && isBookFinished(source, chapters.map(c => (c.id === chapter.id ? chapter : c)));
-  const xp = CHUNK_COMPLETE_XP + (chapterDone ? CHAPTER_COMPLETE_XP : 0) + (bookDone ? BOOK_COMPLETE_XP : 0);
-  return { chapterDone, bookDone, xp };
+  return { chapterDone, bookDone };
 };
 
 // A section's text as the reader edited it: one blank line between

@@ -21,7 +21,6 @@ interface SettingsViewProps {
     onResetApp: () => void;
     onDeleteAllCards: () => void;
     onNavigateToChangelog: () => void;
-    onNavigateToAchievements: () => void;
     onNavigateToProfile: () => void;
     onNavigateToUsage: () => void;
     currentUser: { username: string } | null;
@@ -691,7 +690,7 @@ const TelegramSettings: React.FC = () => {
 };
 
 const SettingsView: React.FC<SettingsViewProps> = ({
-    settings, onUpdateSettings, onExportCSV, onImportCSV, onResetApp, onDeleteAllCards, onNavigateToChangelog, onNavigateToAchievements,
+    settings, onUpdateSettings, onExportCSV, onImportCSV, onResetApp, onDeleteAllCards, onNavigateToChangelog,
     onNavigateToProfile, onNavigateToUsage, currentUser, onLogout,
 }) => {
     const importFileRef = useRef<HTMLInputElement>(null);
@@ -732,13 +731,6 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                 <Row title="باز شدن برنامه روی کتاب" hint="با باز کردن برنامه، مستقیم به صفحه‌ای از کتاب بروی که آن‌جا ماندی.">
                     <input type="checkbox" checked={!!settings.openBookOnStart} onChange={e => onUpdateSettings({ openBookOnStart: e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="باز شدن برنامه روی کتاب" />
                 </Row>
-                <Row title="امتیاز، سطح، زنجیره و نشان‌ها" hint="خاموش (حالت آرام): پیشرفت به شکل خواندن و یادگیری نشان داده می‌شود. روشن: امتیاز، سطح، زنجیرهٔ روزها، پیاپی‌ها، نشان‌ها و جشن پایان هدف هم دیده می‌شوند. چیزی پاک نمی‌شود؛ امتیازها در هر دو حالت شمرده می‌شوند.">
-                    <input type="checkbox" checked={!!settings.playful} onChange={e => onUpdateSettings({ playful: e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="امتیاز، سطح، زنجیره و نشان‌ها" />
-                </Row>
-                {settings.playful && <Row title="هدف روزانهٔ مرور" hint="تعداد مرور در روز برای حلقهٔ هدف در صفحهٔ امروز؛ هر بخشی که می‌خوانی ۵ مرور حساب می‌شود. تغییر از همین امروز حساب می‌شود، مگر هدف امروز کامل شده باشد.">
-                    <Segmented label="هدف روزانه" value={settings.dailyReviewGoal || 20} onChange={goal => onUpdateSettings({ dailyReviewGoal: goal })}
-                        options={[10, 20, 30, 50].map(n => ({ value: n, label: fa(n) }))} />
-                </Row>}
                 <ExtractKinds settings={settings} onUpdateSettings={onUpdateSettings} />
                 <Row title="پیش‌خوانی خودکار" hint="پیش از هر بخش کتاب، واژه‌های سخت آن یک بار نشان داده شود.">
                     <input type="checkbox" checked={!!settings.preReadAuto} onChange={e => onUpdateSettings({ preReadAuto: e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="پیش‌خوانی خودکار" />
@@ -809,9 +801,6 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                 <Row title="پروفایل" hint="نام، معرفی و پیشرفت.">
                     <button type="button" onClick={onNavigateToProfile} className={button}>پروفایل</button>
                 </Row>
-                {settings.playful && <Row title="نشان‌ها" hint="نشان‌ها و رکوردهایی که گرفته‌ای.">
-                    <button type="button" onClick={onNavigateToAchievements} className={button}>نشان‌ها</button>
-                </Row>}
                 <Row title="نسخهٔ برنامه" hint="تغییرات هر نسخه.">
                     <div className="flex items-center gap-2">
                         <span dir="ltr" className="font-en text-sm rounded-full bg-slate-100 dark:bg-slate-700 px-3 py-1">{APP_VERSION}</span>
@@ -821,7 +810,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
             </Card>
 
             <Card title="منطقهٔ خطر" tone="danger">
-                <Row title="پاک کردن همهٔ کارت‌ها" hint="همهٔ کارت‌ها و دسته‌های این حساب از سرور و همهٔ دستگاه‌ها پاک می‌شود و برنمی‌گردد. کتاب‌ها، سطح و امتیاز می‌مانند.">
+                <Row title="پاک کردن همهٔ کارت‌ها" hint="همهٔ کارت‌ها و دسته‌های این حساب از سرور و همهٔ دستگاه‌ها پاک می‌شود و برنمی‌گردد. کتاب‌ها و یادداشت‌ها می‌مانند.">
                     <button type="button" onClick={onDeleteAllCards} className="min-h-[40px] px-4 rounded-xl text-sm font-bold bg-red-600 hover:bg-red-700 text-white">پاک کردن همه</button>
                 </Row>
                 <Row title="پاک کردن داده‌های این دستگاه" hint="همهٔ کارت‌ها و تنظیمات همین مرورگر پاک می‌شود و برنمی‌گردد. نسخهٔ روی سرور می‌ماند.">

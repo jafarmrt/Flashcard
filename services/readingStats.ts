@@ -7,7 +7,7 @@ import type { Chapter, Flashcard, Occurrence, Source, StudyLog } from '../types'
 import { isBookFinished, isChapterFinished } from './library.js';
 import { masteryStage } from './masteryService.js';
 import { isDue } from './srsService.js';
-import { dayString } from './streakService.js';
+import { dayString } from './calendar.js';
 
 // A word has been learned once its card reaches the "tree" stage (it stays
 // in memory for 10 days or more).

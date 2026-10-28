@@ -4,19 +4,14 @@ import { clearAccountData, db } from '../services/localDBService';
 import { belongsToAnother, localOwner, OWNER_KEY } from '../services/localOwner';
 import { APP_VERSION, RELEASES } from '../services/appVersion';
 import { unseenReleases } from '../services/changelog';
-import { calculateLevel, calculateStreak, checkAndAwardAchievements } from '../services/gamificationService';
-import { generateNewDailyGoals, updateGoalProgress, reviewGoalId } from '../services/dailyGoalsService';
-import { availableFreezes, dayString, daysToFreeze, MAX_HELD_FREEZES } from '../services/streakService';
+import { dayString } from '../services/calendar';
 import { addReading } from '../services/readingTime';
 import { tokensOf } from '../services/lemma';
-import { DEFAULT_DAILY_REVIEW_GOAL, isChestSection, SECTION_GOAL_REVIEWS } from '../services/xpRules';
-import { isPlayful } from '../services/calm';
-import { buildSource, cardIndex, cardsInText, chaptersOf, cleanEditedText, findCard, markChunkDone, migrateTexts, newOccurrence, sectionReward, SourceInput } from '../services/library';
+import { buildSource, cardIndex, cardsInText, chaptersOf, cleanEditedText, findCard, markChunkDone, migrateTexts, newOccurrence, sectionEnds, SourceInput } from '../services/library';
 import { cardsOfSource, pickBookReview } from '../services/readingStats';
 import { normalizeTerm } from '../services/vocabMerge';
 import { forgetRows, newKnownWord } from '../services/knownWords';
 import { compactAttempts } from '../services/speechPractice';
-import { ALL_ACHIEVEMENTS } from '../services/achievements';
 import { aiRequestOptions } from '../services/aiSettings';
 import { AUTH_REQUIRED_EVENT, callProxy } from '../services/apiService';
 import { applicableRows, cardStamp, deckStamp, newStudyLogs, profileStamp, stampMap, syncFingerprint } from '../services/syncState';
@@ -42,7 +37,7 @@ import { applyProposal, fillEmptyFields, withEditedContent } from '../services/c
 import type { ImprovementPick } from '../components/ImproveCardsPanel';
 
 // Types used within the hook and exported for the App component
-export type View = 'TODAY' | 'ME' | 'TEXTS' | 'READER' | 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'ACHIEVEMENTS' | 'PROFILE' | 'AI_EXTRACT' | 'USAGE';
+export type View = 'TODAY' | 'ME' | 'TEXTS' | 'READER' | 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'PROFILE' | 'AI_EXTRACT' | 'USAGE';
 export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'offline' | 'error';
 
 // A fetch that never reached the server (no connection, filtered network).
@@ -52,19 +47,7 @@ type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' 
 type User = { username: string };
 
 export type StudyMode = 'flip' | 'type' | 'cloze'; // cloze: the word left out of the book's sentence
-export interface SessionSummary { xp: number; reviews: number }
-
-// Settings are kept in localStorage; read the review goal straight from there so
-// it is right even before the settings state has loaded.
-const savedReviewGoal = (): number => {
-  try {
-    const saved = JSON.parse(localStorage.getItem('appSettings') || '{}');
-    const goal = Number(saved.dailyReviewGoal);
-    return goal > 0 ? goal : DEFAULT_DAILY_REVIEW_GOAL;
-  } catch {
-    return DEFAULT_DAILY_REVIEW_GOAL;
-  }
-};
+export interface SessionSummary { reviews: number }
 
 // The account last signed in on this browser, so the app opens offline.
 const LAST_USER_KEY = 'lc_last_user';
@@ -91,7 +74,6 @@ const defaultSettings: Settings = {
     bulkAddConcurrency: 3,
     bulkAddAiTimeout: 15,
     bulkAddDictTimeout: 5,
-    dailyReviewGoal: DEFAULT_DAILY_REVIEW_GOAL,
 };
 
 // A new card from an extracted or looked-up term.
@@ -194,7 +176,6 @@ export const useAppLogic = () => {
   
   // Gamification State
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [streak, setStreak] = useState(0);
   const [earnedAchievements, setEarnedAchievements] = useState<UserAchievement[]>([]);
   
   const isInitialMount = useRef(true);
@@ -254,10 +235,6 @@ export const useAppLogic = () => {
     toastShownAt.current = Date.now();
     toastTimer.current = message === undefined ? null : setTimeout(nextToast, toastQueue.current.length ? TOAST_MIN_MS : TOAST_MS);
   };
-  // Points, levels, badges and streak news only in playful mode (services/calm).
-  const playfulRef = useRef(false);
-  playfulRef.current = isPlayful(settings);
-  const gameToast = (message: string) => { if (playfulRef.current) showToast(message); };
   const showToast = (message: string) => {
     const queue = toastQueue.current;
     if (queue[queue.length - 1] === message) return;
@@ -269,35 +246,6 @@ export const useAppLogic = () => {
     }
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(nextToast, Math.max(0, TOAST_MIN_MS - (Date.now() - toastShownAt.current)));
-  };
-
-  const checkAndRefreshDailyGoals = async (profile: UserProfile, currentStreak: number) => {
-    // Fix: Use local date string (YYYY-MM-DD) instead of UTC to prevent goals from resetting
-    // when the user is in a timezone where it is still today, but UTC is tomorrow.
-    const today = new Date().toLocaleDateString('en-CA'); // 'en-CA' gives YYYY-MM-DD format locally
-    
-    const target = savedReviewGoal();
-    const goals = profile.dailyGoals;
-    const sameDay = goals?.date === today;
-    // A changed goal applies at once unless today's goal is already done.
-    const goalChanged = sameDay && goals!.goals[0]?.id !== reviewGoalId(target) && !goals!.goals[0]?.isComplete;
-    if (!goals || !sameDay || goalChanged) {
-        const newGoals = generateNewDailyGoals(currentStreak, target);
-        if (goalChanged && goals!.goals[0]?.type === 'STUDY') {
-            newGoals[0].progress = Math.min(goals!.goals[0].progress, target);
-        }
-        const updatedProfile: UserProfile = {
-            ...profile,
-            dailyGoals: {
-                date: today,
-                goals: newGoals,
-                allCompleteAwarded: false
-            }
-        };
-        await db.userProfile.put(updatedProfile);
-        return updatedProfile;
-    }
-    return profile;
   };
 
   // Texts from before the library become one-chapter sources, once. Rows the
@@ -351,32 +299,13 @@ export const useAppLogic = () => {
 
     let profile = await db.userProfile.get(1);
     if (!profile) {
-      profile = { id: 1, xp: 0, level: 1, lastStreakCheck: '', firstName: '', lastName: '', bio: '', profileLastUpdated: new Date().toISOString() };
+      profile = { id: 1, firstName: '', lastName: '', bio: '', profileLastUpdated: new Date().toISOString() };
       await db.userProfile.add(profile);
     }
     
     const allLogs = await db.studyHistory.toArray();
     setStudyLogs(allLogs);
 
-    // Spend held streak freezes on days missed since the last study day.
-    const frozen = profile.frozenDates || [];
-    const toFreeze = daysToFreeze(
-      new Set(allLogs.map(l => l.date)), new Set(frozen),
-      availableFreezes(profile.streakFreezesEarned, frozen), dayString(new Date()),
-    );
-    if (toFreeze.length > 0) {
-      profile = { ...profile, frozenDates: [...frozen, ...toFreeze], profileLastUpdated: new Date().toISOString() };
-      await db.userProfile.put(profile);
-      const days = toFreeze.length;
-      setTimeout(() => showToast(days === 1 ? 'محافظ زنجیره یک روز غیبت را پوشاند.' : `محافظ زنجیره ${days} روز غیبت را پوشاند.`), 800);
-    }
-
-    const currentStreak = calculateStreak(allLogs, profile.frozenDates);
-    setStreak(currentStreak);
-    
-    if (profile) {
-      profile = await checkAndRefreshDailyGoals(profile, currentStreak);
-    }
     setUserProfile(profile);
     
     return {
@@ -385,109 +314,6 @@ export const useAppLogic = () => {
     };
   };
   
-  // Reads everything from the database: React state can be a step behind
-  // right after a save.
-  const handleCheckAchievements = async (quizScore?: { score: number, total: number }) => {
-    const profile = await db.userProfile.get(1);
-    if (!profile) return;
-    const newAchievements = await checkAndAwardAchievements({
-        allCards: (await db.flashcards.toArray()).filter(c => !c.isDeleted),
-        allDecks: await db.decks.toArray(),
-        studyLogs: await db.studyHistory.toArray(),
-        userProfile: profile,
-        earnedAchievements: await db.userAchievements.toArray(),
-        quizScore,
-        sources: await db.sources.toArray(),
-        chapters: await db.chapters.toArray(),
-        occurrences: await db.occurrences.toArray(),
-    }).catch(error => {
-        console.error('Achievement check failed:', error);
-        return [];
-    });
-
-    if (newAchievements.length > 0) {
-        setEarnedAchievements(prev => [...prev.filter(a => !newAchievements.some(n => n.achievementId === a.achievementId)), ...newAchievements]);
-        newAchievements.forEach(ua => {
-            const achievementData = ALL_ACHIEVEMENTS.find(a => a.id === ua.achievementId);
-            if (achievementData) {
-                setTimeout(() => {
-                  gameToast(`نشان تازه: ${achievementData.name} ${achievementData.icon}`);
-                }, 500);
-            }
-        });
-    }
-  };
-
-
-  // Read, change and write the profile in one transaction, so two updates at
-  // the same moment (quiz XP and its goal, say) never overwrite each other.
-  const updateProfile = async (change: (p: UserProfile) => UserProfile): Promise<{ before: UserProfile; after: UserProfile } | null> => {
-    let result: { before: UserProfile; after: UserProfile } | null = null;
-    await (db as any).transaction('rw', db.userProfile, async () => {
-      const before = await db.userProfile.get(1);
-      if (!before) return;
-      const after: UserProfile = { ...change(before), profileLastUpdated: new Date().toISOString() };
-      await db.userProfile.put(after);
-      result = { before, after };
-    });
-    if (result) setUserProfile((result as { after: UserProfile }).after);
-    return result;
-  };
-
-  const awardXP = async (points: number, message?: string) => {
-    const result = await updateProfile(p => {
-      const xp = (p.xp || 0) + points;
-      return { ...p, xp, level: calculateLevel(xp).level };
-    });
-    if (!result) return;
-    if (message) gameToast(message);
-    if (result.after.level > result.before.level) gameToast(`به سطح ${fa(result.after.level)} رسیدی! 🎉`);
-    handleCheckAchievements();
-  };
-
-  const handleGoalUpdate = async (type: 'STUDY' | 'QUIZ' | 'STREAK', value: number, isXpOverride = false) => {
-    if (isXpOverride) {
-        await awardXP(value);
-        return;
-    }
-    // A new day starts a new goal, even when the app stayed open past midnight.
-    const stored = await db.userProfile.get(1);
-    if (stored) await checkAndRefreshDailyGoals(stored, streak);
-
-    let progress: ReturnType<typeof updateGoalProgress> | null = null;
-    const result = await updateProfile(p => {
-      if (!p.dailyGoals) return p;
-      progress = updateGoalProgress(type, value, p);
-      return progress.updatedProfile;
-    });
-    if (!result || !progress) return;
-    const { xpGained, newlyCompletedGoals } = progress as ReturnType<typeof updateGoalProgress>;
-
-    if (xpGained > 0) await awardXP(xpGained);
-
-    newlyCompletedGoals.forEach(goal => {
-        setTimeout(() => gameToast(`هدف امروز کامل شد. +${fa(goal.xp)} امتیاز`), 500);
-    });
-
-    if (result.after.dailyGoals?.allCompleteAwarded && !result.before.dailyGoals?.allCompleteAwarded) {
-        setTimeout(() => gameToast(`همهٔ هدف‌های امروز کامل شد! +${fa(50)} امتیاز ✨`), newlyCompletedGoals.length > 0 ? 1000 : 500);
-    }
-  };
-
-  // Once a day, after the first reviews of the day: a bonus for keeping the
-  // streak going (2 days or more).
-  const checkStreakBonus = async () => {
-      const today = dayString(new Date());
-      const profile = await db.userProfile.get(1);
-      if (!profile || profile.lastStreakCheck === today) return;
-      const logs = await db.studyHistory.toArray();
-      if (!logs.some(l => l.date === today)) return;
-      const newStreak = calculateStreak(logs, profile.frozenDates);
-      await updateProfile(p => ({ ...p, lastStreakCheck: today }));
-      if (newStreak >= 2) await awardXP(newStreak * 10, `جایزهٔ زنجیرهٔ ${fa(newStreak)} روزه: +${fa(newStreak * 10)} امتیاز 🔥`);
-      await handleGoalUpdate('STREAK', newStreak);
-  };
-
   // Take settings changed on another device; the keys come apart (syncKeys).
   const adoptCloudSettings = (incoming?: Partial<Settings>) => {
     const merged = applyIncomingSettings(readSavedSettings(), incoming);
@@ -780,12 +606,6 @@ export const useAppLogic = () => {
 
   const updateSettings = (changes: Partial<Settings>) => {
       const newSettings = { ...changes, updatedAt: new Date().toISOString() };
-      if (newSettings.dailyReviewGoal !== undefined) {
-          // Save first so the goal refresh below already sees the new value.
-          const saved = JSON.parse(localStorage.getItem('appSettings') || '{}');
-          localStorage.setItem('appSettings', JSON.stringify({ ...saved, ...newSettings }));
-          if (isLoggedIn) fetchData();
-      }
       setSettings(prev => {
           const updated: Settings = { ...prev, ...newSettings };
           // A key typed or removed here goes to the server, and from there
@@ -875,7 +695,6 @@ export const useAppLogic = () => {
       showToast('کارت اضافه شد.');
     }
     await fetchData();
-    handleCheckAchievements();
     setEditingCard(null);
     setView(previousViewRef.current);
   };
@@ -947,7 +766,6 @@ export const useAppLogic = () => {
     }
     
     await fetchData();
-    handleCheckAchievements();
     showToast(`${fa(newCards.length)} کارت به «${trimmedDeckName}» اضافه شد.`);
     setView('DECKS');
   };
@@ -976,7 +794,6 @@ export const useAppLogic = () => {
     }
 
     await fetchData();
-    handleCheckAchievements();
     if (options.stay) {
       showToast(`${newCards.length} کارت به «${trimmedDeckName}» اضافه شد.`);
       return;
@@ -985,7 +802,7 @@ export const useAppLogic = () => {
     setView('DECKS');
   };
 
-  const handleSessionEnd = async (updatedCardsFromSession: Flashcard[], summary: SessionSummary = { xp: 0, reviews: 0 }, next: 'home' | 'more' = 'home') => {
+  const handleSessionEnd = async (updatedCardsFromSession: Flashcard[], _summary: SessionSummary = { reviews: 0 }, next: 'home' | 'more' = 'home') => {
     if (updatedCardsFromSession.length > 0) {
       const now = new Date().toISOString();
       // The session's schedule over what the database holds now: content
@@ -994,12 +811,7 @@ export const useAppLogic = () => {
       const cardsToUpdate = updatedCardsFromSession.map((c, i) => ({ ...(stored[i] ? withEditedContent(c, stored[i]!) : c), updatedAt: now }));
       await db.flashcards.bulkPut(cardsToUpdate);
     }
-    // XP is added once per session so an undone answer never counts.
-    if (summary.xp > 0) await awardXP(summary.xp);
-    if (summary.reviews > 0) await handleGoalUpdate('STUDY', summary.reviews);
-    await checkStreakBonus();
     const fresh = await fetchData();
-    handleCheckAchievements();
     if (next === 'more') {
       startQuickReview(studyMode, 10, fresh.cards);
       return;
@@ -1101,7 +913,6 @@ export const useAppLogic = () => {
         if (newCards.length > 0) await db.flashcards.bulkAdd(newCards);
         
         await fetchData();
-        handleCheckAchievements();
         const skippedRows = parsedData.length - newCards.length;
         showToast(skippedRows > 0
             ? `${fa(newCards.length)} کارت وارد شد؛ ${fa(skippedRows)} سطر بی‌واژه یا بی‌معنی کنار گذاشته شد.`
@@ -1356,30 +1167,10 @@ export const useAppLogic = () => {
     }
     if (seenAgain.length) setOccurrences(prev => [...prev.filter(o => !seenAgain.some(s => s.id === o.id)), ...seenAgain]);
     offerReview(await db.occurrences.where('chapterId').equals(chapterId).toArray());
-    // The last section of a chapter, or of a book, earns a bonus on top.
-    const { chapterDone, bookDone, xp } = sectionReward(updated, await db.sources.get(chapter.sourceId), await db.chapters.where('sourceId').equals(chapter.sourceId).toArray());
-    const met = seenAgain.length ? `؛ ${fa(seenAgain.length)} واژهٔ کارت‌دار در این بخش دوباره دیده شد` : '';
-    const message = bookDone
-      ? `کتاب را تمام کردی! 🏁 +${fa(xp)} امتیاز`
-      : chapterDone
-        ? `فصل تمام شد! 📖 +${fa(xp)} امتیاز${met}`
-        : `بخش ${fa(index + 1)} تمام شد. +${fa(xp)} امتیاز${met}`;
-    await awardXP(xp, message);
-    // Calm mode: what was read, without points.
-    if (!playfulRef.current) {
-      const metCalm = seenAgain.length ? `؛ ${fa(seenAgain.length)} واژهٔ کارت‌دار دوباره دیده شد` : '';
-      showToast(bookDone ? 'کتاب را تمام کردی.' : chapterDone ? `فصل تمام شد${metCalm}.` : `بخش ${fa(index + 1)} خوانده شد${metCalm}.`);
-    }
-    // Reading counts toward the daily goal.
-    await handleGoalUpdate('STUDY', SECTION_GOAL_REVIEWS);
-    if (isChestSection(index)) {
-      const result = await updateProfile(p => (availableFreezes(p.streakFreezesEarned, p.frozenDates) < MAX_HELD_FREEZES
-        ? { ...p, streakFreezesEarned: (p.streakFreezesEarned || 0) + 1 }
-        : p));
-      if (result && result.after.streakFreezesEarned !== result.before.streakFreezesEarned) {
-        setTimeout(() => gameToast('صندوق جایزه: یک محافظ زنجیره گرفتی.'), 1200);
-      }
-    }
+    // What was read: the section, the chapter or the whole book.
+    const { chapterDone, bookDone } = sectionEnds(updated, await db.sources.get(chapter.sourceId), await db.chapters.where('sourceId').equals(chapter.sourceId).toArray());
+    const met = seenAgain.length ? `؛ ${fa(seenAgain.length)} واژهٔ کارت‌دار دوباره دیده شد` : '';
+    showToast(bookDone ? 'کتاب را تمام کردی.' : chapterDone ? `فصل تمام شد${met}.` : `بخش ${fa(index + 1)} خوانده شد${met}.`);
     goOn(updated);
   };
 
@@ -1456,7 +1247,6 @@ export const useAppLogic = () => {
       if (fresh.length) await db.occurrences.bulkPut(fresh);
     });
     await fetchData();
-    handleCheckAchievements();
     // Meanings from the reader are short; the rest comes in the background.
     if (newCards.some(lacksExtras)) {
       cancelExtrasRef.current = false;
@@ -1941,7 +1731,7 @@ export const useAppLogic = () => {
       flashcards, decks, view, editingCard, toastMessage, isLoggedIn, currentUser, authLoading, appLoading,
       syncStatus, studyDeckId, studyCards, studySessionId, isStudySetupModalOpen, studyMode, studySourceId, studyLogs, dbStatus, apiStatus,
       sources, chapters, occurrences, activeSourceId, activeChapterId, activeChunk, knownWords, speechAttempts, handleSaveSpeechAttempt, notes, handleSaveNote, sectionReview,
-      freeDictApiStatus, mwDictApiStatus, settings, userProfile, streak, earnedAchievements,
+      freeDictApiStatus, mwDictApiStatus, settings, userProfile,
       previousViewRef, autoFixProgress, autoFixReport, extrasProgress,
       overlayEdit, openCardEditor, closeCardEditor, saveOverlayEdit,
       // Handlers
@@ -1949,7 +1739,7 @@ export const useAppLogic = () => {
       handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV,
       handleResetApp, handleDeleteAllCards, handleStudyDeck, handleStartStudySession, setIsStudySetupModalOpen,
       handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
-      updateSettings, handleCheckAchievements, handleGoalUpdate, handleCompleteCardDetails,
+      updateSettings, handleCompleteCardDetails,
       handleAutoFixCards, handleStopAutoFix, handleCloseAutoFixReport, handleSaveExtractedCards,
       startQuickReview, openStudySetup, setStudyMode, handleAddSource, handleOpenSource, handleOpenChapter, handleOpenChunk,
       handleDeleteSource, handleCompleteChunk, handleReadingTime, loadChapterText, handleEditChunk, handleSaveReaderCards,
