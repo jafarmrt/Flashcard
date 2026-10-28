@@ -103,7 +103,7 @@ const App: React.FC = () => {
     ];
     const activeSource = sources.find(s => s.id === activeSourceId && !s.isDeleted);
     const activeChapter = chapters.find(c => c.id === activeChapterId && !c.isDeleted);
-    const existingFronts = useMemo(() => visibleFlashcards.map(c => c.front), [flashcards]);
+    const existingFronts = useMemo(() => visibleFlashcards.map(c => c.front), [visibleFlashcards]);
     // Where each card was met while reading, shown on the card.
     const places = useMemo(() => placesByCard(occurrences, sources, chapters), [occurrences, sources, chapters]);
 

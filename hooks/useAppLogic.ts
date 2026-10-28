@@ -483,7 +483,17 @@ export const useAppLogic = () => {
     }
   };
 
+  // The newest versions of the functions the long-lived effects below call.
+  // Those effects run once (start-up, listeners) or on data changes, and must
+  // not be set up again each render; through this ref they never call a
+  // function left over from an older render, whatever state it read.
+  const latest = useRef({ handleSync, fetchData, showToast });
+  latest.current = { handleSync, fetchData, showToast };
+
   useEffect(() => {
+    const fetchData = () => latest.current.fetchData();
+    const showToast = (message: string) => latest.current.showToast(message);
+    const handleSync = () => latest.current.handleSync();
     // The server knows who is signed in from its HttpOnly session cookie.
     const checkSession = async () => {
         const startSignedIn = async (username: string) => {
@@ -599,7 +609,7 @@ export const useAppLogic = () => {
     });
     if (fingerprint === lastSyncedFingerprint.current) return;
 
-    const handler = setTimeout(() => handleSync(), 2000);
+    const handler = setTimeout(() => latest.current.handleSync(), 2000);
     return () => clearTimeout(handler);
   }, [flashcards, decks, userProfile, earnedAchievements, sources, chapters, occurrences, knownWords, speechAttempts, notes, isLoggedIn, autoFixProgress, settings.updatedAt]);
 

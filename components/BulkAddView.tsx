@@ -180,12 +180,13 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
     // has just finished (the dictionary found an audio URL) is visible to the
     // next step before React renders.
     const processedWordsRef = useRef<ProcessedWord[]>([]);
-    const commitWords = (next: ProcessedWord[]) => {
+    // Both only touch the ref and a state setter, so they never change.
+    const commitWords = useCallback((next: ProcessedWord[]) => {
         processedWordsRef.current = next;
         setProcessedWords(next);
-    };
+    }, []);
 
-    const updateWordState = (word: string, updater: (draft: ProcessedWord) => void) => {
+    const updateWordState = useCallback((word: string, updater: (draft: ProcessedWord) => void) => {
         const prev = processedWordsRef.current;
         const index = prev.findIndex(p => p.word === word);
         if (index === -1) return;
@@ -195,7 +196,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
         updater(newWordState);
         newState[index] = newWordState;
         commitWords(newState);
-    };
+    }, [commitWords]);
     
     const processWordPart = useCallback(async (
         word: string,
@@ -273,7 +274,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                 }
             });
         }
-    }, [aiTimeout, dictTimeout, aiOptions]);
+    }, [aiTimeout, dictTimeout, aiOptions, updateWordState]);
 
     const handleProcessWord = useCallback(async (word: string) => {
         if (isCancelledRef.current) return;
@@ -300,7 +301,7 @@ export const BulkAddView: React.FC<BulkAddViewProps> = ({ onSave, onCancel, show
                 draft.status = isSuccess ? 'done' : 'error';
             });
         }
-    }, [processWordPart]);
+    }, [processWordPart, updateWordState]);
 
     const runProcessingQueue = async (wordsQueue: string[]) => {
         isCancelledRef.current = false;
