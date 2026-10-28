@@ -2,36 +2,35 @@ import React, { lazy, Suspense, useEffect, useMemo, useRef } from 'react';
 import { useAppLogic, View, HealthStatus } from './hooks/useAppLogic';
 
 import { Flashcard, Deck } from './types';
-import FlashcardList from './components/FlashcardList';
-import FlashcardForm from './components/FlashcardForm';
-import { StudyView } from './components/StudyView';
 import { aiRequestOptions, pronunciationOptions } from './services/aiSettings';
 import { refreshSources } from './services/cardRefresh';
 import Toast from './components/Toast';
-import DeckList from './components/DeckList';
-import SettingsView from './components/SettingsView';
 import { StudySetupModal } from './components/StudySetupModal';
 import { AuthView } from './components/AuthView';
 import { Sidebar, BottomTabs, AddFab } from './components/layout/Navigation';
 import { TodayView } from './components/TodayView';
 import { MeView } from './components/MeView';
-import { LibraryView } from './components/LibraryView';
 import { chaptersOf, currentChunkOf, currentReading, placesByCard } from './services/library';
 import { knownTermSet } from './services/knownWords';
 import { isDue, isNewCard } from './services/srsService';
-import { dayString } from './services/streakService';
-import { DEFAULT_DAILY_REVIEW_GOAL } from './services/xpRules';
-import { isPlayful } from './services/calm';
+import { dayString } from './services/calendar';
 import { AutoFixReportModal } from './components/AutoFixReportModal';
 
-// Screens opened now and then load on first use, so the app starts faster.
-// They are fetched in the background soon after, so they open offline too.
+// Every screen but Today loads on first use, so the app starts faster. The
+// reader and the review are fetched at once (the app is for reading, and a
+// book or a review should open offline even right after an update), the rest
+// in the background soon after, so they open offline too.
 const SCREENS = {
+    study: () => import('./components/StudyView'),
+    library: () => import('./components/LibraryView'),
+    settings: () => import('./components/SettingsView'),
+    decks: () => import('./components/DeckList'),
+    cardList: () => import('./components/FlashcardList'),
+    cardForm: () => import('./components/FlashcardForm'),
     stats: () => import('./components/StatsView'),
     practice: () => import('./components/ConversationView'),
     changelog: () => import('./components/ChangelogView'),
     bulkAdd: () => import('./components/BulkAddView'),
-    achievements: () => import('./components/AchievementsView'),
     profile: () => import('./components/ProfileView'),
     aiExtract: () => import('./components/AiTextExtractorView'),
     reader: () => import('./components/ChunkReaderView'),
@@ -41,11 +40,16 @@ const StatsView = lazy(() => SCREENS.stats().then(m => ({ default: m.StatsView }
 const PracticeView = lazy(() => SCREENS.practice().then(m => ({ default: m.PracticeView })));
 const ChangelogView = lazy(() => SCREENS.changelog().then(m => ({ default: m.ChangelogView })));
 const BulkAddView = lazy(() => SCREENS.bulkAdd().then(m => ({ default: m.BulkAddView })));
-const AchievementsView = lazy(() => SCREENS.achievements().then(m => ({ default: m.AchievementsView })));
 const ProfileView = lazy(() => SCREENS.profile().then(m => ({ default: m.ProfileView })));
 const AiTextExtractorView = lazy(() => SCREENS.aiExtract().then(m => ({ default: m.AiTextExtractorView })));
 const UsageView = lazy(() => SCREENS.usage().then(m => ({ default: m.UsageView })));
 const ReaderScreen = lazy(() => SCREENS.reader().then(m => ({ default: m.ReaderScreen })));
+const StudyView = lazy(() => SCREENS.study().then(m => ({ default: m.StudyView })));
+const LibraryView = lazy(() => SCREENS.library().then(m => ({ default: m.LibraryView })));
+const SettingsView = lazy(SCREENS.settings);
+const DeckList = lazy(SCREENS.decks);
+const FlashcardList = lazy(SCREENS.cardList);
+const FlashcardForm = lazy(SCREENS.cardForm);
 
 // A screen that fails to load (offline before it was ever opened) or to
 // draw shows a message instead of taking the whole app down.
@@ -74,13 +78,13 @@ const App: React.FC = () => {
         // State
         flashcards, decks, view, editingCard, toastMessage, isLoggedIn, currentUser, authLoading, appLoading,
         studyDeckId, isStudySetupModalOpen, dbStatus, apiStatus, freeDictApiStatus, mwDictApiStatus,
-        settings, userProfile, streak, earnedAchievements, autoFixReport,
+        settings, userProfile, autoFixReport,
         // Handlers
         setView, showToast, handleAddCard, handleEditCard, handleDeleteCard, handleSaveCard,
         handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV,
         handleResetApp, handleDeleteAllCards, handleStudyDeck, handleStartStudySession, setIsStudySetupModalOpen,
         handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
-        updateSettings, handleCheckAchievements, handleGoalUpdate, studyCards,
+        updateSettings, studyCards,
         handleCompleteCardDetails, handleAutoFixCards, handleStopAutoFix, autoFixProgress,
         handleCloseAutoFixReport, handleSaveExtractedCards, previousViewRef,
         syncStatus, studyMode, studySourceId, studyLogs, studySessionId, sources, chapters, occurrences,
@@ -93,7 +97,6 @@ const App: React.FC = () => {
         handleFillExtras, handleStopFillExtras, extrasProgress, handleSaveCardContent, handleApplyImprovements,
     } = useAppLogic();
 
-    const playful = isPlayful(settings);
     const visibleFlashcards = useMemo(() => flashcards.filter(c => !c.isDeleted), [flashcards]);
     const knownTerms = useMemo(() => Array.from(knownTermSet(knownWords)), [knownWords]);
     const visibleDecks = decks.filter(d => !d.isDeleted);
@@ -106,11 +109,9 @@ const App: React.FC = () => {
         { label: 'Free Dict.', status: freeDictApiStatus },
         { label: 'MW', status: mwDictApiStatus },
     ];
-    const todayUtc = dayString(new Date());
-    const studyGoal = userProfile?.dailyGoals?.goals.find(g => g.type === 'STUDY');
     const activeSource = sources.find(s => s.id === activeSourceId && !s.isDeleted);
     const activeChapter = chapters.find(c => c.id === activeChapterId && !c.isDeleted);
-    const existingFronts = useMemo(() => visibleFlashcards.map(c => c.front), [flashcards]);
+    const existingFronts = useMemo(() => visibleFlashcards.map(c => c.front), [visibleFlashcards]);
     // Where each card was met while reading, shown on the card.
     const places = useMemo(() => placesByCard(occurrences, sources, chapters), [occurrences, sources, chapters]);
 
@@ -130,6 +131,8 @@ const App: React.FC = () => {
         // The reader is fetched at once so a book opens offline even right
         // after an update; the other screens a little later.
         SCREENS.reader().catch(() => {});
+        SCREENS.study().catch(() => {});
+        SCREENS.library().catch(() => {});
         const timer = setTimeout(() => Object.values(SCREENS).forEach(load => load().catch(() => {})), 5000);
         return () => clearTimeout(timer);
     }, []);
@@ -144,7 +147,6 @@ const App: React.FC = () => {
                 return <TodayView
                     userProfile={userProfile}
                     username={currentUser?.username}
-                    streak={streak}
                     cards={visibleFlashcards}
                     studyLogs={studyLogs}
                     sources={sources}
@@ -156,15 +158,11 @@ const App: React.FC = () => {
                     onNavigate={handleNavigate}
                     onOpenChunk={handleOpenChunk}
                     speechAttempts={speechAttempts}
-                    playful={playful}
                 />;
             case 'ME':
                 return <MeView
-                    playful={playful}
                     userProfile={userProfile}
                     username={currentUser?.username}
-                    streak={streak}
-                    earnedAchievements={earnedAchievements}
                     syncStatus={syncStatus}
                     health={health}
                     hasCards={visibleFlashcards.length > 0}
@@ -236,9 +234,6 @@ const App: React.FC = () => {
                     key={studySessionId}
                     cards={studyCards}
                     initialMode={studyMode}
-                    streak={streak}
-                    studiedToday={studyLogs.some(l => l.date === todayUtc)}
-                    goal={{ progress: studyGoal?.progress || 0, target: studyGoal?.target || DEFAULT_DAILY_REVIEW_GOAL }}
                     onExit={handleSessionEnd}
                     places={places}
                     sourceId={studySourceId}
@@ -246,13 +241,9 @@ const App: React.FC = () => {
                     onEditCard={openCardEditor}
                     onSaveCard={handleSaveCardContent}
                     allCards={visibleFlashcards}
-                    playful={playful}
                 />;
             case 'PRACTICE':
-                return <PracticeView cards={visibleFlashcards} occurrences={occurrences} speechAttempts={speechAttempts} onSaveSpeechAttempt={handleSaveSpeechAttempt} aiOptions={aiRequestOptions(settings)} audioOptions={pronunciationOptions(settings)} awardXP={userProfile ? (points) => handleGoalUpdate('QUIZ', points, true) : () => {}} onQuizComplete={(score) => {
-                    handleCheckAchievements(score);
-                    handleGoalUpdate('QUIZ', 1);
-                }} />;
+                return <PracticeView cards={visibleFlashcards} occurrences={occurrences} speechAttempts={speechAttempts} onSaveSpeechAttempt={handleSaveSpeechAttempt} aiOptions={aiRequestOptions(settings)} audioOptions={pronunciationOptions(settings)} />;
             case 'AI_EXTRACT':
                 return <AiTextExtractorView
                     decks={visibleDecks}
@@ -273,7 +264,6 @@ const App: React.FC = () => {
                     onResetApp={handleResetApp}
                     onDeleteAllCards={handleDeleteAllCards}
                     onNavigateToChangelog={() => setView('CHANGELOG')}
-                    onNavigateToAchievements={() => setView('ACHIEVEMENTS')}
                     onNavigateToProfile={() => setView('PROFILE')}
                     onNavigateToUsage={() => setView('USAGE')}
                     currentUser={currentUser}
@@ -289,8 +279,6 @@ const App: React.FC = () => {
                     onViewAllCards={() => setView('LIST')}
                     onBulkAdd={() => setView('BULK_ADD')}
                     onAiExtract={() => setView('AI_EXTRACT')}
-                    userProfile={userProfile}
-                    streak={streak}
                 />;
             case 'FORM':
                 const editingCardDeckName = visibleDecks.find(d => d.id === editingCard?.deckId)?.name || '';
@@ -305,23 +293,17 @@ const App: React.FC = () => {
                     audioOptions={pronunciationOptions(settings)}
                 />;
             case 'STATS':
-                return <StatsView cards={visibleFlashcards} sources={sources} occurrences={occurrences} chapters={chapters} knownWords={knownWords} userLevel={settings.userLevel} playful={playful}
+                return <StatsView cards={visibleFlashcards} sources={sources} occurrences={occurrences} chapters={chapters} knownWords={knownWords} userLevel={settings.userLevel}
                     onReviewCards={ids => { handleReviewCards(ids, 'STATS'); }} onOpenSource={handleOpenSource} />;
             case 'USAGE':
                 return <UsageView cards={visibleFlashcards} onBack={() => setView('SETTINGS')} />;
             case 'CHANGELOG':
                 return <ChangelogView onBack={() => setView('SETTINGS')} />;
-            case 'ACHIEVEMENTS':
-                return <AchievementsView earnedAchievements={earnedAchievements} onBack={() => setView('SETTINGS')} />;
             case 'PROFILE':
                 return <ProfileView
-                    playful={playful}
                     userProfile={userProfile}
-                    streak={streak}
                     onSave={handleSaveProfile}
                     onBack={() => setView('SETTINGS')}
-                    earnedAchievements={earnedAchievements}
-                    onNavigateToAchievements={() => setView('ACHIEVEMENTS')}
                 />;
             case 'BULK_ADD':
                 return <BulkAddView
@@ -376,7 +358,7 @@ const App: React.FC = () => {
 
     // New screens are Persian (right to left); the older screens keep their
     // English, left-to-right layout inside the same shell.
-    const PERSIAN_VIEWS = ['TODAY', 'ME', 'TEXTS', 'READER', 'STUDY', 'SETTINGS', 'USAGE', 'DECKS', 'LIST', 'FORM', 'BULK_ADD', 'ACHIEVEMENTS', 'STATS', 'PROFILE', 'PRACTICE', 'AI_EXTRACT', 'CHANGELOG'];
+    const PERSIAN_VIEWS = ['TODAY', 'ME', 'TEXTS', 'READER', 'STUDY', 'SETTINGS', 'USAGE', 'DECKS', 'LIST', 'FORM', 'BULK_ADD', 'STATS', 'PROFILE', 'PRACTICE', 'AI_EXTRACT', 'CHANGELOG'];
     const isStudy = view === 'STUDY';
     // Reading a book in pages fills the screen: no menus around the page.
     const bookReading = view === 'READER' && settings.readerMode !== 'scroll';
@@ -386,7 +368,6 @@ const App: React.FC = () => {
         <div dir="rtl" className="min-h-screen flex bg-[#F5F6FA] dark:bg-slate-950 font-fa">
             {!fullScreen && (
                 <Sidebar
-                    playful={playful}
                     view={view}
                     dueCount={dueCards.length}
                     userProfile={userProfile}
@@ -429,6 +410,7 @@ const App: React.FC = () => {
                     // selection dragged out of the form must not throw the edits away.
                     onPointerDown={e => { backdropPress.current = e.target === e.currentTarget; }}
                     onClick={e => { if (backdropPress.current && e.target === e.currentTarget) closeCardEditor(); backdropPress.current = false; }}>
+                    <Suspense fallback={null}>
                     <FlashcardForm
                         card={overlayEdit.card}
                         decks={visibleDecks}
@@ -439,6 +421,7 @@ const App: React.FC = () => {
                         sources={cardSources}
                         audioOptions={pronunciationOptions(settings)}
                     />
+                    </Suspense>
                 </div>
             )}
 

@@ -128,44 +128,19 @@ export const mergeRow = (table: RowTable, cloud: Row | undefined, client: Row): 
   return merged;
 };
 
-// The profile: XP and level never go down, names come from the newer edit,
-// and today's goals keep the larger progress.
+// The profile: the name and the "about me" come from the newer edit. Fields
+// of profiles saved before 7.9.0 (points, goals, streak) stay as they were.
 export const mergeProfiles = (clientP: any, cloudP: any): any => {
   if (!clientP || !cloudP) return clientP || cloudP || null;
   const newer = time(clientP.profileLastUpdated) >= time(cloudP.profileLastUpdated) ? clientP : cloudP;
-  let dailyGoals;
-  const a = clientP.dailyGoals;
-  const b = cloudP.dailyGoals;
-  if (a && b) {
-    if (a.date > b.date) dailyGoals = a;
-    else if (b.date > a.date) dailyGoals = b;
-    else {
-      const goals = new Map<string, any>();
-      (b.goals || []).forEach((g: any) => goals.set(g.id, { ...g }));
-      (a.goals || []).forEach((g: any) => {
-        const have = goals.get(g.id);
-        if (!have) goals.set(g.id, { ...g });
-        else if (g.progress > have.progress) { have.progress = g.progress; have.isComplete = g.isComplete; }
-      });
-      dailyGoals = { date: a.date, goals: Array.from(goals.values()), allCompleteAwarded: !!(a.allCompleteAwarded || b.allCompleteAwarded) };
-    }
-  } else {
-    dailyGoals = a || b;
-  }
   const { _rev: _ignored, ...base } = cloudP;
   return {
     ...base,
     id: clientP.id ?? cloudP.id,
-    xp: Math.max(clientP.xp || 0, cloudP.xp || 0),
-    level: Math.max(clientP.level || 1, cloudP.level || 1),
-    lastStreakCheck: time(clientP.lastStreakCheck) > time(cloudP.lastStreakCheck) ? clientP.lastStreakCheck : cloudP.lastStreakCheck,
     firstName: newer.firstName,
     lastName: newer.lastName,
     bio: newer.bio,
     profileLastUpdated: newer.profileLastUpdated,
-    dailyGoals: dailyGoals || undefined,
-    streakFreezesEarned: Math.max(clientP.streakFreezesEarned || 0, cloudP.streakFreezesEarned || 0),
-    frozenDates: Array.from(new Set([...(clientP.frozenDates || []), ...(cloudP.frozenDates || [])])).sort(),
   };
 };
 

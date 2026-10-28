@@ -3,9 +3,7 @@ import assert from 'node:assert/strict';
 import { buildProfile, countWords, coverageOf, CoverageError, knownByFrom, sampleWords, textLevelOf, HEAD_SIZE, TAIL_SIZE, type BookProfile } from '../services/coverage';
 import { blankOf, checkCloze, clozeFor, makeCloze } from '../services/cloze';
 import { bookGrowth, cardsOfSource, hardestWords, pickBookReview, reviewsPerDay } from '../services/readingStats';
-import { readingCounts } from '../services/gamificationService';
-import { sectionReward } from '../services/library';
-import { BOOK_COMPLETE_XP, CHAPTER_COMPLETE_XP, CHUNK_COMPLETE_XP } from '../services/xpRules';
+import { sectionEnds } from '../services/library';
 import { newKnownWord } from '../services/knownWords';
 import type { Chapter, Flashcard, Occurrence, Source, StudyLog } from '../types';
 
@@ -203,19 +201,7 @@ test('the hardest words have the most "again" answers', () => {
   assert.equal(days.reduce((n, d) => n + d.count, 0), 3);
 });
 
-test('reading milestones: chapters and books finished, words carded from texts', () => {
-  const sources = [source('s1', 'Emma'), source('s2', 'Note', 'article'), { ...source('s3', 'Gone'), isDeleted: true }];
-  const chapters = [
-    chapter('c1', 's1', 1, 2, [0, 1]), chapter('c2', 's1', 2, 1, [0]),
-    chapter('a1', 's2', 1, 1, [0]),
-    chapter('g1', 's3', 1, 1, [0]),
-  ];
-  const cards = [card({ id: 'a' }), card({ id: 'b', isDeleted: true })];
-  const counts = readingCounts(sources, chapters, [occ('a', 's1', 'c1', T0), occ('b', 's1', 'c1', T0)], cards);
-  assert.deepEqual(counts, { chaptersDone: 3, booksDone: 1, wordsFromTexts: 1 });
-});
-
-test('the last section of a chapter, and of a book, earns a bonus; the badge and the bonus agree', () => {
+test('the last section of a chapter, and of a book, finishes them', () => {
   const book = source('s1', 'Emma');
   const article = source('s2', 'Note', 'article');
   const one = source('s3', 'Short', 'book');
@@ -224,10 +210,8 @@ test('the last section of a chapter, and of a book, earns a bonus; the badge and
     const c = chapters.find(x => x.id === id)!;
     return { ...c, completed: [...new Set([...c.completed, index])] };
   };
-  assert.deepEqual(sectionReward(chapter('c2', 's1', 2, 3, [0]), book, chapters), { chapterDone: false, bookDone: false, xp: CHUNK_COMPLETE_XP });
-  assert.deepEqual(sectionReward(finish('c2', 1), book, chapters), { chapterDone: true, bookDone: true, xp: CHUNK_COMPLETE_XP + CHAPTER_COMPLETE_XP + BOOK_COMPLETE_XP });
-  assert.deepEqual(sectionReward(finish('a1', 0), article, chapters), { chapterDone: true, bookDone: false, xp: CHUNK_COMPLETE_XP + CHAPTER_COMPLETE_XP }, 'an article is not a book');
-  assert.equal(sectionReward(finish('o1', 0), one, chapters).bookDone, true, 'a book of one chapter is a book');
-  const after = chapters.map(c => (c.id === 'c2' ? finish('c2', 1) : c.id === 'a1' ? finish('a1', 0) : c.id === 'o1' ? finish('o1', 0) : c));
-  assert.equal(readingCounts([book, article, one], after, [], []).booksDone, 2, 'the same two books earn the badge');
+  assert.deepEqual(sectionEnds(chapter('c2', 's1', 2, 3, [0]), book, chapters), { chapterDone: false, bookDone: false });
+  assert.deepEqual(sectionEnds(finish('c2', 1), book, chapters), { chapterDone: true, bookDone: true });
+  assert.deepEqual(sectionEnds(finish('a1', 0), article, chapters), { chapterDone: true, bookDone: false }, 'an article is not a book');
+  assert.equal(sectionEnds(finish('o1', 0), one, chapters).bookDone, true, 'a book of one chapter is a book');
 });

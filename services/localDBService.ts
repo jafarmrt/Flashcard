@@ -309,18 +309,10 @@ const seedDefaults = async () => {
   await db.decks.put({ id: 'default', name: 'Default Deck' });
   await db.userProfile.put({
       id: 1,
-      xp: 0,
-      level: 1,
-      lastStreakCheck: '',
       firstName: '',
       lastName: '',
       bio: '',
       profileLastUpdated: new Date().toISOString(),
-      dailyGoals: {
-          date: '1970-01-01',
-          goals: [],
-          allCompleteAwarded: false
-      }
   });
 };
 

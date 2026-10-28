@@ -13,7 +13,7 @@ import {
   attemptKey, attemptsFor, dailyScores, focusIndexes, focusSounds, listenerMissed, newAttempt, soundInfo, SpeechItem, SpeechSchedule,
   speechSchedules, SpeechStage, speechSummary, speechTokens, WEAK_SCORE, weakSounds,
 } from '../../services/speechPractice';
-import { dayString } from '../../services/streakService';
+import { dayString } from '../../services/calendar';
 import { isSpeechSupported, speakText } from '../../services/ttsService';
 import { fetchAudioData } from '../../services/dictionaryService';
 import { fa, Icon } from '../common/ui';

@@ -7,7 +7,7 @@
 // same weakness is counted together across tries and days.
 
 import type { Flashcard, Occurrence, SpeechAttempt, SpeechIssue, SpeechMark, SpeechParts } from '../types';
-import { dayString } from './streakService.js';
+import { dayString } from './calendar.js';
 import { isFormOf, termPattern } from './lemma.js';
 import { levenshtein } from './stringSimilarity.js';
 

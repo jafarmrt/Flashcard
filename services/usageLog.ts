@@ -8,7 +8,7 @@
 
 import type { Flashcard } from '../types';
 import { db, type UsageRow } from './localDBService';
-import { addDays, dayString } from './streakService';
+import { addDays, dayString } from './calendar';
 
 export type { UsageRow };
 

@@ -15,44 +15,20 @@ export interface StudyLog {
   rating: PerformanceRating;
 }
 
-export interface DailyGoal {
-  id: string; // e.g., 'study-10'
-  type: 'STUDY' | 'QUIZ' | 'STREAK';
-  description: string; // e.g., 'Review 10 cards'
-  target: number;
-  progress: number;
-  xp: number;
-  isComplete: boolean;
-}
-
 export interface UserProfile {
   id: number; // primary key, always 1 for the single user
   firstName?: string;
   lastName?: string;
   bio?: string;
-  xp: number;
-  level: number;
-  lastStreakCheck: string; // ISO date string YYYY-MM-DD
   profileLastUpdated?: string; // ISO string for timestamp
-  dailyGoals?: {
-    date: string; // YYYY-MM-DD
-    goals: DailyGoal[];
-    allCompleteAwarded: boolean;
-  };
-  // Streak freezes: one covers a missed day. Earned grows only while fewer
-  // than MAX_HELD_FREEZES are unused; every covered day is kept in frozenDates.
-  streakFreezesEarned?: number;
-  frozenDates?: string[]; // YYYY-MM-DD (UTC, like StudyLog.date)
+  // Points, levels, daily goals and streak freezes were removed in 7.9.0.
+  // Profiles saved before still carry them (xp, level, lastStreakCheck,
+  // dailyGoals, streakFreezesEarned, frozenDates); they are kept as they are
+  // and no longer read.
+  [legacy: string]: unknown;
 }
 
-export interface Achievement {
-  id: string;
-  name: string;
-  description: string;
-  icon: string;
-  isSecret?: boolean; // For hidden achievements
-}
-
+// Badges earned before 7.9.0: still synced with the account, no longer shown.
 export interface UserAchievement {
   achievementId: string;
   dateEarned: string; // ISO string
@@ -181,7 +157,6 @@ export interface Settings {
     keysChanged?: import('./services/keySync').KeyId[]; // keys typed or removed here that the server does not have yet
     userLevel?: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2' | 'IELTS' | 'TOEFL';
     extractionSource?: 'ai' | 'free';
-    dailyReviewGoal?: number; // reviews per day for the daily goal
     preReadAuto?: boolean; // the reader shows a section's hard words before it
     hideGrammar?: boolean; // the reader does not underline grammar structures
     readAloudVoice?: 'device' | 'ai'; // reading aloud with the device's voice (default) or an AI voice
@@ -196,7 +171,6 @@ export interface Settings {
     readerJustify?: boolean; // justified text in book mode (default on)
     pronunciationService?: 'auto' | 'gemini' | 'openrouter'; // who listens in pronunciation practice; auto: Gemini, then OpenRouter
     orAudioModel?: string; // the OpenRouter model that listens (one that takes audio)
-    playful?: boolean; // points, levels, streaks, combos, badges and confetti; off (unset): calm mode
     readerGloss?: 'off' | 'new' | 'learning'; // a word's meaning from its card above it in the text, while the card is new (default) or still being learned
     openBookOnStart?: boolean; // the app opens on the page of the book being read
     updatedAt?: string; // when settings last changed; the newest wins across devices

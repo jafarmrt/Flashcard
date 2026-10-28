@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { Flashcard } from '../types';
 import { callProxy } from '../services/apiService';
-import { addDays, dayString } from '../services/streakService';
+import { addDays, dayString } from '../services/calendar';
 import {
     cardsByMaker, DICTIONARY_SERVICE, MYMEMORY_DAILY_CHARS, MYMEMORY_DAILY_CHARS_WITH_EMAIL, readUsage, RECENT_DAYS, recentErrors,
     tokensByModel, tokensByPeriod, totalsByService, translationCharsOn, TRANSLATION_SERVICE, usageByDay, type UsagePeriod, type UsageRow,

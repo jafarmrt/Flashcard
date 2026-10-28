@@ -11,8 +11,6 @@ import { fa, Icon } from './common/ui';
 interface PracticeViewProps {
   cards: Flashcard[];
   occurrences?: Occurrence[];
-  awardXP: (points: number, message?: string) => void;
-  onQuizComplete: (score: { score: number, total: number }) => void;
   aiOptions?: AiRequestOptions;
   audioOptions?: AiRequestOptions;
   speechAttempts: SpeechAttempt[];
@@ -67,7 +65,7 @@ const StepBar: React.FC<{ label: string; value: number; total: number }> = ({ la
     </div>
 );
 
-export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences = [], awardXP, onQuizComplete, aiOptions, audioOptions, speechAttempts, onSaveSpeechAttempt }) => {
+export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences = [], aiOptions, audioOptions, speechAttempts, onSaveSpeechAttempt }) => {
   type PracticeState = 'idle' | 'generating' | 'active' | 'finished';
   type Mode = 'quiz' | 'speaking' | 'progress';
 
@@ -177,8 +175,6 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
       setIsAnswered(false);
     } else {
       setPracticeState('finished');
-      awardXP(score * 5, `آزمون تمام شد! +${fa(score * 5)} امتیاز`);
-      onQuizComplete({ score, total: questions.length });
     }
   };
 
@@ -187,9 +183,6 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
       if (tried.length === 0) { setPracticeState('idle'); return; }
       setScore(avgScore); // Reuse score state for avg
       setPracticeState('finished');
-      const xp = Math.round(avgScore / 2); // e.g. 80 score -> 40 XP
-      awardXP(xp, `تمرین تلفظ تمام شد! +${fa(xp)} امتیاز`);
-      onQuizComplete({ score: avgScore, total: 100 }); // Normalized
   };
 
   const currentQuestion = questions[currentIndex];

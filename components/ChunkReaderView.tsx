@@ -11,11 +11,10 @@ import { cardsInText, isChunkOpen } from '../services/library';
 import { isKnownTerm, knownMatch } from '../services/knownWords';
 import { masteryStage, STAGE_NAMES } from '../services/masteryService';
 import { cardForTerm, indexCards } from '../services/cardLookup';
-import { isPlayful } from '../services/calm';
 import { ActiveClock, minutesFor, totalOf, wordsPerMinute } from '../services/readingTime';
 import { glossesFor } from '../services/gloss';
 import { daysAway, RECAP_AFTER_DAYS } from '../services/recap';
-import { dayString as dayKey } from '../services/streakService';
+import { dayString as dayKey } from '../services/calendar';
 import { RecapPanel } from './reader/Recap';
 import { ChapterCoverage } from './reader/ChapterCoverage';
 import { phraseRanges, rangeText, readerSection, sentenceOf } from '../services/readerText';
@@ -28,7 +27,6 @@ import { isSpeechSupported, speakText, stopSpeech } from '../services/ttsService
 import { piecesOf, type ReadAloudVoice } from '../services/readAloud';
 import { translateText, type Translation } from '../services/translate';
 import { useReadAloud } from '../hooks/useReadAloud';
-import { CHUNK_COMPLETE_XP, isChestSection } from '../services/xpRules';
 import { fa, Icon } from './common/ui';
 import { Range, ReaderText } from './reader/ReaderText';
 import { SelectionBar, SelectionTask, sheetClass } from './reader/SelectionBar';
@@ -207,7 +205,12 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   // Leaving the section stops a running search, waiting AI requests and
   // reading aloud; answers that come later are dropped quietly.
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; abortRef.current?.abort(); batcher.current?.cancel(); stopSpeech(); }, []);
+  // Set again on every mount: React's development mode mounts twice, and the
+  // first unmount used to leave it false, so no look-up ever finished there.
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; abortRef.current?.abort(); batcher.current?.cancel(); stopSpeech(); };
+  }, []);
 
   const existingFronts = useMemo(() => cards.map(c => c.front), [cards]);
   const deckKeys = useMemo(() => new Set(existingFronts.map(normalizeTerm)), [existingFronts]);
@@ -218,7 +221,6 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   };
   const knownSet = useMemo(() => new Set(knownTerms), [knownTerms]);
   const cardIndex = useMemo(() => indexCards(cards), [cards]);
-  const playful = isPlayful(settings);
   // Meanings above words with new cards (services/gloss).
   const glosses = useMemo(() => glossesFor(section.words, cardIndex, settings.readerGloss || 'new', w => isKnownTerm(w, knownSet)),
     [section, cardIndex, settings.readerGloss, knownSet]);
@@ -1481,7 +1483,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
               {waiting > 0 && <p className="text-center text-xs text-ink-muted dark:text-slate-400">معنی {fa(waiting)} واژه در همین جمله هنوز در راه است.</p>}
               {saved && <p className="text-center text-sm text-emerald-700 dark:text-emerald-300">کارت‌ها ساخته شد و در مرور بعدی می‌آیند.</p>}
               <p className="text-xs text-ink-muted dark:text-slate-400 leading-relaxed">
-                با ورق زدن از صفحهٔ آخر، این بخش تمام می‌شود{playful ? ` (+${fa(CHUNK_COMPLETE_XP)} امتیاز${isChestSection(index) ? ' و صندوق جایزه' : ''})` : ''} و بخش بعد می‌آید.
+                با ورق زدن از صفحهٔ آخر، این بخش تمام می‌شود و بخش بعد می‌آید.
                 {!done && metAgain > 0 && <> {fa(metAgain)} واژهٔ این بخش از قبل کارت دارد؛ دیده‌شدنشان در این کتاب ثبت می‌شود.</>}
               </p>
             </aside>
@@ -1609,7 +1611,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
             {waiting > 0 && <p className="text-center text-xs text-ink-muted dark:text-slate-400">معنی {fa(waiting)} واژه در همین جمله هنوز در راه است.</p>}
             <button type="button" onClick={finish}
               className={`min-h-[52px] rounded-2xl font-extrabold ${toSave.length === 0 ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'border-2 border-emerald-600 text-emerald-800 dark:text-emerald-200'}`}>
-              {done ? 'برگشت به مسیر' : playful ? `پایان این بخش (+${fa(CHUNK_COMPLETE_XP)} امتیاز${isChestSection(index) ? ' و صندوق جایزه' : ''})` : 'پایان این بخش'}
+              {done ? 'برگشت به فهرست بخش‌ها' : 'پایان این بخش'}
             </button>
             {saved && <p className="text-center text-sm text-emerald-700 dark:text-emerald-300">کارت‌ها ساخته شد و در مرور بعدی می‌آیند.</p>}
             {!done && metAgain > 0 && (

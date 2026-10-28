@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { Flashcard, Deck } from '../types';
 import { fetchAudioData } from '../services/dictionaryService';
 import { CardPlace, originText } from '../services/library';
@@ -144,8 +144,9 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
 
   const totalPages = Math.ceil(sortedCards.length / CARDS_PER_PAGE);
 
-  // Reset page when filters change
-  useMemo(() => {
+  // Back to the first page when the filters change. (It used to set state
+  // inside useMemo, that is during a render, which React does not allow.)
+  useEffect(() => {
       setCurrentPage(1);
   }, [selectedDeckId, searchQuery, sortKey, show]);
 

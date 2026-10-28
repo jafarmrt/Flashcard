@@ -23,21 +23,14 @@ export const Icon = {
   Close: ({ size = 22, className }: IconProps) => stroke(size, className, <path d="M6 6l12 12M18 6L6 18" />, 2.4),
   Check: ({ size = 22, className }: IconProps) => stroke(size, className, <path d="M5 12l5 5 9-10" />, 3),
   Lock: ({ size = 22, className }: IconProps) => stroke(size, className, <><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></>),
-  Gift: ({ size = 22, className }: IconProps) => stroke(size, className, <><rect x="3" y="9" width="18" height="11" rx="2" /><path d="M3 13h18M12 9v11M7 9c0-3 2-5 5-5s5 2 5 5" /></>),
-  Shield: ({ size = 22, className }: IconProps) => stroke(size, className, <path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z" />),
   Speaker: ({ size = 22, className }: IconProps) => stroke(size, className, <><path d="M11 5L6 9H2v6h4l5 4z" /><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14" /></>),
   Pause: ({ size = 22, className }: IconProps) => stroke(size, className, <path d="M8 5v14M16 5v14" />, 2.6),
   Stop: ({ size = 22, className }: IconProps) => stroke(size, className, <rect x="6" y="6" width="12" height="12" rx="2" />),
   Translate: ({ size = 22, className }: IconProps) => stroke(size, className, <path d="M4 5h8M8 3v2M6 5c0 4 2 7 6 9M10 5c0 3-2 6-6 8M13 21l4-9 4 9M14.5 18h5" />),
-  Medal: ({ size = 22, className }: IconProps) => stroke(size, className, <><circle cx="12" cy="9" r="6" /><path d="M8.5 14L7 22l5-3 5 3-1.5-8" /></>),
-  Star: ({ size = 22, className }: IconProps) => stroke(size, className, <path d="M12 2l3 7 7 .8-5.3 4.8 1.6 7.4L12 18.3 5.7 22l1.6-7.4L2 9.8 9 9z" />),
   Back: ({ size = 22, className }: IconProps) => stroke(size, className, <path d="M9 6l6 6-6 6" />),
   List: ({ size = 22, className }: IconProps) => stroke(size, className, <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />),
   Upload: ({ size = 22, className }: IconProps) => stroke(size, className, <path d="M12 16V4M6 10l6-6 6 6M4 20h16" />),
   Log: ({ size = 22, className }: IconProps) => stroke(size, className, <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6M8 13h8M8 17h8" /></>),
-  Flame: ({ size = 18, className }: IconProps) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" className={className} aria-hidden="true"><path fill="currentColor" d="M12 2c1 4 5 6 5 11a5 5 0 0 1-10 0c0-2 1-3.5 2-4.5 0 2 1 3 2 3 0-3-1-6 1-9.5z" /></svg>
-  ),
   Bolt: ({ size = 16, className }: IconProps) => (
     <svg width={size} height={size} viewBox="0 0 24 24" className={className} aria-hidden="true"><path fill="currentColor" d="M13 2L4 14h7l-1 8 9-12h-7z" /></svg>
   ),
@@ -47,29 +40,6 @@ export const Icon = {
 export const Kbd: React.FC<{ children: React.ReactNode; className?: string }> = ({ children, className = '' }) => (
   <kbd dir="ltr" className={`hidden md:inline-block font-en text-[11px] leading-none px-1.5 py-1 rounded-md border border-current opacity-60 ${className}`}>{children}</kbd>
 );
-
-export const StreakChip: React.FC<{ streak: number; className?: string }> = ({ streak, className = '' }) => (
-  <span className={`inline-flex items-center gap-1 rounded-full bg-flame-50 text-flame-800 dark:bg-orange-900/40 dark:text-orange-200 px-3 py-1.5 font-bold text-sm ${className}`}
-    title="زنجیرهٔ روزهای مطالعه">
-    <Icon.Flame className="text-flame-500" />{fa(streak)}
-  </span>
-);
-
-// Daily goal ring.
-export const GoalRing: React.FC<{ value: number; target: number; size?: number }> = ({ value, target, size = 96 }) => {
-  const r = 42;
-  const c = 2 * Math.PI * r;
-  const pct = target > 0 ? Math.min(1, value / target) : 0;
-  return (
-    <svg width={size} height={size} viewBox="0 0 100 100" role="img" aria-label={`${fa(value)} از ${fa(target)} مرور`} className="shrink-0">
-      <circle cx="50" cy="50" r={r} fill="none" stroke="rgba(255,255,255,0.22)" strokeWidth="10" />
-      <circle cx="50" cy="50" r={r} fill="none" stroke="#FFC857" strokeWidth="10" strokeLinecap="round"
-        strokeDasharray={`${pct * c} ${c}`} transform="rotate(-90 50 50)" style={{ transition: 'stroke-dasharray 0.6s ease' }} />
-      <text x="50" y="49" textAnchor="middle" fontWeight="800" fontSize="24" fill="#fff" fontFamily="Vazirmatn">{fa(value)}</text>
-      <text x="50" y="68" textAnchor="middle" fontSize="13" fill="rgba(255,255,255,0.85)" fontFamily="Vazirmatn">از {fa(target)}</text>
-    </svg>
-  );
-};
 
 export const STAGE_COLORS = ['bg-slate-300 dark:bg-slate-600', 'bg-emerald-200', 'bg-emerald-400', 'bg-emerald-600', 'bg-emerald-900 dark:bg-emerald-300'];
 

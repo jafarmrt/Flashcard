@@ -193,9 +193,11 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
       const loadVoices = () => {
         const v = getAvailableVoices();
         setVoices(v);
-        if (v.length > 0 && !selectedVoiceURI) {
+        if (v.length > 0) {
+          // A voice the reader picked meanwhile stays (this runs again when
+          // the browser's voices arrive late).
           const defaultEn = v.find(voice => voice.lang === 'en-US') || v[0];
-          setSelectedVoiceURI(defaultEn.voiceURI);
+          setSelectedVoiceURI(current => current || defaultEn.voiceURI);
         }
       };
       loadVoices();

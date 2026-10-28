@@ -4,12 +4,11 @@ import { Flashcard } from '../types';
 import type { SessionSummary, StudyMode } from '../hooks/useAppLogic';
 import { calculateSrs, previewIntervals, PerformanceRating, RELEARN_STEP_MINUTES } from '../services/srsService';
 import { masteryStage, stageChanges, STAGE_NAMES } from '../services/masteryService';
-import { nextCombo, reviewXp } from '../services/xpRules';
 import { db } from '../services/localDBService';
 import { levenshtein } from '../services/stringSimilarity';
 import { fetchAudioData } from '../services/dictionaryService';
 import { isSpeechSupported, speakText } from '../services/ttsService';
-import { dayString } from '../services/streakService';
+import { dayString } from '../services/calendar';
 import { CardPlace, originText } from '../services/library';
 import type { AiRequestOptions } from '../services/geminiService';
 import { fa, Icon, Kbd, StageDots } from './common/ui';
@@ -41,9 +40,6 @@ const intervalLabel = (days: number): string => {
 interface StudyViewProps {
   cards: Flashcard[];
   initialMode: StudyMode;
-  streak: number;
-  studiedToday: boolean;
-  goal: { progress: number; target: number };
   onExit: (updatedCards: Flashcard[], summary: SessionSummary, next?: 'home' | 'more') => void;
   places?: Map<string, CardPlace[]>; // where each card was met while reading
   sourceId?: string | null; // a review of one book: its sentences come first
@@ -51,7 +47,6 @@ interface StudyViewProps {
   onEditCard?: (card: Flashcard, onDone: (saved: Flashcard | null) => void) => void; // the card form over the session
   onSaveCard?: (card: Flashcard) => Promise<Flashcard>; // a changed card's content (a stubborn card's new memory aid)
   allCards?: Flashcard[]; // every card, so a word of a sentence that has its own card shows its meaning
-  playful?: boolean; // points, combo, streak and confetti (services/calm)
 }
 
 // Reads a word, phrase or sentence aloud with the browser's speech synthesis.
@@ -303,35 +298,17 @@ const LeechPanel: React.FC<{ card: Flashcard; aiOptions?: AiRequestOptions; onDo
   );
 };
 
-const Confetti: React.FC = () => {
-  const pieces = useMemo(() => Array.from({ length: 28 }, (_, i) => ({
-    left: `${(i * 37) % 100}%`,
-    delay: `${(i % 7) * 0.12}s`,
-    color: ['#FFC857', '#6CC18E', '#A9C7F5', '#F28B82', '#FFFFFF'][i % 5],
-    shape: i % 3 === 0 ? 'rounded-full' : '',
-  })), []);
-  return (
-    <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
-      {pieces.map((p, i) => (
-        <span key={i} className={`absolute top-0 w-2 h-3 animate-fall ${p.shape}`} style={{ left: p.left, animationDelay: p.delay, background: p.color }} />
-      ))}
-    </div>
-  );
-};
-
 interface Snapshot {
   queue: Flashcard[];
   index: number;
   updated: Map<string, Flashcard>;
-  combo: number;
-  xp: number;
   reviews: number;
   firstAnswers: Map<string, boolean>;
   logId?: number;
   card?: Flashcard; // the card as it was before this answer
 }
 
-export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak, studiedToday, goal, onExit, places, sourceId, aiOptions, onEditCard, onSaveCard, allCards, playful = false }) => {
+export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit, places, sourceId, aiOptions, onEditCard, onSaveCard, allCards }) => {
   const [queue, setQueue] = useState<Flashcard[]>([]);
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
@@ -340,11 +317,8 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
   const [mode, setMode] = useState<StudyMode>(initialMode);
   const [typed, setTyped] = useState('');
   const [answerState, setAnswerState] = useState<'correct' | 'incorrect' | null>(null);
-  const [combo, setCombo] = useState(0);
-  const [xp, setXp] = useState(0);
   const [reviews, setReviews] = useState(0);
   const [firstAnswers, setFirstAnswers] = useState<Map<string, boolean>>(new Map());
-  const [gain, setGain] = useState<{ value: number; id: number } | null>(null);
   const [history, setHistory] = useState<Snapshot[]>([]);
   const [audioBusy, setAudioBusy] = useState(false);
   const [suggested, setSuggested] = useState<PerformanceRating | undefined>(undefined);
@@ -381,9 +355,9 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
     if (cardMode !== 'flip' && !revealed) inputRef.current?.focus();
   }, [index, cardMode, revealed]);
 
-  const summary = (): SessionSummary => ({ xp, reviews });
+  const summary = (): SessionSummary => ({ reviews });
   const finish = (next: 'home' | 'more') => onExit(Array.from(updated.values()), summary(), next);
-  const exitEarly = () => (reviews > 0 ? setDone(true) : onExit([], { xp: 0, reviews: 0 }, 'home'));
+  const exitEarly = () => (reviews > 0 ? setDone(true) : onExit([], { reviews: 0 }, 'home'));
 
   const playAudio = useCallback(async () => {
     if (!card || audioBusy) return;
@@ -408,7 +382,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
   const rate = async (rating: PerformanceRating) => {
     if (!card || !current || busy.current) return;
     busy.current = true;
-    const snapshot: Snapshot = { queue, index, updated, combo, xp, reviews, firstAnswers };
+    const snapshot: Snapshot = { queue, index, updated, reviews, firstAnswers };
 
     const next = { ...calculateSrs(current, rating), updatedAt: new Date().toISOString() };
     // Saved at once, so closing the app mid-session keeps every answer. The
@@ -430,14 +404,10 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
       return;
     }
     setSaveError('');
-    const gained = reviewXp(rating, combo);
 
     setHistory(h => [...h.slice(-20), { ...snapshot, logId, card: current }]);
     setUpdated(prev => new Map(prev).set(next.id, next));
-    setCombo(nextCombo(rating, combo));
-    setXp(v => v + gained);
     setReviews(v => v + 1);
-    setGain({ value: gained, id: Date.now() });
     if (!firstAnswers.has(card.id)) setFirstAnswers(prev => new Map(prev).set(card.id, rating !== 'AGAIN'));
 
     let nextQueue = queue;
@@ -480,8 +450,6 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
     setQueue(last.queue);
     setIndex(last.index);
     setUpdated(last.updated);
-    setCombo(last.combo);
-    setXp(last.xp);
     setReviews(last.reviews);
     setFirstAnswers(last.firstAnswers);
     setRevealed(true);
@@ -561,93 +529,52 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
     const accuracy = firstAnswers.size > 0 ? Math.round((correct / firstAnswers.size) * 100) : 0;
     const minutes = Math.max(1, Math.round((Date.now() - startedAt.current) / 60000));
     const grown = stageChanges(cards, Array.from(updated.values()));
-    const goalReached = goal.progress < goal.target && goal.progress + reviews >= goal.target;
-    const goalLeft = Math.max(0, goal.target - goal.progress - reviews);
-    const streakNow = reviews > 0 && !studiedToday ? streak + 1 : streak;
-    if (!playful) {
-      // Calm mode: what was learned, and which words still need work and
-      // where they came from; no points, no streak.
-      const hard = cards.filter(c => firstAnswers.get(c.id) === false).map(c => updated.get(c.id) || c);
-      const placeOf = (c: Flashcard) => places?.get(c.id)?.[0];
-      return (
-        <div dir="rtl" className="font-fa max-w-xl mx-auto w-full bg-white dark:bg-slate-800 rounded-[28px] p-6 md:p-8 flex flex-col gap-5">
-          <div className="flex flex-col items-center gap-1 text-center pt-1">
-            <h2 className="text-2xl font-extrabold text-ink dark:text-white">مرور تمام شد</h2>
-            <p className="text-ink-muted dark:text-slate-400">{fa(firstAnswers.size)} واژه، {fa(minutes)} دقیقه.</p>
-          </div>
-          <div className="grid grid-cols-3 gap-2.5 text-center">
-            <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl py-3"><p className="text-2xl font-extrabold text-ink dark:text-white">{fa(reviews)}</p><p className="text-xs text-ink-muted dark:text-slate-400">پاسخ</p></div>
-            <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl py-3"><p className="text-2xl font-extrabold text-ink dark:text-white">{fa(accuracy)}٪</p><p className="text-xs text-ink-muted dark:text-slate-400">یادت بود، بار اول</p></div>
-            <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl py-3"><p className="text-2xl font-extrabold text-ink dark:text-white">{fa(grown.length)}</p><p className="text-xs text-ink-muted dark:text-slate-400">واژه جلو رفت</p></div>
-          </div>
-          {grown.length > 0 && (
-            <div className="rounded-2xl bg-emerald-50 dark:bg-emerald-900/30 p-4 flex flex-col gap-2">
-              <h3 className="font-bold text-ink dark:text-white">بهتر یادت مانده</h3>
-              {grown.slice(0, 6).map(g => (
-                <div key={g.card.id} className="flex justify-between items-center gap-3 text-sm">
-                  <span dir="ltr" className="font-en font-medium text-ink dark:text-white truncate">{g.card.front}</span>
-                  <span className="text-emerald-800 dark:text-emerald-200 whitespace-nowrap">{STAGE_NAMES[g.to]}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          {hard.length > 0 && (
-            <div className="rounded-2xl bg-amber-50 dark:bg-amber-900/30 p-4 flex flex-col gap-2">
-              <h3 className="font-bold text-ink dark:text-white">هنوز سخت</h3>
-              <p className="text-xs text-ink-muted dark:text-slate-400">امروز دوباره می‌آیند؛ دیدنشان در کتاب هم کمک می‌کند.</p>
-              {hard.slice(0, 8).map(c => {
-                const p = placeOf(c);
-                return (
-                  <div key={c.id} className="flex flex-col gap-0.5 text-sm">
-                    <span className="flex justify-between gap-3"><span dir="ltr" className="font-en font-medium text-ink dark:text-white truncate">{c.front}</span><span className="text-ink-muted dark:text-slate-300 truncate">{c.back}</span></span>
-                    {p && <span dir="auto" className="text-xs text-ink-muted dark:text-slate-400 truncate">{p.sourceTitle}{p.chapterTitle ? ` · ${p.chapterTitle}` : ''}</span>}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          <div className="flex flex-col gap-2 pt-1">
-            <button type="button" onClick={() => finish('more')} className="min-h-[52px] rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold">۱۰ کارت دیگر</button>
-            <button type="button" onClick={() => finish('home')} className="min-h-[48px] rounded-2xl font-bold text-ink dark:text-white hover:bg-slate-100 dark:hover:bg-slate-700">برگشت</button>
-            {history.length > 0 && <button type="button" onClick={undo} className="text-sm text-ink-muted dark:text-slate-400 hover:underline">واگرد آخرین پاسخ</button>}
-            {saveError && <p role="alert" className="text-center text-sm text-red-700 dark:text-red-300">{saveError}</p>}
-          </div>
-        </div>
-      );
-    }
+    // What was learned, and which words still need work and where they
+    // came from.
+    const hard = cards.filter(c => firstAnswers.get(c.id) === false).map(c => updated.get(c.id) || c);
+    const placeOf = (c: Flashcard) => places?.get(c.id)?.[0];
     return (
-      <div dir="rtl" className="font-fa relative overflow-hidden max-w-xl mx-auto w-full bg-ink text-white rounded-[28px] p-6 md:p-8 flex flex-col gap-5">
-        {goalReached && <Confetti />}
-        <div className="flex flex-col items-center gap-2 text-center pt-2 animate-pop">
-          <span className="w-20 h-20 rounded-[26px] bg-flame-500 flex items-center justify-center"><Icon.Flame size={46} /></span>
-          <h2 className="text-2xl md:text-3xl font-extrabold">{streakNow > 1 ? `زنجیرهٔ ${fa(streakNow)} روزه` : 'آفرین، شروع شد'}</h2>
-          <p className="text-slate-300">
-            {goalReached ? 'هدف امروز کامل شد.' : goalLeft > 0 ? `${fa(goalLeft)} مرور دیگر تا هدف امروز.` : 'هدف امروز را قبلاً زده بودی.'}
-          </p>
+      <div dir="rtl" className="font-fa max-w-xl mx-auto w-full my-4 md:my-10 bg-white dark:bg-slate-800 rounded-[28px] p-6 md:p-8 flex flex-col gap-5">
+        <div className="flex flex-col items-center gap-1 text-center pt-1">
+          <h2 className="text-2xl font-extrabold text-ink dark:text-white">مرور تمام شد</h2>
+          <p className="text-ink-muted dark:text-slate-400">{fa(firstAnswers.size)} واژه، {fa(minutes)} دقیقه.</p>
         </div>
         <div className="grid grid-cols-3 gap-2.5 text-center">
-          <div className="bg-ink-soft rounded-2xl py-3"><p className="text-2xl font-extrabold text-amber-300">+{fa(xp)}</p><p className="text-xs text-slate-300">امتیاز</p></div>
-          <div className="bg-ink-soft rounded-2xl py-3"><p className="text-2xl font-extrabold">{fa(accuracy)}٪</p><p className="text-xs text-slate-300">دقت بار اول</p></div>
-          <div className="bg-ink-soft rounded-2xl py-3"><p className="text-2xl font-extrabold">{fa(minutes)}</p><p className="text-xs text-slate-300">دقیقه</p></div>
+          <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl py-3"><p className="text-2xl font-extrabold text-ink dark:text-white">{fa(reviews)}</p><p className="text-xs text-ink-muted dark:text-slate-400">پاسخ</p></div>
+          <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl py-3"><p className="text-2xl font-extrabold text-ink dark:text-white">{fa(accuracy)}٪</p><p className="text-xs text-ink-muted dark:text-slate-400">یادت بود، بار اول</p></div>
+          <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl py-3"><p className="text-2xl font-extrabold text-ink dark:text-white">{fa(grown.length)}</p><p className="text-xs text-ink-muted dark:text-slate-400">واژه جلو رفت</p></div>
         </div>
         {grown.length > 0 && (
-          <div className="bg-ink-soft rounded-2xl p-4 flex flex-col gap-2.5">
-            <h3 className="font-bold">{fa(grown.length)} واژه بزرگ‌تر شد</h3>
+          <div className="rounded-2xl bg-emerald-50 dark:bg-emerald-900/30 p-4 flex flex-col gap-2">
+            <h3 className="font-bold text-ink dark:text-white">بهتر یادت مانده</h3>
             {grown.slice(0, 6).map(g => (
-              <div key={g.card.id} className="flex justify-between items-center gap-3">
-                <span dir="ltr" className="font-en truncate">{g.card.front}</span>
-                <span className="text-sm text-emerald-200 whitespace-nowrap">{STAGE_NAMES[g.from]} ← {STAGE_NAMES[g.to]}</span>
+              <div key={g.card.id} className="flex justify-between items-center gap-3 text-sm">
+                <span dir="ltr" className="font-en font-medium text-ink dark:text-white truncate">{g.card.front}</span>
+                <span className="text-emerald-800 dark:text-emerald-200 whitespace-nowrap">{STAGE_NAMES[g.to]}</span>
               </div>
             ))}
           </div>
         )}
-        <div className="flex flex-col gap-2 pt-2">
-          <button type="button" onClick={() => finish('more')} className="min-h-[56px] rounded-2xl bg-white text-ink font-extrabold text-lg hover:bg-brand-50">۱۰ کارت دیگر</button>
-          <button type="button" onClick={() => finish('home')} className="min-h-[48px] rounded-2xl font-bold hover:bg-white/10">برگشت به خانه</button>
-          {history.length > 0 && (
-            <button type="button" onClick={undo} className="text-sm text-slate-300 hover:text-white">واگرد آخرین پاسخ</button>
-          )}
-          {saveError && <p role="alert" className="text-center text-sm text-red-200">{saveError}</p>}
+        {hard.length > 0 && (
+          <div className="rounded-2xl bg-amber-50 dark:bg-amber-900/30 p-4 flex flex-col gap-2">
+            <h3 className="font-bold text-ink dark:text-white">هنوز سخت</h3>
+            <p className="text-xs text-ink-muted dark:text-slate-400">امروز دوباره می‌آیند؛ دیدنشان در کتاب هم کمک می‌کند.</p>
+            {hard.slice(0, 8).map(c => {
+              const p = placeOf(c);
+              return (
+                <div key={c.id} className="flex flex-col gap-0.5 text-sm">
+                  <span className="flex justify-between gap-3"><span dir="ltr" className="font-en font-medium text-ink dark:text-white truncate">{c.front}</span><span className="text-ink-muted dark:text-slate-300 truncate">{c.back}</span></span>
+                  {p && <span dir="auto" className="text-xs text-ink-muted dark:text-slate-400 truncate">{p.sourceTitle}{p.chapterTitle ? ` · ${p.chapterTitle}` : ''}</span>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div className="flex flex-col gap-2 pt-1">
+          <button type="button" onClick={() => finish('more')} className="min-h-[52px] rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold">۱۰ کارت دیگر</button>
+          <button type="button" onClick={() => finish('home')} className="min-h-[48px] rounded-2xl font-bold text-ink dark:text-white hover:bg-slate-100 dark:hover:bg-slate-700">برگشت</button>
+          {history.length > 0 && <button type="button" onClick={undo} className="text-sm text-ink-muted dark:text-slate-400 hover:underline">واگرد آخرین پاسخ</button>}
+          {saveError && <p role="alert" className="text-center text-sm text-red-700 dark:text-red-300">{saveError}</p>}
         </div>
       </div>
     );
@@ -682,13 +609,6 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
             </button>
           ))}
         </div>
-        {playful && <span title="جواب‌های درست پشت سر هم" className={`relative shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 sm:px-3 py-1.5 text-sm font-extrabold ${combo >= 3 ? 'bg-flame-50 text-flame-800 dark:bg-orange-900/40 dark:text-orange-200' : 'bg-slate-100 text-ink-muted dark:bg-slate-800 dark:text-slate-400'}`}>
-          <Icon.Bolt className={combo >= 3 ? 'text-flame-500' : ''} />{fa(combo)}<span className="hidden sm:inline"> پیاپی</span>
-        </span>}
-        {playful && <span title="امتیاز این جلسه" className="relative shrink-0 inline-flex rounded-full bg-brand-100 text-brand-700 dark:bg-brand-900/60 dark:text-brand-200 px-3 py-1.5 text-sm font-extrabold">
-          +{fa(xp)}<span className="hidden sm:inline">&nbsp;امتیاز</span>
-          {gain && <span key={gain.id} className="absolute -top-1 left-1/2 -translate-x-1/2 text-brand-500 font-extrabold animate-rise">+{fa(gain.value)}</span>}
-        </span>}
       </header>
 
       <div className="flex-1 flex flex-wrap items-start justify-center gap-6 py-4 md:p-8">
@@ -801,8 +721,6 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, streak
           <div className="bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-2 text-sm text-slate-700 dark:text-slate-300">
             <h3 className="font-bold text-ink dark:text-white">این جلسه</h3>
             <p className="flex justify-between"><span>مرورها</span><span>{fa(reviews)}</span></p>
-            {playful && <p className="flex justify-between"><span>امتیاز</span><span>{fa(xp)}</span></p>}
-            {playful && <p className="text-xs text-ink-muted dark:text-slate-400 pt-1">هر ۵ جواب درست پشت سر هم، امتیاز هر جواب را یکی بیشتر می‌کند.</p>}
             {history.length > 0 && (
               <button type="button" onClick={undo} className="mt-1 min-h-[40px] rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600">واگرد آخرین پاسخ</button>
             )}

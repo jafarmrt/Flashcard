@@ -9,6 +9,13 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.9.0] - 2026-10-28 - No More Points: The App Is About Reading
+- **Game parts removed:** Points, levels, the day streak and its shields, combos, badges, daily goals, confetti and reward chests are gone for good, with the setting that brought them back. Progress is what you read and learned («پیشرفت»). Old points and badges stay untouched in your account, unused.
+- **Words page:** The level, streak and goals box at the top of the word list is gone.
+- **Faster start:** The app's main file is a third of its size (810 kB → 265 kB): every screen but Today loads when first opened, and the reader and the review are fetched at once in the background so they open offline. React and the database library sit in a file of their own, so an update of the app no longer makes the phone download them again.
+- **Fixes:** The word list no longer changes state while drawing (going back to page 1 when the filters change); the reading-aloud voice you picked is kept when the browser's voices arrive late; the app's start-up and sync listeners always use the newest code. In development mode a tapped word's meaning could stay "searching…" for ever.
+- **Review end screen:** It no longer touches the top of the screen.
+
 ## [7.8.0] - 2026-10-27 - Reading First: Calm Mode, Meanings in the Margin, Your Words in Telegram
 - **Your words in Telegram:** Every day 5 to 10 of your cards come to Telegram, about 8 in the morning: the word in the sentence of the book it was met in, the meaning one tap away, then «دوباره / سخت / خوب / آسان» as in the app. The answers reach your account and every device; "Again" brings the word back at the end of the day's list. In the bot, /review starts a review any time, /stop and /resume turn the daily one off and on. Link it once in Settings › Telegram and pick how many words a day. (The server needs `TELEGRAM_BOT_TOKEN` from @BotFather, and `CRON_SECRET` for the daily message on Vercel.)
 - **Calm mode, by default:** Points, levels, the streak and its shields, combos, badges, confetti and reward chests are hidden; nothing is deleted, and Settings › «امتیاز، سطح، زنجیره و نشان‌ها» brings them back. Today starts with your book; a chapter is a table of contents with the minutes each section takes; a review ends with the words you now know better and the ones still hard, with the book each came from.
