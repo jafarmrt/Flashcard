@@ -205,7 +205,12 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   // Leaving the section stops a running search, waiting AI requests and
   // reading aloud; answers that come later are dropped quietly.
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; abortRef.current?.abort(); batcher.current?.cancel(); stopSpeech(); }, []);
+  // Set again on every mount: React's development mode mounts twice, and the
+  // first unmount used to leave it false, so no look-up ever finished there.
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; abortRef.current?.abort(); batcher.current?.cancel(); stopSpeech(); };
+  }, []);
 
   const existingFronts = useMemo(() => cards.map(c => c.front), [cards]);
   const deckKeys = useMemo(() => new Set(existingFronts.map(normalizeTerm)), [existingFronts]);

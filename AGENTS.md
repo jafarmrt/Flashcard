@@ -36,7 +36,7 @@ imports this file, MCP in `.mcp.json`). Keep both MCP lists alike.
 
 - `npm install`, `npx tsc --noEmit` (type-check), `npm test` (node:test, ~320
   tests), `npm run build`, `npm run lint:hooks` (ESLint with only the two
-  React hooks rules; 7 old exhaustive-deps warnings still to review).
+  React hooks rules; no warnings left, keep it so).
 - A changed package.json also needs bun.lock updated:
   `npx -y bun@1 install --lockfile-only` (bun is not installed globally).
 - Context7 MCP gives current docs for Dexie, React 19, Vite, Tailwind: use it
@@ -127,15 +127,35 @@ exists; otherwise register). Stop it with
 - Telegram is blocked from this machine: only the fakes and
   tests/telegramApi.test.ts (mocked fetch) have run it. Not yet tried live.
 
-## Calm mode (7.8.0)
+## No game parts (7.9.0)
 
-`Settings.playful` unset = calm (services/calm.ts `isPlayful`): game parts
-are hidden in TodayView, StudyView (calm end screen), Navigation, MeView,
-ProfileView, LibraryView `ChapterPath` (table of contents), the reader's XP
-text, and `gameToast` in useAppLogic. XP and badges are still counted.
+Points, levels, streak, freezes, combo, badges, daily goals, confetti and
+chests were deleted (services xpRules, gamificationService, dailyGoalsService,
+achievements, calm; AchievementsView, Dashboard and widgets). services/
+streakService.ts became services/calendar.ts (dayString, addDays, weekStrip).
+Old profiles keep their xp/level/goal fields (UserProfile has an index
+signature for them) and `userAchievements` still syncs; nothing reads them.
+Do not bring these back without the user asking.
+
+## Things to know
+
+- React has no type package here: tsc does not check JSX props. After
+  changing a component's props, check its callers by hand (rg "<Name").
+- Every screen but Today is lazy (App.tsx SCREENS); reader, study and
+  library are prefetched at start. vite.config.ts puts react, react-dom,
+  scheduler and dexie in a `vendor` chunk.
+- Long-lived effects in useAppLogic call functions through `latest` (a ref
+  updated each render), not the closure of the first render.
+- The app runs in React.StrictMode: an effect's cleanup must not leave a ref
+  in a state the next mount does not reset (ChunkReaderView `alive`).
 
 ## What is done (latest first)
 
+- 7.9.0: game parts deleted (above); main bundle 810 → 265 kB (lazy
+  screens, vendor chunk); the 7 hooks warnings fixed; tried in the browser:
+  review end screen, paragraph translation from a word, next chapter's
+  coverage, cloze chapter review, open on the book, offline start and
+  reading, cache trimming keeps the start files.
 - 7.8.0: Telegram daily review (above); calm mode; plain stage names
   (masteryService STAGE_NAMES); gloss above words with new cards
   (services/gloss.ts, ReaderText `glosses`, `Settings.readerGloss`); active
@@ -175,11 +195,10 @@ text, and `gameToast` in useAppLogic. XP and badges are still counted.
 ## Direction (from the user)
 
 The app is first a way to read English books with ease; learning grows out
-of reading. The user does not like the Duolingo-style parts (XP, levels,
-combo, streak, badges, confetti, chests, the "garden"): since 7.8.0 they are
-hidden by default (calm mode) but still in the code. Ask before deleting
-them for good. Phases A–D of the 7.7.0 plan (calm mode, reading flow,
-learning from the book, progress that means something) shipped in 7.8.0.
+of reading. The user did not like the Duolingo-style parts (XP, levels,
+combo, streak, badges, confetti, chests, the "garden"); they were deleted in
+7.9.0. Phases A–D of the 7.7.0 plan (calm mode, reading flow, learning from
+the book, progress that means something) shipped in 7.8.0.
 
 ## Open ideas (ask the user before starting)
 
@@ -188,5 +207,3 @@ learning from the book, progress that means something) shipped in 7.8.0.
    cron, which Vercel Hobby does not allow, or an outside cron service).
 2. Pronunciation has not yet been tried with a real voice and a real Gemini /
    OpenRouter key on the deployed site; ask the user how it went.
-3. Delete the hidden game code for good, if the user says so.
-4. 7 old exhaustive-deps warnings (`npm run lint:hooks`).

@@ -534,7 +534,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
     const hard = cards.filter(c => firstAnswers.get(c.id) === false).map(c => updated.get(c.id) || c);
     const placeOf = (c: Flashcard) => places?.get(c.id)?.[0];
     return (
-      <div dir="rtl" className="font-fa max-w-xl mx-auto w-full bg-white dark:bg-slate-800 rounded-[28px] p-6 md:p-8 flex flex-col gap-5">
+      <div dir="rtl" className="font-fa max-w-xl mx-auto w-full my-4 md:my-10 bg-white dark:bg-slate-800 rounded-[28px] p-6 md:p-8 flex flex-col gap-5">
         <div className="flex flex-col items-center gap-1 text-center pt-1">
           <h2 className="text-2xl font-extrabold text-ink dark:text-white">مرور تمام شد</h2>
           <p className="text-ink-muted dark:text-slate-400">{fa(firstAnswers.size)} واژه، {fa(minutes)} دقیقه.</p>
