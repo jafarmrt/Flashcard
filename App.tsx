@@ -2,29 +2,31 @@ import React, { lazy, Suspense, useEffect, useMemo, useRef } from 'react';
 import { useAppLogic, View, HealthStatus } from './hooks/useAppLogic';
 
 import { Flashcard, Deck } from './types';
-import FlashcardList from './components/FlashcardList';
-import FlashcardForm from './components/FlashcardForm';
-import { StudyView } from './components/StudyView';
 import { aiRequestOptions, pronunciationOptions } from './services/aiSettings';
 import { refreshSources } from './services/cardRefresh';
 import Toast from './components/Toast';
-import DeckList from './components/DeckList';
-import SettingsView from './components/SettingsView';
 import { StudySetupModal } from './components/StudySetupModal';
 import { AuthView } from './components/AuthView';
 import { Sidebar, BottomTabs, AddFab } from './components/layout/Navigation';
 import { TodayView } from './components/TodayView';
 import { MeView } from './components/MeView';
-import { LibraryView } from './components/LibraryView';
 import { chaptersOf, currentChunkOf, currentReading, placesByCard } from './services/library';
 import { knownTermSet } from './services/knownWords';
 import { isDue, isNewCard } from './services/srsService';
 import { dayString } from './services/calendar';
 import { AutoFixReportModal } from './components/AutoFixReportModal';
 
-// Screens opened now and then load on first use, so the app starts faster.
-// They are fetched in the background soon after, so they open offline too.
+// Every screen but Today loads on first use, so the app starts faster. The
+// reader and the review are fetched at once (the app is for reading, and a
+// book or a review should open offline even right after an update), the rest
+// in the background soon after, so they open offline too.
 const SCREENS = {
+    study: () => import('./components/StudyView'),
+    library: () => import('./components/LibraryView'),
+    settings: () => import('./components/SettingsView'),
+    decks: () => import('./components/DeckList'),
+    cardList: () => import('./components/FlashcardList'),
+    cardForm: () => import('./components/FlashcardForm'),
     stats: () => import('./components/StatsView'),
     practice: () => import('./components/ConversationView'),
     changelog: () => import('./components/ChangelogView'),
@@ -42,6 +44,12 @@ const ProfileView = lazy(() => SCREENS.profile().then(m => ({ default: m.Profile
 const AiTextExtractorView = lazy(() => SCREENS.aiExtract().then(m => ({ default: m.AiTextExtractorView })));
 const UsageView = lazy(() => SCREENS.usage().then(m => ({ default: m.UsageView })));
 const ReaderScreen = lazy(() => SCREENS.reader().then(m => ({ default: m.ReaderScreen })));
+const StudyView = lazy(() => SCREENS.study().then(m => ({ default: m.StudyView })));
+const LibraryView = lazy(() => SCREENS.library().then(m => ({ default: m.LibraryView })));
+const SettingsView = lazy(SCREENS.settings);
+const DeckList = lazy(SCREENS.decks);
+const FlashcardList = lazy(SCREENS.cardList);
+const FlashcardForm = lazy(SCREENS.cardForm);
 
 // A screen that fails to load (offline before it was ever opened) or to
 // draw shows a message instead of taking the whole app down.
@@ -123,6 +131,8 @@ const App: React.FC = () => {
         // The reader is fetched at once so a book opens offline even right
         // after an update; the other screens a little later.
         SCREENS.reader().catch(() => {});
+        SCREENS.study().catch(() => {});
+        SCREENS.library().catch(() => {});
         const timer = setTimeout(() => Object.values(SCREENS).forEach(load => load().catch(() => {})), 5000);
         return () => clearTimeout(timer);
     }, []);
@@ -400,6 +410,7 @@ const App: React.FC = () => {
                     // selection dragged out of the form must not throw the edits away.
                     onPointerDown={e => { backdropPress.current = e.target === e.currentTarget; }}
                     onClick={e => { if (backdropPress.current && e.target === e.currentTarget) closeCardEditor(); backdropPress.current = false; }}>
+                    <Suspense fallback={null}>
                     <FlashcardForm
                         card={overlayEdit.card}
                         decks={visibleDecks}
@@ -410,6 +421,7 @@ const App: React.FC = () => {
                         sources={cardSources}
                         audioOptions={pronunciationOptions(settings)}
                     />
+                    </Suspense>
                 </div>
             )}
 
