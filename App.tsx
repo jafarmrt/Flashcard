@@ -80,7 +80,7 @@ const App: React.FC = () => {
         studyDeckId, isStudySetupModalOpen, dbStatus, apiStatus, freeDictApiStatus, mwDictApiStatus,
         settings, userProfile, autoFixReport,
         // Handlers
-        setView, showToast, handleAddCard, handleEditCard, handleDeleteCard, handleSaveCard,
+        setView, showToast, handleAddCard, handleEditCard, handleDeleteCards, handleSaveCard,
         handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV,
         handleResetApp, handleDeleteAllCards, handleStudyDeck, handleStartStudySession, setIsStudySetupModalOpen,
         handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
@@ -287,6 +287,7 @@ const App: React.FC = () => {
                     decks={visibleDecks}
                     onSave={handleSaveCard}
                     onCancel={() => setView(previousViewRef.current)}
+                    onDelete={editingCard ? async () => { await handleDeleteCards([editingCard.id]); setView(previousViewRef.current); } : undefined}
                     initialDeckName={editingCardDeckName}
                     showToast={showToast}
                     sources={cardSources}
@@ -321,7 +322,7 @@ const App: React.FC = () => {
                     cards={visibleFlashcards} 
                     decks={visibleDecks} 
                     onEdit={handleEditCard} 
-                    onDelete={handleDeleteCard} 
+                    onDelete={handleDeleteCards}
                     onBackToDecks={() => setView('DECKS')} 
                     onCompleteCard={async (id) => { await handleCompleteCardDetails(id); }}
                     onAutoFixAll={handleAutoFixCards}
@@ -416,6 +417,9 @@ const App: React.FC = () => {
                         decks={visibleDecks}
                         onSave={saveOverlayEdit}
                         onCancel={closeCardEditor}
+                        // Not from a review: the session holds its own copy of
+                        // the card and would save it back after a rating.
+                        onDelete={overlayEdit.onDone ? undefined : async () => { await handleDeleteCards([overlayEdit.card.id]); closeCardEditor(); }}
                         initialDeckName={visibleDecks.find(d => d.id === overlayEdit.card.deckId)?.name || ''}
                         showToast={showToast}
                         sources={cardSources}

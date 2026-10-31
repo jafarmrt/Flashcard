@@ -22,6 +22,7 @@ import {
 import { originText } from '../services/library';
 import { familyText, parseFamilyText, parseSynonymsText, synonymsText } from '../services/cardExtras';
 import { CEFR } from '../services/wordLevel';
+import { ConfirmDeleteCards } from './common/ConfirmDeleteCards';
 
 
 // Fix: Omit `createdAt` and `isDeleted` as they are not managed by the form.
@@ -36,6 +37,7 @@ interface FlashcardFormProps {
   showToast: (message: string) => void;
   sources: RefreshSource[]; // the AI services and dictionaries a card can be filled from
   audioOptions?: AiRequestOptions;
+  onDelete?: () => Promise<void>; // only for a saved card; asks first
 }
 
 const MicIcon = ({ recording }: { recording: boolean }) => (
@@ -129,7 +131,8 @@ const ProposalPanel: React.FC<{
   );
 };
 
-const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCancel, initialDeckName, showToast, sources, audioOptions }) => {
+const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCancel, initialDeckName, showToast, sources, audioOptions, onDelete }) => {
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [formData, setFormData] = useState<FlashcardFormData>(EMPTY);
   // Lists are edited as text, one item per line, and read back on save.
   const [definitionText, setDefinitionText] = useState('');
@@ -569,6 +572,11 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
         )}
 
         <div className="flex justify-end gap-3 pt-2">
+          {card && onDelete && (
+            <button type="button" onClick={() => setConfirmingDelete(true)} className="me-auto min-h-[44px] px-4 rounded-xl text-sm font-bold text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors">
+              حذف کارت
+            </button>
+          )}
           <button type="button" onClick={onCancel} className="min-h-[44px] px-5 rounded-xl text-sm font-bold text-ink dark:text-slate-200 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
             لغو
           </button>
@@ -577,6 +585,9 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
           </button>
         </div>
       </form>
+      {confirmingDelete && card && onDelete && (
+        <ConfirmDeleteCards cards={[card]} onConfirm={onDelete} onCancel={() => setConfirmingDelete(false)} />
+      )}
     </div>
   );
 };

@@ -9,6 +9,12 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.10.0] - 2026-10-31 - Delete the Cards You Choose
+- **Choose cards to delete:** On the cards page, «انتخاب» puts a box beside each card; tick the ones you want gone (or a whole page at once) and press «حذف». Only cards in the list as it is filtered now are deleted.
+- **Always asked first:** Deleting one card or many opens a window that names the cards and how many, with «انصراف» chosen by default; nothing is deleted until you press the red button. The trash button on each card, which used to delete at once, now asks too.
+- **Delete from the card form:** Editing a card has «حذف کارت», with the same question (not while editing from inside a review).
+- **Everywhere:** A deleted card goes from all your devices with the next sync; books, notes and other cards stay.
+
 ## [7.9.0] - 2026-10-28 - No More Points: The App Is About Reading
 - **Game parts removed:** Points, levels, the day streak and its shields, combos, badges, daily goals, confetti and reward chests are gone for good, with the setting that brought them back. Progress is what you read and learned («پیشرفت»). Old points and badges stay untouched in your account, unused.
 - **Words page:** The level, streak and goals box at the top of the word list is gone.
