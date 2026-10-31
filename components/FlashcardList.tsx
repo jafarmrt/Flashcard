@@ -6,12 +6,13 @@ import { fa, Icon } from './common/ui';
 import { isLeech, lacksExtras } from '../services/cardExtras';
 import type { RefreshSource } from '../services/cardRefresh';
 import { ImproveCardsPanel, type ImprovementPick } from './ImproveCardsPanel';
+import { ConfirmDeleteCards } from './common/ConfirmDeleteCards';
 
 interface FlashcardListProps {
   cards: Flashcard[];
   decks: Deck[];
   onEdit: (card: Flashcard) => void;
-  onDelete: (id: string) => void;
+  onDelete: (ids: string[]) => Promise<void>; // called after the user confirmed
   onBackToDecks: () => void;
   onCompleteCard: (cardId: string) => Promise<void>;
   onAutoFixAll: () => void;
@@ -82,6 +83,11 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
   const [currentPage, setCurrentPage] = useState(1);
   const [completingCardId, setCompletingCardId] = useState<string | null>(null);
   const [playingAudioUrl, setPlayingAudioUrl] = useState<string | null>(null);
+  // Choosing cards to delete: off until «انتخاب» is pressed, so the list
+  // stays as it was for everything else.
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [toDelete, setToDelete] = useState<Flashcard[] | null>(null);
   const CARDS_PER_PAGE = 100;
 
   const decksById = useMemo(() => new Map(decks.map(deck => [deck.id, deck.name])), [decks]);
@@ -144,6 +150,33 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
 
   const totalPages = Math.ceil(sortedCards.length / CARDS_PER_PAGE);
 
+  // Deleting the whole last page leaves no page to show: step back.
+  useEffect(() => {
+      if (currentPage > Math.max(1, totalPages)) setCurrentPage(Math.max(1, totalPages));
+  }, [currentPage, totalPages]);
+
+  // Only cards in the list as it is filtered now count as chosen, so a
+  // card hidden by a later search is never deleted unseen.
+  const chosen: Flashcard[] = useMemo(() => sortedCards.filter(c => selected.has(c.id)), [sortedCards, selected]);
+  const toggle = (id: string) => setSelected(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const allPageChosen = paginatedCards.length > 0 && paginatedCards.every(c => selected.has(c.id));
+  const stopSelecting = () => { setSelecting(false); setSelected(new Set()); };
+  const confirmDelete = async () => {
+    if (!toDelete) return;
+    const ids = toDelete.map(c => c.id);
+    await onDelete(ids);
+    setToDelete(null);
+    setSelected(prev => {
+      const next = new Set(prev);
+      ids.forEach(id => next.delete(id));
+      return next;
+    });
+  };
+
   // Back to the first page when the filters change. (It used to set state
   // inside useMemo, that is during a render, which React does not allow.)
   useEffect(() => {
@@ -200,6 +233,11 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                 </p>
             </div>
             <div className="flex gap-2 w-full sm:w-auto [&>button]:flex-1 sm:[&>button]:flex-none">
+                <button type="button" onClick={() => selecting ? stopSelecting() : setSelecting(true)} aria-pressed={selecting}
+                    title="چند کارت را انتخاب کن تا با هم حذف شوند"
+                    className={`inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold border transition-colors shrink-0 ${selecting ? 'bg-slate-800 text-white border-slate-800 dark:bg-slate-200 dark:text-slate-900' : 'text-ink dark:text-slate-200 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700'}`}>
+                    {selecting ? 'پایان انتخاب' : 'انتخاب'}
+                </button>
                 {onApplyImprovements && aiSources && aiSources.length > 0 && (
                     <button onClick={() => setImproving(true)} disabled={!!autoFixProgress || !!extrasProgress} title="بخش‌هایی را که انتخاب می‌کنی، برای کارت‌های همین فهرست با هوش مصنوعی بهبود بده"
                         className="inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold text-brand-700 dark:text-brand-200 bg-white dark:bg-slate-800 border border-brand-200 dark:border-brand-700 hover:bg-brand-50 dark:hover:bg-slate-700 transition-colors shrink-0 disabled:opacity-50">
@@ -288,6 +326,26 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
             </div>
         </div>
 
+        {selecting && (
+            <div className="sticky top-2 z-10 flex flex-wrap items-center gap-2 rounded-2xl bg-white dark:bg-slate-800 p-3 shadow-md border border-slate-200 dark:border-slate-700">
+                <p className="flex-1 min-w-[8rem] text-sm font-bold text-ink dark:text-slate-100" aria-live="polite">
+                    {chosen.length ? `${fa(chosen.length)} کارت انتخاب شده` : 'کارت‌هایی را که می‌خواهی حذف کنی انتخاب کن'}
+                </p>
+                <button type="button" onClick={() => setSelected(prev => {
+                        const next = new Set(prev);
+                        paginatedCards.forEach(c => allPageChosen ? next.delete(c.id) : next.add(c.id));
+                        return next;
+                    })} disabled={paginatedCards.length === 0}
+                    className="min-h-[40px] px-3 rounded-xl text-sm font-bold text-brand-700 dark:text-brand-200 hover:bg-brand-50 dark:hover:bg-slate-700 disabled:opacity-50">
+                    {allPageChosen ? 'برداشتن انتخاب این صفحه' : `انتخاب همهٔ این صفحه (${fa(paginatedCards.length)})`}
+                </button>
+                <button type="button" onClick={() => setToDelete(chosen)} disabled={chosen.length === 0}
+                    className="inline-flex items-center gap-2 min-h-[40px] px-4 rounded-xl text-sm font-bold text-white bg-red-600 hover:bg-red-700 disabled:opacity-40">
+                    <DeleteIcon /> حذف{chosen.length ? ` ${fa(chosen.length)} کارت` : ''}
+                </button>
+            </div>
+        )}
+
         {paginatedCards.length === 0 ? (
             <div className="text-center py-10 bg-white dark:bg-slate-800 rounded-3xl">
                 <p className="text-ink-muted dark:text-slate-400">کارتی با این جست‌وجو پیدا نشد.</p>
@@ -297,7 +355,13 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                 {paginatedCards.map((card) => {
                     const deckName = decksById.get(card.deckId);
                     return (
-                    <div key={card.id} className="bg-white dark:bg-slate-800 rounded-2xl p-4 flex justify-between items-center gap-2 transition-all hover:shadow-md">
+                    <div key={card.id} className={`bg-white dark:bg-slate-800 rounded-2xl p-4 flex justify-between items-center gap-2 transition-all hover:shadow-md ${selecting && selected.has(card.id) ? 'ring-2 ring-red-400 dark:ring-red-500' : ''}`}>
+                        {selecting && (
+                            <label className="shrink-0 w-9 h-9 flex items-center justify-center cursor-pointer">
+                                <input type="checkbox" checked={selected.has(card.id)} onChange={() => toggle(card.id)}
+                                    aria-label={`انتخاب ${card.front}`} className="w-5 h-5 accent-red-600 cursor-pointer" />
+                            </label>
+                        )}
                         <div className="flex-1 overflow-hidden min-w-0">
                             <p dir="ltr" className="font-en text-lg font-bold text-ink dark:text-white truncate text-right">{card.front}</p>
                             <p dir="auto" className="text-ink-muted dark:text-slate-300 truncate text-right">{card.back}</p>
@@ -326,12 +390,16 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, onEdit, onD
                                 {completingCardId === card.id ? <LoadingIcon /> : <CompleteIcon />}
                             </button>
                             <button onClick={() => onEdit(card)} aria-label={`ویرایش ${card.front}`} title="ویرایش" className={`${actionButtonClasses} text-brand-600 hover:text-brand-800 dark:text-brand-300 dark:hover:text-brand-200`}><EditIcon /></button>
-                            <button onClick={() => onDelete(card.id)} aria-label={`حذف ${card.front}`} title="حذف" className={`${actionButtonClasses} text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300`}><DeleteIcon /></button>
+                            <button onClick={() => setToDelete([card])} aria-label={`حذف ${card.front}`} title="حذف" className={`${actionButtonClasses} text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300`}><DeleteIcon /></button>
                         </div>
                     </div>
                     );
                 })}
             </div>
+        )}
+
+        {toDelete && toDelete.length > 0 && (
+            <ConfirmDeleteCards cards={toDelete} onConfirm={confirmDelete} onCancel={() => setToDelete(null)} />
         )}
 
         {totalPages > 1 && (

@@ -31,6 +31,7 @@ import { applyDictionarySettings } from '../services/dictSettings';
 import { DictionaryResult, lookupDictionary } from '../services/dictionaryService';
 import { AutoFixStats } from '../components/AutoFixReportModal';
 import { fa } from '../components/common/ui';
+import { cardsToDelete, markDeleted } from '../services/cardDelete';
 import { EXTRA_FIELDS, EXTRAS_BATCH, extrasForCards, hasExtras, lacksExtras, parseSynonymsText, parseFamilyText, withExtras } from '../services/cardExtras';
 import { isPermanentAiError } from '../services/aiClient';
 import { applyProposal, fillEmptyFields, withEditedContent } from '../services/cardRefresh';
@@ -639,11 +640,22 @@ export const useAppLogic = () => {
     setView('FORM');
   };
 
-  const handleDeleteCard = async (id: string) => {
-    await db.flashcards.update(id, { isDeleted: true, updatedAt: new Date().toISOString() });
-    await fetchData();
-    showToast('کارت حذف شد.');
+  // Called only after the user confirmed (components/common/ConfirmDeleteCards).
+  // Rethrows a failure, so the form stays open and the selection is kept.
+  const handleDeleteCards = async (ids: string[]) => {
+    try {
+      const doomed = cardsToDelete(await db.flashcards.bulkGet(ids).then(rows => rows.filter((c): c is Flashcard => !!c)), ids);
+      if (doomed.length === 0) return;
+      await db.flashcards.bulkPut(markDeleted(doomed, new Date().toISOString()));
+      await fetchData();
+      showToast(doomed.length === 1 ? 'کارت حذف شد.' : `${fa(doomed.length)} کارت حذف شد.`);
+    } catch (error) {
+      console.error('Failed to delete cards:', error);
+      showToast('حذف کارت ناموفق بود.');
+      throw error;
+    }
   };
+  const handleDeleteCard = (id: string) => handleDeleteCards([id]);
 
   // The deck named in the card form, made when it does not exist yet.
   const deckForName = async (deckName: string): Promise<Deck> => {
@@ -1745,7 +1757,7 @@ export const useAppLogic = () => {
       previousViewRef, autoFixProgress, autoFixReport, extrasProgress,
       overlayEdit, openCardEditor, closeCardEditor, saveOverlayEdit,
       // Handlers
-      setView, showToast, handleAddCard, handleEditCard, handleDeleteCard, handleSaveCard,
+      setView, showToast, handleAddCard, handleEditCard, handleDeleteCard, handleDeleteCards, handleSaveCard,
       handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV,
       handleResetApp, handleDeleteAllCards, handleStudyDeck, handleStartStudySession, setIsStudySetupModalOpen,
       handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
