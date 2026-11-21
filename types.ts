@@ -158,7 +158,7 @@ export interface Settings {
     userLevel?: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2' | 'IELTS' | 'TOEFL';
     extractionSource?: 'ai' | 'free';
     preReadAuto?: boolean; // the reader shows a section's hard words before it
-    hideGrammar?: boolean; // the reader does not underline grammar structures
+    showGrammar?: boolean; // the reader underlines grammar structures (off by default since 7.18.0: the marks crowded the page)
     readAloudVoice?: 'device' | 'ai'; // reading aloud with the device's voice (default) or an AI voice
     aiSpeechProvider?: 'gemini' | 'openrouter'; // the service that makes the AI voice (Gemini by default)
     aiSpeechVoice?: string; // the AI voice (a Gemini voice name)

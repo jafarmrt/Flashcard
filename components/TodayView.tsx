@@ -8,6 +8,7 @@ import { stageCounts, STAGE_NAMES, MasteryStage } from '../services/masteryServi
 import { dayString, weekStrip } from '../services/calendar';
 import { currentReading } from '../services/library';
 import { weekSummary } from '../services/weekSummary';
+import { backupDue, daysSinceBackup } from '../services/backup';
 import { fa, Icon, Kbd, STAGE_COLORS } from './common/ui';
 
 const NO_KNOWN: KnownWord[] = [];
@@ -99,6 +100,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
     return { ...sum, days: new Set(week.filter(d => (days.get(d)?.sections || 0) > 0)) };
   }, [sources]);
   const totalWords = cards.length;
+  const backupDays = daysSinceBackup();
+  const needsBackup = backupDue(backupDays, cards.length);
   const summary = useMemo(() => weekSummary({ sources, cards, logs: studyLogs, knownWords }), [sources, cards, studyLogs, knownWords]);
 
   // The book or article read most recently and not finished yet.
@@ -147,6 +150,13 @@ export const TodayView: React.FC<TodayViewProps> = ({
       {plan.length > 0 && (
         <TodayPlan steps={plan} reading={reading} onRead={() => reading?.next && onOpenChunk(reading.next.chapter, reading.next.chunk)}
           onReview={() => onStartReview('auto')} onSpeak={() => onNavigate('PRACTICE')} />
+      )}
+
+      {needsBackup && (
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl bg-amber-50 dark:bg-amber-900/30 text-amber-900 dark:text-amber-100 px-4 py-2.5 text-sm">
+          <span className="flex-1 min-w-[12rem]">{backupDays === null ? 'هنوز از حسابت پشتیبان نگرفته‌ای.' : `آخرین پشتیبان ${fa(backupDays)} روز پیش بود.`} یک فایل پشتیبان، کارت‌ها و کتاب‌هایت را از هر اتفاقی نگه می‌دارد.</span>
+          <button type="button" onClick={() => onNavigate('SETTINGS')} className="font-bold underline underline-offset-4">پشتیبان بگیر</button>
+        </p>
       )}
 
       <div className="grid gap-5 md:grid-cols-2">

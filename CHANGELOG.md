@@ -9,6 +9,15 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.18.0] - 2026-11-21 - A Page That Is Mostly Text
+- **The text first:** The reader's top is now one slim bar: back, the title, read aloud, type size and «⋯». Sections, the reading voice, the section's hard words, grammar marks, the colour guide and editing the text are in «⋯». On a phone the first screen shows about nine lines of text; it showed three.
+- **Nothing under the paragraphs:** The two links under every paragraph are gone. A paragraph's translation and «از اینجا بخوان» are in a word's sheet; a translation you kept still shows under its paragraph.
+- **Grammar marks off until you want them:** The dotted lines under grammar structures are off by default («⋯» or Settings turns them on).
+- **«+ کارت» makes the card:** One tap on «+ کارت» in a word's sheet makes its card at once; there is no second «ساخت کارت». (Words from "find hard words" are still ticked in their list and made together.)
+- **Review without typing on a phone:** In «خودکار» on a touch screen, the gap in the book's sentence is filled in your mind and then checked against the answer, instead of opening the keyboard for every card. «جای خالی» as a chosen mode is still written.
+- **Your word in bold:** In a card's sentences during a review, the word under review is bold.
+- **A reminder to back up:** Today says so quietly when you have never saved a backup or the last one is over a month old; Settings shows when the last one was made on this device.
+
 ## [7.17.1] - 2026-11-21 - Fixes From Reading on a Phone
 - **The next section opens at its top:** After «پایان این بخش و بعدی» the next section opened scrolled to its last lines; it now opens at the first line.
 - **«+ کارت» in sight:** On a phone the word's sheet is half the screen and «+ کارت» sat at its end, out of sight. It is now beside the meaning, at the top. The sheet is shorter too: the sentence, which is on the page itself, is no longer repeated in it on small screens.

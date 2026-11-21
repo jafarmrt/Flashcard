@@ -28,6 +28,7 @@ export const Icon = {
   Stop: ({ size = 22, className }: IconProps) => stroke(size, className, <rect x="6" y="6" width="12" height="12" rx="2" />),
   Translate: ({ size = 22, className }: IconProps) => stroke(size, className, <path d="M4 5h8M8 3v2M6 5c0 4 2 7 6 9M10 5c0 3-2 6-6 8M13 21l4-9 4 9M14.5 18h5" />),
   Back: ({ size = 22, className }: IconProps) => stroke(size, className, <path d="M9 6l6 6-6 6" />),
+  More: ({ size = 22, className }: IconProps) => stroke(size, className, <path d="M5 12h.01M12 12h.01M19 12h.01" />, 3.2),
   List: ({ size = 22, className }: IconProps) => stroke(size, className, <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />),
   Upload: ({ size = 22, className }: IconProps) => stroke(size, className, <path d="M12 16V4M6 10l6-6 6 6M4 20h16" />),
   Log: ({ size = 22, className }: IconProps) => stroke(size, className, <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6M8 13h8M8 17h8" /></>),

@@ -6,7 +6,7 @@ import { APP_VERSION, RELEASES } from '../services/appVersion';
 import { unseenReleases } from '../services/changelog';
 import { dayString } from '../services/calendar';
 import { dailyQueue, DEFAULT_NEW_PER_DAY } from '../services/dailyQueue';
-import { BackupData, BackupError, makeBackup, planRestore, readBackup, RestorePlan } from '../services/backup';
+import { BackupData, BackupError, makeBackup, markBackupMade, planRestore, readBackup, RestorePlan } from '../services/backup';
 import { addReading } from '../services/readingTime';
 import { tokensOf } from '../services/lemma';
 import { buildSource, cardIndex, cardsInText, chaptersOf, cleanEditedText, findCard, markChunkDone, migrateTexts, newOccurrence, sectionEnds, SourceInput } from '../services/library';
@@ -940,6 +940,7 @@ export const useAppLogic = () => {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
+      markBackupMade();
       showToast(`پشتیبان کامل ذخیره شد: ${fa(backup.data.cards.length)} کارت، ${fa(backup.data.sources.length)} کتاب و متن.${missing ? ` متن ${fa(missing)} فصل از سرور نرسید و در فایل نیست.` : ''}`);
     } catch (error) {
       console.error('Backup failed:', error);

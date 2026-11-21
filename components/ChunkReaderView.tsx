@@ -262,7 +262,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     });
     return { at, bySentence };
   }, [section]);
-  const showGrammar = !settings.hideGrammar;
+  const showGrammar = settings.showGrammar === true;
   const rulesInDeck = useMemo(() => ruleIdsWithCards(cards), [cards]);
 
   // Each word's item in the list, if any: a phrase where it occurs, a single
@@ -463,11 +463,11 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
       front: s.front && tokensOf(s.front).length <= MAX_PHRASE_WORDS ? s.front : it.front,
       back: s.back, definition: s.definition ? [s.definition] : [], partOfSpeech: s.partOfSpeech, pronunciation: s.pronunciation,
       kind: s.kind || it.kind, notes: s.notes, level: s.level, origin: s.origin || aiOrigin(aiOptions),
-      sourceSentence: it.sourceSentence, selected: true, alreadyInDeck: false, newSense: true,
+      sourceSentence: it.sourceSentence, selected: false, alreadyInDeck: false, newSense: true,
     }, { forms: it.forms, ranges: it.ranges, at: it.at, inContext: true, tapped: it.tapped });
     setItems(prev => [...prev, item]);
     setSelectedUid(item.uid);
-    setSaved(false);
+    void addCard(item);
   };
 
   // «معنی در این جمله»: the AI's meaning for an item the dictionary gave.
@@ -713,6 +713,24 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     if (toSave.length === 0) return;
     if (window.confirm(`${fa(toSave.length)} واژهٔ انتخاب‌شده هنوز کارت نشده. کارتشان ساخته شود؟\n(لغو: بی‌کارت ادامه بده)`)) await save();
   };
+  // «+ کارت» in a word's sheet makes its card at once: picking it and then
+  // pressing «ساخت کارت» was a step too many for one word. (Words found by
+  // "find hard words" are still ticked in their list and made together.)
+  const [adding, setAdding] = useState<string | null>(null);
+  const addCard = async (it: Item) => {
+    if (adding || it.alreadyInDeck || !ready(it)) return;
+    setAdding(it.uid);
+    try {
+      await onSaveCards([cardOf(it)]);
+      if (alive.current) setItems(prev => prev.map(p => (p.uid === it.uid ? { ...p, alreadyInDeck: true, selected: false } : p)));
+    } catch (error) {
+      console.error('Saving a card failed:', error);
+      showToast('ساخت کارت ناموفق بود.');
+    } finally {
+      if (alive.current) setAdding(null);
+    }
+  };
+
   // Finishing a section goes on to the next one, as reading a book does; the
   // chapter's last section ends on the chapter's end.
   const finishing = useRef(false);
@@ -743,6 +761,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   // chapter. (Book pages had it; they were taken out in 7.11.0.)
   const [endPage, setEndPage] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const editor = editing && onEditText && (
     <TextEditor title={`${chapterCount > 1 ? `${chapter.title}، ` : ''}بخش ${fa(index + 1)} از ${fa(chunks.length)}`} text={chunk}
       unsavedPicks={items.filter(it => it.selected && !it.alreadyInDeck).length}
@@ -830,25 +849,21 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   };
 
   const paragraphFooter = (pi: number) => {
-    const firstPiece = pieces.findIndex(p => p.paragraph === pi);
-    const readingHere = !!readingPiece && readingPiece.paragraph === pi;
     const range = paragraphRange(pi);
     const kept = range ? savedTranslation(placedNotes, range) : undefined;
     // A translation kept for the paragraph shows under it, open, every time.
     const t = translations[pi] || (kept ? { result: { text: kept.text, by: 'ai' as const, service: kept.by }, open: true } : undefined);
+    // Nothing under a paragraph unless its translation was asked for (from a
+    // word's sheet) or kept: two links under every paragraph crowded the
+    // page. Reading aloud from a place is in the word's sheet too.
+    if (!t) return null;
     return (
       <div dir="rtl" lang="fa" className="font-fa mt-1 flex flex-col gap-2">
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-          {firstPiece >= 0 && !readingHere && (
-            <button type="button" onClick={() => readAloud.play(firstPiece)}
-              className="inline-flex items-center gap-1 min-h-[32px] text-ink-muted dark:text-slate-400 hover:text-brand-600 dark:hover:text-brand-300">
-              <Icon.Speaker size={14} />از اینجا بخوان
-            </button>
-          )}
-          <button type="button" onClick={() => translateParagraph(pi)} disabled={t?.loading} aria-expanded={!!t?.open}
+          <button type="button" onClick={() => translateParagraph(pi)} disabled={t.loading} aria-expanded={!!t.open}
             className="inline-flex items-center gap-1 min-h-[32px] text-ink-muted dark:text-slate-400 hover:text-brand-600 dark:hover:text-brand-300 disabled:opacity-60">
             <Icon.Translate size={14} />
-            {t?.loading ? 'در حال ترجمه…' : t?.open ? 'بستن ترجمه' : t?.result ? 'نشان دادن ترجمه' : 'ترجمهٔ این پاراگراف'}
+            {t.loading ? 'در حال ترجمه…' : t.open ? 'بستن ترجمه' : 'نشان دادن ترجمه'}
           </button>
         </div>
         {t?.result && t.open && (
@@ -1087,16 +1102,6 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   // Parts shared by the two layouts.
   const preReadBlock = (
     <>
-          {!done && !preRead && items.length === 0 && (
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl bg-brand-50 dark:bg-brand-900/30 px-4 py-3 text-sm">
-              <span className="flex-1 min-w-[12rem] text-ink dark:text-slate-100">پیش از خواندن، واژه‌های سخت این بخش را یک بار ببین.</span>
-              <button type="button" onClick={runPreRead} className="min-h-[40px] px-4 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-bold">نشان بده</button>
-              <label className="flex items-center gap-1.5 text-ink-muted dark:text-slate-300">
-                <input type="checkbox" checked={!!settings.preReadAuto} onChange={e => onUpdateSettings({ preReadAuto: e.target.checked })} className="w-[18px] h-[18px] accent-brand-500" />
-                همیشه
-              </label>
-            </div>
-          )}
           {preRead && preRead.state !== 'closed' && (
             <section aria-label="پیش‌خوانی" className="rounded-2xl bg-brand-50 dark:bg-brand-900/30 p-4 flex flex-col gap-3">
               <div className="flex items-center gap-2">
@@ -1243,9 +1248,9 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
               <div className="flex items-start gap-3">
                 <p className="flex-1 min-w-0 text-ink dark:text-white">{shown.back}</p>
                 {!shown.alreadyInDeck && (
-                  <button type="button" onClick={() => toggle(shown.uid)} aria-pressed={!!shown.selected}
-                    className={`shrink-0 min-h-[40px] px-3 rounded-xl text-sm font-bold ${shown.selected ? 'bg-brand-500 text-white' : 'border-2 border-brand-200 dark:border-brand-700 text-brand-800 dark:text-brand-100'}`}>
-                    {shown.selected ? '✓ برای کارت' : '+ کارت'}
+                  <button type="button" onClick={() => addCard(shown)} disabled={adding === shown.uid || !ready(shown)}
+                    className="shrink-0 min-h-[40px] px-3 rounded-xl text-sm font-bold bg-brand-500 hover:bg-brand-600 text-white disabled:opacity-60">
+                    {adding === shown.uid ? 'در حال ساخت…' : '+ کارت'}
                   </button>
                 )}
               </div>
@@ -1318,6 +1323,10 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
                     className="min-h-[36px] px-3 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600">کل جمله</button>
                   <button type="button" disabled={!!busy} onClick={() => translateParagraphOf(detailPlace.from)}
                     className="min-h-[36px] px-3 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-40">ترجمهٔ پاراگراف</button>
+                  {pieces.length > 0 && (
+                    <button type="button" onClick={() => { const from = pieces.findIndex(p => p.to >= detailPlace.from); setSelectedUid(null); readAloud.play(from >= 0 ? from : 0); }}
+                      className="min-h-[36px] px-3 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600">از اینجا بخوان</button>
+                  )}
                   {onSaveNote && (
                     <button type="button" onClick={() => startNote(detailPlace)}
                       className="min-h-[36px] px-3 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600">✎ یادداشت</button>
@@ -1365,101 +1374,119 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
 
   return (
     <div dir="rtl" className="font-fa flex flex-col gap-5 w-full">
-      <header className="flex flex-wrap items-center gap-3">
-        <button type="button" onClick={onBack} aria-label="برگشت به مسیر" className="w-11 h-11 rounded-xl flex items-center justify-center hover:bg-white dark:hover:bg-slate-800"><Icon.Back /></button>
+      {/* One slim bar, so the text starts at the top of the screen; the rest
+          (sections, voice, hard words, grammar marks, editing) is in «⋯».
+          On a phone the bar and its boxes took half of the first screen. */}
+      <header className="flex items-center gap-1.5">
+        <button type="button" onClick={onBack} aria-label="برگشت به مسیر" className="w-10 h-10 shrink-0 rounded-xl flex items-center justify-center hover:bg-white dark:hover:bg-slate-800"><Icon.Back /></button>
         <div className="flex-1 min-w-0">
-          <p className="text-xs text-ink-muted dark:text-slate-400 truncate">
+          <h1 dir="auto" className="font-en font-bold text-[15px] text-ink dark:text-white truncate text-right">{book.title}</h1>
+          <p className="text-[11px] text-ink-muted dark:text-slate-400 truncate">
             {chapterCount > 1 && <><bdi dir="auto">{chapter.title}</bdi>، </>}بخش {fa(index + 1)} از {fa(chunks.length)}
           </p>
-          <h1 dir="auto" className="font-en font-bold text-lg text-ink dark:text-white truncate text-right">{book.title}</h1>
         </div>
-        {chunks.length <= MAX_SECTION_BUTTONS ? (
-          <nav aria-label="بخش‌ها" className="flex flex-wrap gap-1.5">
-            {chunks.map((_, i) => {
-              const isDone = chapter.completed.includes(i);
-              return (
-                <button key={i} type="button" disabled={!isChunkOpen(chapter, i) && i !== index} onClick={() => onOpenChunk(i)} aria-current={i === index ? 'page' : undefined}
-                  className={`w-9 h-9 rounded-[10px] text-sm font-bold ${i === index ? 'bg-brand-500 text-white ring-4 ring-brand-200 dark:ring-brand-900' : isDone ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400'} disabled:opacity-50`}>
-                  {fa(i + 1)}
-                </button>
-              );
-            })}
-          </nav>
-        ) : (
-          <nav aria-label="بخش‌ها" className="flex items-center gap-1.5">
-            <button type="button" disabled={index === 0} onClick={() => onOpenChunk(index - 1)} aria-label="بخش قبلی"
-              className="w-9 h-9 rounded-[10px] flex items-center justify-center bg-white dark:bg-slate-800 disabled:opacity-40"><Icon.Back size={18} /></button>
-            <select value={index} onChange={e => onOpenChunk(Number(e.target.value))} aria-label="رفتن به بخش"
-              className="h-9 rounded-[10px] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 px-2 text-sm">
-              {chunks.map((_, i) => (
-                <option key={i} value={i} disabled={!isChunkOpen(chapter, i) && i !== index}>
-                  {chapter.completed.includes(i) ? '✓ ' : ''}بخش {fa(i + 1)}
-                </option>
-              ))}
-            </select>
-            <button type="button" disabled={!isChunkOpen(chapter, index + 1) || index + 1 >= chunks.length} onClick={() => onOpenChunk(index + 1)} aria-label="بخش بعدی"
-              className="w-9 h-9 rounded-[10px] flex items-center justify-center bg-white dark:bg-slate-800 disabled:opacity-40"><Icon.Back size={18} className="rotate-180" /></button>
-          </nav>
-        )}
-        <div role="group" aria-label="اندازهٔ قلم" dir="ltr" className="flex items-center rounded-xl bg-white dark:bg-slate-800">
-          <button type="button" onClick={() => onUpdateSettings({ readerFontSize: fontStep - 1 })} disabled={fontStep === 0} aria-label="قلم کوچک‌تر" className="w-9 h-9 rounded-xl font-read text-sm disabled:opacity-40 hover:bg-brand-50 dark:hover:bg-slate-700">A</button>
-          <button type="button" onClick={() => onUpdateSettings({ readerFontSize: fontStep + 1 })} disabled={fontStep === READER_FONT_SIZES.length - 1} aria-label="قلم بزرگ‌تر" className="w-9 h-9 rounded-xl font-read text-xl disabled:opacity-40 hover:bg-brand-50 dark:hover:bg-slate-700">A</button>
-        </div>
-        {onEditText && (
-          <button type="button" onClick={() => setEditing(true)} title="درست کردن یا حذف بخشی از متن"
-            className="min-h-[36px] px-3 rounded-xl text-sm font-bold bg-white dark:bg-slate-800 hover:bg-brand-50 dark:hover:bg-slate-700">
-            ویرایش متن
+        {!endPage && !sectionEmpty && (
+          <button type="button" onClick={readAloud.toggle} aria-label={readAloud.active ? 'مکث خواندن' : readAloud.status === 'paused' ? 'ادامهٔ خواندن بلند' : 'خواندن بلند'} title="خواندن بلند"
+            className={`w-10 h-10 shrink-0 rounded-xl flex items-center justify-center ${readAloud.active ? 'bg-amber-600 text-white' : 'bg-white dark:bg-slate-800 text-brand-600 dark:text-brand-300'} ${readAloud.status === 'loading' ? 'animate-pulse' : ''}`}>
+            {readAloud.active ? <Icon.Pause size={18} /> : <Icon.Speaker size={18} />}
           </button>
         )}
+        {readAloud.status !== 'idle' && (
+          <button type="button" onClick={readAloud.stop} aria-label="توقف خواندن و برگشت به اول" title="توقف"
+            className="w-10 h-10 shrink-0 rounded-xl flex items-center justify-center bg-white dark:bg-slate-800"><Icon.Stop size={16} /></button>
+        )}
+        <div role="group" aria-label="اندازهٔ قلم" dir="ltr" className="flex items-center shrink-0 rounded-xl bg-white dark:bg-slate-800">
+          <button type="button" onClick={() => onUpdateSettings({ readerFontSize: fontStep - 1 })} disabled={fontStep === 0} aria-label="قلم کوچک‌تر" className="w-9 h-10 rounded-xl font-read text-sm disabled:opacity-40 hover:bg-brand-50 dark:hover:bg-slate-700">A</button>
+          <button type="button" onClick={() => onUpdateSettings({ readerFontSize: fontStep + 1 })} disabled={fontStep === READER_FONT_SIZES.length - 1} aria-label="قلم بزرگ‌تر" className="w-9 h-10 rounded-xl font-read text-xl disabled:opacity-40 hover:bg-brand-50 dark:hover:bg-slate-700">A</button>
+        </div>
+        <button type="button" onClick={() => setMenuOpen(o => !o)} aria-expanded={menuOpen} aria-label="ابزارهای خواندن" title="بخش‌ها، صدا، واژه‌های سخت، ویرایش"
+          className={`w-10 h-10 shrink-0 rounded-xl flex items-center justify-center ${menuOpen ? 'bg-brand-500 text-white' : 'bg-white dark:bg-slate-800'}`}><Icon.More /></button>
         {editor}
       </header>
 
-      <div className="flex flex-wrap gap-5 items-start">
-        <article className="flex-[999_1_30rem] min-w-0 bg-white dark:bg-slate-800 rounded-3xl p-5 md:p-9 flex flex-col gap-4">
-          {endPage ? chapterEnd : <>
-          {preReadBlock}
-          <div className="flex flex-wrap justify-between items-center gap-2 text-xs text-ink-muted dark:text-slate-400">
-            <span>روی واژه بزن تا معنی‌اش بیاید؛ برای عبارت یا جمله، روی چند واژه بکش (در موبایل: اول انگشت را نگه دار).</span>
-          </div>
-          <div role="group" aria-label="خواندن بلند" className="flex flex-wrap items-center gap-2 text-sm -mt-1">
-            <button type="button" onClick={readAloud.toggle}
-              className={`inline-flex items-center gap-1.5 min-h-[40px] px-4 rounded-xl font-bold text-white ${readAloud.active ? 'bg-amber-600 hover:bg-amber-700' : 'bg-brand-500 hover:bg-brand-600'}`}>
-              {readAloud.active ? <Icon.Pause size={16} /> : <Icon.Speaker size={16} />}
-              {readAloud.status === 'loading' ? 'آماده کردن صدا…' : readAloud.status === 'playing' ? 'مکث' : readAloud.status === 'paused' ? 'ادامهٔ خواندن' : 'خواندن بلند'}
-            </button>
-            {readAloud.status !== 'idle' && (
-              <button type="button" onClick={readAloud.stop} aria-label="توقف و برگشت به اول"
-                className="inline-flex items-center gap-1.5 min-h-[40px] px-3 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600">
-                <Icon.Stop size={14} />از اول
-              </button>
+      {menuOpen && (
+        <section aria-label="ابزارهای خواندن" className="bg-white dark:bg-slate-800 rounded-3xl p-4 flex flex-col gap-4 text-sm">
+          <div className="flex flex-col gap-2">
+            <span className="font-bold text-ink dark:text-white">بخش‌ها</span>
+            {chunks.length <= MAX_SECTION_BUTTONS ? (
+              <nav aria-label="بخش‌ها" className="flex flex-wrap gap-1.5">
+                {chunks.map((_, i) => {
+                  const isDone = chapter.completed.includes(i);
+                  return (
+                    <button key={i} type="button" disabled={!isChunkOpen(chapter, i) && i !== index} onClick={() => onOpenChunk(i)} aria-current={i === index ? 'page' : undefined}
+                      className={`w-9 h-9 rounded-[10px] text-sm font-bold ${i === index ? 'bg-brand-500 text-white ring-4 ring-brand-200 dark:ring-brand-900' : isDone ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400'} disabled:opacity-50`}>
+                      {fa(i + 1)}
+                    </button>
+                  );
+                })}
+              </nav>
+            ) : (
+              <nav aria-label="بخش‌ها" className="flex items-center gap-1.5">
+                <button type="button" disabled={index === 0} onClick={() => onOpenChunk(index - 1)} aria-label="بخش قبلی"
+                  className="w-9 h-9 rounded-[10px] flex items-center justify-center bg-slate-100 dark:bg-slate-700 disabled:opacity-40"><Icon.Back size={18} /></button>
+                <select value={index} onChange={e => onOpenChunk(Number(e.target.value))} aria-label="رفتن به بخش"
+                  className="h-9 rounded-[10px] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 px-2 text-sm">
+                  {chunks.map((_, i) => (
+                    <option key={i} value={i} disabled={!isChunkOpen(chapter, i) && i !== index}>
+                      {chapter.completed.includes(i) ? '✓ ' : ''}بخش {fa(i + 1)}
+                    </option>
+                  ))}
+                </select>
+                <button type="button" disabled={!isChunkOpen(chapter, index + 1) || index + 1 >= chunks.length} onClick={() => onOpenChunk(index + 1)} aria-label="بخش بعدی"
+                  className="w-9 h-9 rounded-[10px] flex items-center justify-center bg-slate-100 dark:bg-slate-700 disabled:opacity-40"><Icon.Back size={18} className="rotate-180" /></button>
+              </nav>
             )}
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="font-bold text-ink dark:text-white">صدای خواندن بلند</span>
             <div role="group" aria-label="صدای خواندن" className="flex p-1 rounded-xl bg-slate-100 dark:bg-slate-700">
               {(['device', 'ai'] as ReadAloudVoice[]).map(v => (
                 <button key={v} type="button" aria-pressed={voice === v} onClick={() => onUpdateSettings({ readAloudVoice: v })}
                   disabled={v === 'device' && !isSpeechSupported()}
                   className={`min-h-[32px] px-3 rounded-lg text-xs disabled:opacity-40 ${voice === v ? 'bg-white dark:bg-slate-600 shadow-sm font-bold text-brand-700 dark:text-white' : 'text-ink-muted dark:text-slate-300'}`}>
-                  {v === 'device' ? 'صدای دستگاه' : 'صدای هوش مصنوعی'}
+                  {v === 'device' ? 'دستگاه' : 'هوش مصنوعی'}
                 </button>
               ))}
             </div>
-            {readAloud.status !== 'idle' && readAloud.voice !== voice && (
-              <span className="text-xs text-amber-800 dark:text-amber-200">فعلاً با صدای دستگاه</span>
-            )}
+            {readAloud.status !== 'idle' && readAloud.voice !== voice && <span className="w-full text-xs text-amber-800 dark:text-amber-200">فعلاً با صدای دستگاه</span>}
           </div>
-          {(masteryShown.size > 0 || grammarFound.bySentence.some(ids => ids.length > 0)) && (
-            <p aria-label="راهنمای رنگ‌ها" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted dark:text-slate-400 -mt-2">
-              {masteryShown.size > 0 && <span>واژه‌های کارت‌دار:</span>}
+          {!done && !sectionEmpty && (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-bold text-ink dark:text-white">واژه‌های سخت این بخش، پیش از خواندن</span>
+              <span className="flex items-center gap-3">
+                <label className="flex items-center gap-1.5 text-ink-muted dark:text-slate-300 cursor-pointer">
+                  <input type="checkbox" checked={!!settings.preReadAuto} onChange={e => onUpdateSettings({ preReadAuto: e.target.checked })} className="w-[18px] h-[18px] accent-brand-500" />
+                  همیشه
+                </label>
+                <button type="button" onClick={() => { setMenuOpen(false); runPreRead(); }} disabled={preRead?.state === 'loading'} className="min-h-[36px] px-3 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-bold disabled:opacity-60">نشان بده</button>
+              </span>
+            </div>
+          )}
+          <label className="flex items-center justify-between gap-2 cursor-pointer">
+            <span className={`font-bold px-0.5 ${GRAMMAR_MARK}`} title="واژه‌های کمکی یک ساختار را بزن تا توضیحش بیاید">نشان دادن ساختارهای دستوری</span>
+            <input type="checkbox" checked={showGrammar} onChange={e => onUpdateSettings({ showGrammar: e.target.checked })} className="w-5 h-5 accent-rose-500" />
+          </label>
+          {masteryShown.size > 0 && (
+            <p aria-label="راهنمای رنگ‌ها" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted dark:text-slate-400">
+              <span>زیرخط واژه‌های کارت‌دار:</span>
               {(['new', 'learning', 'learned'] as Mastery[]).filter(m => masteryShown.has(m)).map(m => (
                 <span key={m} className="inline-flex items-center gap-1"><span className={`w-2.5 h-2.5 rounded-full ${MASTERY[m].dot}`} />{MASTERY[m].label}</span>
               ))}
-              {grammarFound.bySentence.some(ids => ids.length > 0) && (
-                <label className="inline-flex items-center gap-1.5 cursor-pointer" title="واژه‌های کمکی یک ساختار را بزن تا توضیحش بیاید">
-                  <input type="checkbox" checked={showGrammar} onChange={e => onUpdateSettings({ hideGrammar: !e.target.checked })} className="w-4 h-4 accent-rose-500" />
-                  <span className={`px-0.5 ${GRAMMAR_MARK}`}>ساختار دستوری</span>
-                </label>
-              )}
             </p>
           )}
+          <p className="text-xs text-ink-muted dark:text-slate-400 leading-relaxed">روی واژه بزن تا معنی‌اش بیاید؛ برای عبارت یا جمله، روی چند واژه بکش (در موبایل: اول انگشت را نگه دار).</p>
+          {onEditText && (
+            <button type="button" onClick={() => { setMenuOpen(false); setEditing(true); }} className="min-h-[40px] rounded-xl border border-slate-200 dark:border-slate-600 font-bold text-ink dark:text-white">
+              ویرایش یا حذف متن این بخش
+            </button>
+          )}
+        </section>
+      )}
+
+      <div className="flex flex-wrap gap-5 items-start">
+        <article className="flex-[999_1_30rem] min-w-0 bg-white dark:bg-slate-800 rounded-3xl p-5 md:p-9 flex flex-col gap-4">
+          {endPage ? chapterEnd : <>
+          {preReadBlock}
           {sectionEmpty && <p className="text-ink-muted dark:text-slate-400">این بخش متنی ندارد؛ با «بخش بعد» ادامه بده.</p>}
           <ReaderText section={section} selection={selection} classFor={classFor} onTap={tapWord} onSelect={pick} glosses={glosses} paragraphFooter={paragraphFooter}
             fontSize={READER_FONT_SIZES[fontStep]} />

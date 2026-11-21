@@ -92,6 +92,9 @@ password `long-enough-password-1` / `-2` (only if that data folder still
 exists; otherwise register). Stop it with
 `Stop-Process -Id (Get-NetTCPConnection -LocalPort 3000 -State Listen).OwningProcess`.
 
+- The user reads on a phone: try every screen change at phone size too
+  (Playwright `devices['iPhone 13']`, taps not clicks). The scroll bug and
+  the hidden «+ کارت» of 7.17.0 were only seen there.
 - No real microphone or AI keys on this machine: mock them (replace
   `navigator.mediaDevices.getUserMedia`, route `/api/proxy` `gemini-generate`).
 - From this machine (Iran) Google and OpenRouter refuse requests ("User
@@ -151,6 +154,17 @@ Do not bring these back without the user asking.
   in a state the next mount does not reset (ChunkReaderView `alive`).
 
 ## What is done (latest first)
+
+- 7.18.0 (after trying the app at phone size): the reader's top is one slim
+  bar with a «⋯» panel (ChunkReaderView `menuOpen`: sections, voice, hard
+  words, grammar marks, editing); nothing under paragraphs unless a
+  translation was kept; grammar marks off by default
+  (`Settings.showGrammar`, was `hideGrammar`); «+ کارت» in the word sheet
+  saves at once (`addCard`); "auto" review on a touch screen fills the gap
+  in the mind (`thinkOnly`, StudyView `TOUCH`); the card's word is bold in
+  its sentences; a backup reminder on Today (services/backup `backupDue`,
+  localStorage `lc_last_backup`). 7.17.1: the next section opens at its
+  top, a tapped word is scrolled above its sheet, «۱۰ کارت تازهٔ دیگر».
 
 - 7.11.0–7.17.0 (the plan from the review of 2026-11-21, all shipped):
   7.11 a tap asks only the dictionary (AI on «معنی در این جمله» or when the

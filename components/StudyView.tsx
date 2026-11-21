@@ -22,6 +22,8 @@ import { WORD_TOKEN } from '../services/lemma';
 
 const MODE_NAMES: Record<StudyMode, string> = { auto: 'خودکار', flip: 'برگرداندن', reverse: 'فارسی به انگلیسی', type: 'نوشتنی', cloze: 'جای خالی' };
 const MODES: StudyMode[] = ['auto', 'flip', 'reverse', 'cloze', 'type'];
+// A phone or a tablet: typing every answer is slow there.
+const TOUCH = typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
 
 const RATINGS: { rating: PerformanceRating; label: string; key: string; className: string }[] = [
   { rating: 'AGAIN', label: 'دوباره', key: '1', className: 'bg-red-100 text-red-900 hover:bg-red-200 dark:bg-red-900/50 dark:text-red-100' },
@@ -77,15 +79,18 @@ const LinkedText: React.FC<{ text: string }> = ({ text }) => {
   const [open, setOpen] = useState<Flashcard | null>(null);
   const parts = useMemo(() => text.split(SPLIT_WORDS).map((part, i) => {
     const card = i % 2 === 1 && linked ? cardForTerm(linked.index, part) : undefined;
-    return { part, card: card && card.id !== linked?.currentId ? card : undefined };
+    return { part, card: card && card.id !== linked?.currentId ? card : undefined, own: !!card && card.id === linked?.currentId };
   }), [text, linked]);
-  if (!linked || !parts.some(p => p.card)) return <>{text}</>;
+  if (!linked || !parts.some(p => p.card || p.own)) return <>{text}</>;
   // A button may end a line, so the punctuation after it ("house.") is kept
   // with it, or the full stop would start the next line alone.
   const glued = (i: number) => (parts[i - 1]?.card ? /^\S*/.exec(parts[i].part)![0] : '');
   return (
     <>
-      {parts.map(({ part, card }, i) => card ? (
+      {parts.map(({ part, card, own }, i) => own ? (
+        // The word under review stands out in its sentence.
+        <strong key={i} className="font-bold not-italic text-ink dark:text-white">{part}</strong>
+      ) : card ? (
         <span key={i} className="whitespace-nowrap">
           <button type="button" onClick={e => { e.stopPropagation(); setOpen(o => (o?.id === card.id ? null : card)); }}
             aria-expanded={open?.id === card.id} title="معنی از کارت خودت"
@@ -357,11 +362,15 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
   const cardMode: StudyMode = !card ? 'flip'
     : mode === 'auto' ? (card.kind === 'grammar' || masteryStage(card) <= 1 ? 'flip' : cloze ? 'cloze' : 'reverse')
     : mode === 'cloze' && !cloze ? 'type' : mode;
+  // In "auto" on a touch screen the gap is filled in the mind, then checked
+  // against the answer: a keyboard opening for every card made a phone
+  // review slow. («جای خالی» as a chosen mode is still written.)
+  const thinkOnly = cardMode === 'reverse' || (cardMode === 'cloze' && mode === 'auto' && TOUCH);
   const intervals = useMemo(() => (current ? previewIntervals(current) : null), [current]);
 
   useEffect(() => {
-    if ((cardMode === 'type' || cardMode === 'cloze') && !revealed) inputRef.current?.focus();
-  }, [index, cardMode, revealed]);
+    if ((cardMode === 'type' || cardMode === 'cloze') && !thinkOnly && !revealed) inputRef.current?.focus();
+  }, [index, cardMode, revealed, thinkOnly]);
 
   const summary = (): SessionSummary => ({ reviews });
   const finish = (next: 'home' | 'more') => onExit(Array.from(updated.values()), summary(), next);
@@ -523,7 +532,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
       const typing = (e.target as HTMLElement).closest('input, textarea');
       if (e.key === 'Escape') { exitEarly(); return; }
       if (typing && !revealed) return;
-      if (!revealed && (e.code === 'Space' || e.key === 'Enter') && (cardMode === 'flip' || cardMode === 'reverse')) { e.preventDefault(); setRevealed(true); return; }
+      if (!revealed && (e.code === 'Space' || e.key === 'Enter') && (cardMode === 'flip' || thinkOnly)) { e.preventDefault(); setRevealed(true); return; }
       if (revealed) {
         const digit = /^(?:Digit|Numpad)([1-4])$/.exec(e.code)?.[1];
         const r = RATINGS.find(x => x.key === digit);
@@ -641,11 +650,12 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
               <p dir="ltr" className="font-read text-xl md:text-2xl leading-relaxed text-ink dark:text-white max-w-2xl">
                 {cloze.before}
                 {revealed
-                  ? <mark className={`rounded px-1 font-bold ${clozeResult === 'correct' ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100' : 'bg-amber-100 text-amber-900 dark:bg-amber-900/50 dark:text-amber-100'}`}>{cloze.answer}</mark>
+                  ? <mark className={`rounded px-1 font-bold ${clozeResult === 'correct' ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100' : clozeResult === null ? 'bg-brand-100 text-brand-900 dark:bg-brand-900/50 dark:text-brand-100' : 'bg-amber-100 text-amber-900 dark:bg-amber-900/50 dark:text-amber-100'}`}>{cloze.answer}</mark>
                   : <span aria-label="جای خالی" className="font-mono tracking-[0.2em] text-brand-600 dark:text-brand-300 border-b-2 border-brand-400 px-1">{blankOf(cloze.answer)}</span>}
                 {cloze.after}
               </p>
               {!revealed && <p className="text-lg text-ink-muted dark:text-slate-300">{card.back}</p>}
+              {!revealed && thinkOnly && <p className="text-sm text-ink-muted dark:text-slate-400">واژهٔ جاافتاده را به یاد بیاور، بعد پاسخ را ببین.</p>}
             </div>
           )}
 
@@ -697,7 +707,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
                 <LeechPanel key={current.id} card={current} aiOptions={aiOptions} onDone={finishLeech} />
               )}
             </>
-          ) : card.kind === 'grammar' ? null : cardMode === 'flip' || cardMode === 'reverse' ? (
+          ) : card.kind === 'grammar' ? null : cardMode === 'flip' || thinkOnly ? (
             <button type="button" onClick={() => setRevealed(true)}
               className="self-center inline-flex items-center gap-2 min-h-[56px] px-10 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold text-lg">
               نمایش پاسخ <Kbd className="text-white">Space</Kbd>

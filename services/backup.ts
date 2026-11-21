@@ -170,3 +170,31 @@ export const planRestore = (backup: Backup, local: BackupData, newId: () => stri
   counts.studyHistory = studyHistory.length;
   return { rows, studyHistory, chapterTexts, counts };
 };
+
+// --- A quiet reminder ---
+//
+// The account lives in the browser and on the server (on Vercel: an Upstash
+// Redis database on its free plan, which nobody backs up for you). A backup
+// file once a month is the copy that survives both. This device remembers
+// when the last one was made.
+
+const LAST_BACKUP_KEY = 'lc_last_backup';
+export const BACKUP_EVERY_DAYS = 30;
+const WORTH_BACKING_UP = 20; // cards
+
+export const markBackupMade = (now: Date = new Date()): void => {
+  try { localStorage.setItem(LAST_BACKUP_KEY, now.toISOString()); } catch { /* private mode */ }
+};
+
+// Whole days since the last backup made on this device; null when none was.
+export const daysSinceBackup = (now: Date = new Date()): number | null => {
+  try {
+    const at = Date.parse(localStorage.getItem(LAST_BACKUP_KEY) || '');
+    return Number.isFinite(at) ? Math.max(0, Math.floor((now.getTime() - at) / 86_400_000)) : null;
+  } catch {
+    return null;
+  }
+};
+
+export const backupDue = (days: number | null, cardCount: number): boolean =>
+  cardCount >= WORTH_BACKING_UP && (days === null || days >= BACKUP_EVERY_DAYS);

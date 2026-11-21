@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BackupData, BackupError, makeBackup, planRestore, readBackup } from '../services/backup';
+import { backupDue, BackupData, BackupError, makeBackup, planRestore, readBackup } from '../services/backup';
 
 const T = '2026-11-01T00:00:00.000Z';
 const NOW = new Date('2026-11-21T10:00:00.000Z');
@@ -74,4 +74,11 @@ test('restoring twice adds nothing the second time', () => {
   const plan = planRestore(backup, account(), () => 'new', NOW);
   assert.deepEqual(Object.values(plan.counts).reduce((a, b) => a + b, 0), 0);
   assert.equal(plan.chapterTexts.length, 0);
+});
+
+test('a backup is asked for once there is something to lose, and again after a month', () => {
+  assert.equal(backupDue(null, 5), false, 'a handful of cards: not yet');
+  assert.equal(backupDue(null, 40), true, 'never backed up');
+  assert.equal(backupDue(10, 40), false);
+  assert.equal(backupDue(30, 40), true);
 });

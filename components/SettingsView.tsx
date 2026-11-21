@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { DEFAULT_NEW_PER_DAY } from '../services/dailyQueue';
+import { daysSinceBackup } from '../services/backup';
 import { AiProviderId, AiProviderSetting, CardKind, DictionaryEntrySetting, Settings } from '../types';
 import { dictionaryKey, dictionaryList, dictionaryNote } from '../services/dictSettings';
 import { DictionaryId, DictionaryKeyId, dictionaryInfo } from '../services/dictionaryCatalog';
@@ -698,6 +699,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
 }) => {
     const importFileRef = useRef<HTMLInputElement>(null);
     const backupFileRef = useRef<HTMLInputElement>(null);
+    const lastBackup = daysSinceBackup();
     const handleBackupFile = (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         event.target.value = '';
@@ -758,7 +760,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                 <ReadAloudSettings settings={settings} onUpdateSettings={onUpdateSettings} />
                 <PronunciationSettings settings={settings} onUpdateSettings={onUpdateSettings} />
                 <Row title="نشان دادن ساختارهای دستوری" hint="واژه‌هایی که یک ساختار دستوری می‌سازند، هنگام خواندن با نقطه‌چین مشخص شوند.">
-                    <input type="checkbox" checked={!settings.hideGrammar} onChange={e => onUpdateSettings({ hideGrammar: !e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="نشان دادن ساختارهای دستوری" />
+                    <input type="checkbox" checked={!!settings.showGrammar} onChange={e => onUpdateSettings({ showGrammar: e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="نشان دادن ساختارهای دستوری" />
                 </Row>
             </Card>
 
@@ -809,7 +811,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
 
             <Card title="داده‌ها">
                 {onExportBackup && onRestoreBackup && (
-                    <Row title="پشتیبان کامل" hint="همهٔ حساب در یک فایل: کارت‌ها با برنامهٔ مرورشان، تاریخچهٔ مرور، کتاب‌ها و متن فصل‌ها، یادداشت‌ها و فهرست «بلدم». برگرداندن فقط چیزهای جاافتاده یا پاک‌شده را اضافه می‌کند و چیزی را پاک نمی‌کند.">
+                    <Row title="پشتیبان کامل" hint={`همهٔ حساب در یک فایل: کارت‌ها با برنامهٔ مرورشان، تاریخچهٔ مرور، کتاب‌ها و متن فصل‌ها، یادداشت‌ها و فهرست «بلدم». برگرداندن فقط چیزهای جاافتاده یا پاک‌شده را اضافه می‌کند و چیزی را پاک نمی‌کند. ماهی یک بار بگیر و جایی بیرون از این دستگاه نگه دار.${lastBackup === null ? '' : ` آخرین پشتیبان این دستگاه: ${lastBackup === 0 ? 'امروز' : `${fa(lastBackup)} روز پیش`}.`}`}>
                         <div className="flex gap-2">
                             <input type="file" ref={backupFileRef} onChange={handleBackupFile} accept=".json,application/json" className="hidden" />
                             <button type="button" onClick={() => backupFileRef.current?.click()} className={button}>برگرداندن</button>
