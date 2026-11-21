@@ -38,7 +38,7 @@ test('linking Telegram through the API and the webhook', async () => {
 
   try {
     assert.equal((await app({ action: 'auth-register', username: 'ann', password: 'long-enough-password' })).status, 201);
-    assert.deepEqual((await app({ action: 'telegram-status' })).body, { available: true, bot: 'TestBot', linked: false, words: 7, paused: false });
+    assert.deepEqual((await app({ action: 'telegram-status' })).body, { available: true, bot: 'TestBot', linked: false, words: 7, paused: false, reading: true, nudge: true });
     await app({ action: 'sync', since: 0, changes: { cards: [{ id: 'c1', deckId: 'd', front: 'reluctant', back: 'بی‌میل', repetition: 0, easinessFactor: 2.5, interval: 0, dueDate: '2026-01-01T00:00:00Z', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }] } });
 
     const linked = await app({ action: 'telegram-link', tz: 210 });
@@ -59,6 +59,12 @@ test('linking Telegram through the API and the webhook', async () => {
 
     // The cron needs Vercel's secret.
     assert.equal((await call({ method: 'GET', query: { cron: '1' }, headers: {} }, handleTelegram)).status, 401);
+    // With it, the morning and the evening crons each run their part.
+    process.env.CRON_SECRET = 'cron-secret';
+    const cron = (part: string) => call({ method: 'GET', query: { cron: part }, headers: { authorization: 'Bearer cron-secret', host: 'lingua.example' } }, handleTelegram);
+    assert.equal((await cron('1')).body.part, 'morning');
+    assert.equal((await cron('evening')).body.part, 'evening');
+    delete process.env.CRON_SECRET;
 
     assert.equal((await app({ action: 'telegram-unlink' })).body.linked, false);
     assert.equal((await app({ action: 'telegram-status' })).body.linked, false);

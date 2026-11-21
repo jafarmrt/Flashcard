@@ -16,6 +16,8 @@ import { randomUUID, randomBytes } from 'crypto';
 import { calculateSrs, isDue, isNewCard, previewIntervals, RELEARN_STEP_MINUTES } from '../services/srsService.js';
 import type { Flashcard, PerformanceRating, StudyLog } from '../types';
 import type { StoreData, SyncChanges } from './syncStore';
+import { nextReading, readingInvite, readOn, type ReadingInvite } from '../services/readingInvite.js';
+import type { Chapter, Source } from '../types';
 
 export const TG_MIN_WORDS = 5;
 export const TG_MAX_WORDS = 10;
@@ -23,6 +25,9 @@ export const TG_DEFAULT_WORDS = 7;
 // On a server that checks every few minutes (VPS), the day's words go out at
 // this local hour. On Vercel the daily cron decides (vercel.json).
 export const TG_SEND_HOUR = 8;
+// A day without reading gets one short reminder at this local hour (on
+// Vercel: the evening cron in vercel.json).
+export const TG_EVENING_HOUR = 19;
 const CODE_MINUTES = 15;
 // A card answered "Again" comes back once more at the end of the day's list.
 const MAX_REPEATS = 1;
@@ -38,6 +43,10 @@ export interface TgLink {
   repeats?: string[]; // cards already sent again today
   answered?: number;
   linkedAt: string;
+  reading?: boolean; // the morning message opens with the next lines of the book (default on)
+  nudge?: boolean; // an evening reminder on a day without reading (default on)
+  readDay?: string; // the local day the book's lines were last sent in the morning
+  nudgeDay?: string; // the local day of the last evening reminder
 }
 
 type Row = Record<string, any>;
@@ -52,6 +61,8 @@ export interface TgDeps {
   changeData(username: string, make: (data: StoreData) => SyncChanges | null): Promise<boolean>;
   api(method: string, body: Record<string, unknown>): Promise<any>; // the Telegram Bot API
   botName(): Promise<string>;
+  readChapter(username: string, chapterId: string): Promise<string[] | null>; // a chapter's sections
+  appUrl(): string; // the app's address for the "continue in the app" button; '' when unknown
   now(): Date;
 }
 
@@ -240,9 +251,86 @@ export const startReview = async (deps: TgDeps, username: string, force: boolean
   return 'sent';
 };
 
-// Every linked account whose day has not had its review yet. `anyHour`: the
-// once-a-day cron (Vercel), which does not wait for the local hour.
-export const runDaily = async (deps: TgDeps, anyHour = false): Promise<number> => {
+// --- Back to the book ---
+//
+// The morning message opens with the book: the last lines read ("where were
+// we?") and the first lines of the next section, with a button that opens
+// the app on that page. Reading starts in Telegram, where the user already
+// is; the app only has to be opened to go on. A day without reading gets
+// one short reminder in the evening.
+
+export const inviteFor = async (deps: TgDeps, username: string, data: StoreData | null): Promise<ReadingInvite | null> => {
+  if (!data) return null;
+  const next = nextReading(data.sources as unknown as Source[], data.chapters as unknown as Chapter[]);
+  if (!next) return null;
+  const chunks = await deps.readChapter(username, next.chapter.id);
+  if (!chunks) return null;
+  const previous = next.previous ? await deps.readChapter(username, next.previous.id) : null;
+  return readingInvite(next, chunks, previous);
+};
+
+const whereText = (invite: ReadingInvite): string =>
+  `${invite.chapterTitle ? `${esc(clip(invite.chapterTitle, 60))} · ` : ''}بخش ${faNum(invite.section)} از ${faNum(invite.sections)} · حدود ${faNum(invite.minutes)} دقیقه`;
+
+export const morningReadingText = (invite: ReadingInvite): string => [
+  `📖 <b>${esc(clip(invite.title, 80))}</b>`,
+  whereText(invite),
+  ...(invite.before ? ['', `<i>کجا بودیم:</i> ${esc(invite.before)}`] : []),
+  '',
+  `<b>ادامه:</b> ${esc(invite.teaser)}`,
+].join('\n');
+
+export const eveningNudgeText = (invite: ReadingInvite): string => [
+  `امروز هنوز کتاب نخوانده‌ای. بخش بعدی «${esc(clip(invite.title, 60))}» حدود ${faNum(invite.minutes)} دقیقه است:`,
+  '',
+  esc(invite.teaser),
+].join('\n');
+
+const openButton = (deps: TgDeps) => {
+  const app = deps.appUrl().replace(/\/+$/, '');
+  return /^https:\/\//.test(app) ? { reply_markup: { inline_keyboard: [[{ text: 'ادامه در برنامه', url: `${app}/?read=1` }]] } } : {};
+};
+
+// The book's lines for the morning, once a day; `force`: the user asked (/read).
+export const sendReading = async (deps: TgDeps, username: string, force = false): Promise<'sent' | 'skipped' | 'none' | 'unlinked'> => {
+  const state: TgLink | null = await deps.get(userKey(username));
+  if (!state) return 'unlinked';
+  const day = localDay(deps.now(), state.tz);
+  if (!force && (state.reading === false || state.readDay === day)) return 'skipped';
+  const data = await deps.readData(username);
+  // Already read today: nothing to start.
+  if (!force && data && readOn(data.sources as unknown as Source[], day)) return 'skipped';
+  const invite = await inviteFor(deps, username, data);
+  if (!force) await deps.set(userKey(username), { ...state, readDay: day });
+  if (!invite) {
+    if (force) await deps.api('sendMessage', { chat_id: state.chatId, text: 'کتاب نیمه‌خوانده‌ای در کتابخانه‌ات نیست. در برنامه یک کتاب یا متن اضافه کن.' });
+    return 'none';
+  }
+  await deps.api('sendMessage', { chat_id: state.chatId, parse_mode: 'HTML', text: morningReadingText(invite), ...openButton(deps) });
+  return 'sent';
+};
+
+// One reminder in the evening of a day on which no section was finished.
+export const sendNudge = async (deps: TgDeps, username: string): Promise<'sent' | 'skipped' | 'none' | 'unlinked'> => {
+  const state: TgLink | null = await deps.get(userKey(username));
+  if (!state) return 'unlinked';
+  const day = localDay(deps.now(), state.tz);
+  if (state.nudge === false || state.nudgeDay === day) return 'skipped';
+  const data = await deps.readData(username);
+  if (data && readOn(data.sources as unknown as Source[], day)) return 'skipped';
+  const invite = await inviteFor(deps, username, data);
+  await deps.set(userKey(username), { ...state, nudgeDay: day });
+  if (!invite) return 'none';
+  await deps.api('sendMessage', { chat_id: state.chatId, parse_mode: 'HTML', text: eveningNudgeText(invite), ...openButton(deps) });
+  return 'sent';
+};
+
+// Every linked account, for its part of the day: in the morning the book's
+// next lines and the day's review (once each), in the evening the reminder.
+// `anyHour`: the once-a-day crons (Vercel), which do not wait for the local
+// hour and say which part they are; a server that checks every few minutes
+// (`part` 'auto') goes by each user's local hour.
+export const runDaily = async (deps: TgDeps, anyHour = false, part: 'auto' | 'morning' | 'evening' = 'auto'): Promise<number> => {
   let sent = 0;
   const now = deps.now();
   for (const key of await deps.keys('tg:user:')) {
@@ -250,8 +338,14 @@ export const runDaily = async (deps: TgDeps, anyHour = false): Promise<number> =
     try {
       const state: TgLink | null = await deps.get(key);
       if (!state || state.paused) continue;
-      if (!anyHour && localHour(now, state.tz) < TG_SEND_HOUR) continue;
-      if ((await startReview(deps, username, false)) === 'sent') sent++;
+      const hour = localHour(now, state.tz);
+      const morning = part === 'morning' || (part === 'auto' && (anyHour || hour >= TG_SEND_HOUR));
+      const evening = part === 'evening' || (part === 'auto' && !anyHour && hour >= TG_EVENING_HOUR);
+      if (morning) {
+        try { await sendReading(deps, username); } catch (e) { console.warn(`Telegram reading lines for ${username} failed:`, (e as Error).message); }
+        if ((await startReview(deps, username, false)) === 'sent') sent++;
+      }
+      if (evening && (await sendNudge(deps, username)) === 'sent') sent++;
     } catch (e) {
       console.warn(`Telegram review for ${username} failed:`, (e as Error).message);
     }
@@ -350,10 +444,11 @@ export const handleUpdate = async (deps: TgDeps, update: any): Promise<void> => 
   const state: TgLink | null = await deps.get(userKey(username));
   if (!state) return;
   if (name === '/review' || text === 'مرور') { await startReview(deps, username, true); return; }
+  if (name === '/read' || text === 'کتاب') { await sendReading(deps, username, true); return; }
   if (name === '/stop' || name === '/resume') {
     await deps.set(userKey(username), { ...state, paused: name === '/stop' });
     await deps.api('sendMessage', { chat_id: chatId, text: name === '/stop' ? 'مرور روزانه فرستاده نمی‌شود. /resume برای ادامه؛ /review هر وقت خواستی.' : 'مرور روزانه دوباره فرستاده می‌شود.' });
     return;
   }
-  await deps.api('sendMessage', { chat_id: chatId, text: '/review مرور واژه‌های امروز\n/stop مرور روزانه را نفرست\n/resume دوباره بفرست' });
+  await deps.api('sendMessage', { chat_id: chatId, text: '/read ادامهٔ کتابت\n/review مرور واژه‌های امروز\n/stop پیام‌های روزانه را نفرست\n/resume دوباره بفرست' });
 };

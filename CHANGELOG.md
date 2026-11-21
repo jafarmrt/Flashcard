@@ -9,6 +9,13 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.19.0] - 2026-11-21 - Back to the Book
+- **The book starts in Telegram:** The morning message now opens with your book: «کجا بودیم» (the last lines you read), the first lines of the next section and how few minutes it takes, with «ادامه در برنامه», which opens the app on that very page. The day's words follow as before. In the bot, /read sends it any time.
+- **An evening reminder, only when needed:** On a day when you finished no section, one short message comes around 7 in the evening with the first lines of the next section. On a day you read, nothing comes. Both can be turned off in Settings › Telegram; /stop stops every automatic message.
+- **One small thing first, on Today:** Today now starts with «فقط همین یک بخش»: where you were, the first lines of the next section, about how many minutes, and one button. The plan below it keeps the cards and the pronunciation.
+- **Read what you are after:** With nothing in progress, Today invites you to bring what you want to read yourself: a book, an article, or the subtitles of the next episode of the series you are watching.
+- **For the server:** A second daily cron (`/api/telegram?cron=evening`) sends the evening reminder on Vercel. The button uses the address the bot is called at; a server that polls Telegram can set `APP_URL`.
+
 ## [7.18.0] - 2026-11-21 - A Page That Is Mostly Text
 - **The text first:** The reader's top is now one slim bar: back, the title, read aloud, type size and «⋯». Sections, the reading voice, the section's hard words, grammar marks, the colour guide and editing the text are in «⋯». On a phone the first screen shows about nine lines of text; it showed three.
 - **Nothing under the paragraphs:** The two links under every paragraph are gone. A paragraph's translation and «از اینجا بخوان» are in a word's sheet; a translation you kept still shows under its paragraph.

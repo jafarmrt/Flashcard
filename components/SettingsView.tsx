@@ -588,7 +588,7 @@ const PronunciationSettings: React.FC<{ settings: Settings; onUpdateSettings: (s
     );
 };
 
-type TelegramStatus = { available: boolean; bot?: string; linked?: boolean; words?: number; paused?: boolean };
+type TelegramStatus = { available: boolean; bot?: string; linked?: boolean; words?: number; paused?: boolean; reading?: boolean; nudge?: boolean };
 
 // The daily review in Telegram: link the account once (a one-time link that
 // opens the bot), then pick how many words a day.
@@ -636,13 +636,17 @@ const TelegramSettings: React.FC = () => {
         setLink(r.link);
         window.open(r.link, '_blank', 'noopener');
     });
-    const update = (fields: { words?: number; paused?: boolean }) => run(async () => {
+    const update = (fields: { words?: number; paused?: boolean; reading?: boolean; nudge?: boolean }) => run(async () => {
         const r = await callProxy('telegram-update', { ...fields, tz });
         setStatus(s => ({ ...(s || { available: true }), ...r }));
     });
     const sendNow = () => run(async () => {
         const r = await callProxy('telegram-send', {});
         setNote(r.result === 'empty' ? 'امروز کارتی برای مرور نبود.' : 'فرستاده شد؛ تلگرام را باز کن.');
+    });
+    const sendReadingNow = () => run(async () => {
+        const r = await callProxy('telegram-send', { what: 'reading' });
+        setNote(r.result === 'none' ? 'کتاب نیمه‌خوانده‌ای نیست.' : 'فرستاده شد؛ تلگرام را باز کن.');
     });
     const disconnect = () => run(async () => {
         if (!confirm('اتصال تلگرام برداشته شود؟')) return;
@@ -683,8 +687,17 @@ const TelegramSettings: React.FC = () => {
                         <Segmented label="تعداد واژه در روز" value={status.words || 7} onChange={words => update({ words })}
                             options={[5, 6, 7, 8, 9, 10].map(n => ({ value: n, label: fa(n) }))} />
                     </Row>
-                    <Row title="فرستادن خودکار هر روز" hint="خاموش باشد، فقط وقتی در ربات /review بزنی می‌آید.">
+                    <Row title="فرستادن خودکار هر روز" hint="خاموش باشد، هیچ پیام خودکاری نمی‌آید؛ فقط وقتی در ربات /review یا /read بزنی.">
                         <input type="checkbox" checked={!status.paused} disabled={busy} onChange={e => update({ paused: !e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="فرستادن خودکار هر روز" />
+                    </Row>
+                    <Row title="چند خط از کتابت در پیام صبح" hint="پیام صبح با کتابت شروع می‌شود: «کجا بودیم» و چند خط اول بخش بعد، با دکمه‌ای که برنامه را روی همان صفحه باز می‌کند. در ربات /read هر وقت خواستی.">
+                        <div className="flex items-center gap-3">
+                            <button type="button" disabled={busy} onClick={sendReadingNow} className={button}>الان بفرست</button>
+                            <input type="checkbox" checked={status.reading !== false} disabled={busy || !!status.paused} onChange={e => update({ reading: e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="چند خط از کتاب در پیام صبح" />
+                        </div>
+                    </Row>
+                    <Row title="یادآور عصر" hint="فقط روزی که هیچ بخشی نخوانده‌ای، حدود ساعت ۷ عصر یک پیام کوتاه با چند خط اول بخش بعد می‌آید. روزی که خوانده‌ای، هیچ پیامی نمی‌آید.">
+                        <input type="checkbox" checked={status.nudge !== false} disabled={busy || !!status.paused} onChange={e => update({ nudge: e.target.checked })} className="w-5 h-5 accent-brand-500" aria-label="یادآور عصر" />
                     </Row>
                 </>
             )}

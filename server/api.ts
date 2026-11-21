@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { Buffer } from 'buffer';
 import { createHmac, randomUUID } from 'crypto';
-import { clampWords, cleanTz, handleUpdate, newLinkCode, runDaily, startReview, TG_DEFAULT_WORDS, type TgDeps, type TgLink, unlink, userKey } from './telegram.js';
+import { clampWords, cleanTz, handleUpdate, newLinkCode, runDaily, sendReading, startReview, TG_DEFAULT_WORDS, type TgDeps, type TgLink, unlink, userKey } from './telegram.js';
 import { freeEnrich, freeTranslate, lookupFrequencies } from './freeLookup.js';
 import { lookupChain, lookupSingle, mwKey } from './dictionaries.js';
 import { cleanDictionaryRequest, DEFAULT_DICTIONARY_ORDER, DICTIONARY_IDS, DictionaryRequest, dictionarySignature } from '../services/dictionaryCatalog.js';
@@ -322,7 +322,26 @@ async function telegramApi(method: string, body: Record<string, unknown>): Promi
   return reply.result;
 }
 
-export const telegramDeps = (): TgDeps => ({
+// The app's public address, for the bot's "continue in the app" button:
+// APP_URL when set, else the host this request came to (Telegram's webhook
+// and Vercel's cron both call the app's own address), else what Vercel or
+// the webhook setting say. '' when none is known (a polling server without
+// APP_URL): the message then goes without the button.
+const publicAppUrl = (host?: string): string => {
+  if (process.env.APP_URL) return process.env.APP_URL;
+  if (host && !/^(localhost|127\.|\[::1\])/.test(host)) return `https://${host}`;
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  try { return process.env.TELEGRAM_WEBHOOK_URL ? new URL(process.env.TELEGRAM_WEBHOOK_URL).origin : ''; } catch { return ''; }
+};
+const hostOf = (req: ProxyRequest): string => firstHeader(req.headers['x-forwarded-host']) || firstHeader(req.headers.host) || '';
+
+export const telegramDeps = (host?: string): TgDeps => ({
+  readChapter: async (username, chapterId) => {
+    if (!CHAPTER_ID.test(chapterId)) return null;
+    const stored = await getKey(chapterKey(username, chapterId));
+    return stored ? unpackChapter(stored).chunks : null;
+  },
+  appUrl: () => publicAppUrl(host),
   get: getKey,
   set: setKey,
   del: delKey,
@@ -379,11 +398,14 @@ export async function handleTelegram(req: ProxyRequest, res: ProxyResponse) {
     if (req.method === 'GET') {
       const cronSecret = process.env.CRON_SECRET;
       if (!cronSecret || firstHeader(req.headers.authorization) !== `Bearer ${cronSecret}`) return res.status(401).json({ error: 'Not allowed.' });
-      const sent = await runDaily(telegramDeps(), true);
-      return res.status(200).json({ sent });
+      // ?cron=evening: the reminder on a day without reading; any other
+      // value: the morning (the book's next lines, then the day's words).
+      const evening = req.query?.cron === 'evening';
+      const sent = await runDaily(telegramDeps(hostOf(req)), true, evening ? 'evening' : 'morning');
+      return res.status(200).json({ sent, part: evening ? 'evening' : 'morning' });
     }
     if (firstHeader(req.headers['x-telegram-bot-api-secret-token']) !== webhookSecret(secret)) return res.status(401).json({ error: 'Not allowed.' });
-    await handleUpdate(telegramDeps(), req.body);
+    await handleUpdate(telegramDeps(hostOf(req)), req.body);
     return res.status(200).json({ ok: true });
   } catch (e) {
     console.error('Telegram update failed:', e);
@@ -1007,7 +1029,7 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         const state: TgLink | null = await getKey(userKey(signedInUser!));
         let bot = '';
         try { bot = await telegramDeps().botName(); } catch (e) { console.warn('Telegram getMe failed:', (e as Error).message); }
-        return res.status(200).json({ available: true, bot, linked: !!state, words: state?.words ?? TG_DEFAULT_WORDS, paused: !!state?.paused });
+        return res.status(200).json({ available: true, bot, linked: !!state, words: state?.words ?? TG_DEFAULT_WORDS, paused: !!state?.paused, reading: state?.reading !== false, nudge: state?.nudge !== false });
       }
 
       case 'telegram-link': {
@@ -1025,14 +1047,19 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
           ...(payload.words !== undefined ? { words: clampWords(payload.words) } : {}),
           ...(typeof payload.paused === 'boolean' ? { paused: payload.paused } : {}),
           ...(payload.tz !== undefined ? { tz: cleanTz(payload.tz) } : {}),
+          ...(typeof payload.reading === 'boolean' ? { reading: payload.reading } : {}),
+          ...(typeof payload.nudge === 'boolean' ? { nudge: payload.nudge } : {}),
         };
         await setKey(userKey(signedInUser!), next);
-        return res.status(200).json({ linked: true, words: next.words, paused: !!next.paused });
+        return res.status(200).json({ linked: true, words: next.words, paused: !!next.paused, reading: next.reading !== false, nudge: next.nudge !== false });
       }
 
       case 'telegram-send': {
         if (!telegramToken()) return res.status(404).json({ error: 'Telegram is not set up on this server (TELEGRAM_BOT_TOKEN).' });
-        return res.status(200).json({ result: await startReview(telegramDeps(), signedInUser!, true) });
+        // "Send now": the book's next lines, then the day's words.
+        const deps = telegramDeps(hostOf(req));
+        if (payload.what === 'reading') return res.status(200).json({ result: await sendReading(deps, signedInUser!, true) });
+        return res.status(200).json({ result: await startReview(deps, signedInUser!, true) });
       }
 
       case 'telegram-unlink': {

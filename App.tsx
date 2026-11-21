@@ -124,7 +124,12 @@ const App: React.FC = () => {
     useEffect(() => {
         if (openedOnStart.current || appLoading || !isLoggedIn) return;
         openedOnStart.current = true;
-        if (!settings.openBookOnStart || view !== 'TODAY') return;
+        // The bot's "continue in the app" button opens the app with ?read=1:
+        // the same page, whatever the setting. The mark is taken off the
+        // address, so a reload later opens the app as usual.
+        const fromBot = new URLSearchParams(window.location.search).has('read');
+        if (fromBot) window.history.replaceState(null, '', window.location.pathname);
+        if ((!settings.openBookOnStart && !fromBot) || view !== 'TODAY') return;
         const reading = currentReading(sources, chapters);
         if (reading?.next) handleOpenChunk(reading.next.chapter, reading.next.chunk);
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -159,6 +164,7 @@ const App: React.FC = () => {
                     heldBack={queue.heldBack}
                     knownWords={knownWords}
                     onMoreNew={() => startQuickReview('auto', 10, undefined, undefined, true)}
+                    loadText={loadChapterText}
                     onStartReview={mode => startQuickReview(mode)}
                     onOpenSetup={() => openStudySetup()}
                     onNavigate={handleNavigate}

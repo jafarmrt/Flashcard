@@ -126,7 +126,18 @@ exists; otherwise register). Stop it with
   (`startTelegramWorker`). `TELEGRAM_POLLING=true` makes a server poll
   instead of using the webhook (set on each link from the request's host).
 - Env: `TELEGRAM_BOT_TOKEN` (required), `CRON_SECRET`, optional
-  `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_URL`, `TELEGRAM_POLLING`.
+  `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_URL`, `TELEGRAM_POLLING`,
+  `APP_URL` (the app's address for the bot's button when the server polls).
+- Back to the book (7.19.0): services/readingInvite.ts (pure, shared with
+  Today) builds "where were we" + the next section's first lines;
+  `sendReading` opens the morning run with it (once a day, `readDay`, not
+  after reading), `sendNudge` is the evening reminder on a day without a
+  finished section (`nudgeDay`); `TgLink.reading` / `.nudge` turn them off;
+  /read asks for it. `runDaily(deps, anyHour, part)`: Vercel has two crons
+  (`?cron=1` morning, `?cron=evening` at `30 15 * * *` = 19:00 Tehran); a
+  VPS goes by local hour (`TG_SEND_HOUR` 8, `TG_EVENING_HOUR` 19). The
+  button opens `<app>/?read=1`, which App.tsx turns into the page where
+  reading stopped. `TgDeps.readChapter` reads `chapter:<user>:<id>`.
 - Telegram is blocked from this machine: only the fakes and
   tests/telegramApi.test.ts (mocked fetch) have run it here. The user uses
   the bot live on Vercel and says it works (2026-11-21).
@@ -154,6 +165,12 @@ Do not bring these back without the user asking.
   in a state the next mount does not reset (ChunkReaderView `alive`).
 
 ## What is done (latest first)
+
+- 7.19.0 (the user's trouble is coming back to reading): the book's next
+  lines in the Telegram morning message and an evening reminder (see
+  Telegram above); Today starts with «فقط همین یک بخش» (TodayView hero from
+  `readingInvite`; the plan below drops its read step); an empty library
+  invites to bring one's own book, article or subtitles.
 
 - 7.18.0 (after trying the app at phone size): the reader's top is one slim
   bar with a «⋯» panel (ChunkReaderView `menuOpen`: sections, voice, hard
@@ -246,7 +263,9 @@ vault, and moving the sync loop out of hooks/useAppLogic.ts.
 
 1. Ask how 7.11–7.17 feel in daily use: the daily cap (15), the «خودکار»
    review, a tap without AI, listening, subtitles.
-2. Telegram works live. Only if the user asks: a choice of hour for the
+2. Telegram works live; the 7.19.0 messages (book lines, evening reminder,
+   the `?read=1` button) have only run against fakes: ask how they arrive.
+   Only if the user asks: a choice of hour for the
    daily message (needs an hourly cron, which Vercel Hobby does not allow,
    or an outside cron service).
 3. Pronunciation has not yet been tried with a real voice and a real Gemini /

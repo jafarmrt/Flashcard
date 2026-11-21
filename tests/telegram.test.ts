@@ -28,6 +28,7 @@ const setup = (cards: any[]) => {
   } as SyncChanges);
   const data: { store: StoreData } = { store };
   const sent: { method: string; body: any }[] = [];
+  const texts = new Map<string, string[]>(); // chapter id -> its sections
   let now = NOW;
   const deps: TgDeps = {
     get: async k => (kv.has(k) ? JSON.parse(JSON.stringify(kv.get(k))) : null),
@@ -44,8 +45,10 @@ const setup = (cards: any[]) => {
     api: async (method, body) => { sent.push({ method, body }); return {}; },
     botName: async () => 'LinguaTestBot',
     now: () => now,
+    readChapter: async (_u, id) => texts.get(id) || null,
+    appUrl: () => 'https://lingua.example',
   };
-  return { kv, data, sent, deps, setNow: (d: Date) => { now = d; } };
+  return { kv, data, sent, deps, texts, setNow: (d: Date) => { now = d; } };
 };
 
 const lastMessage = (env: ReturnType<typeof setup>) => env.sent.filter(s => s.method === 'sendMessage').at(-1)!.body.text as string;
@@ -153,4 +156,95 @@ test('an expired or unknown code does not link', async () => {
   await handleUpdate(env.deps, { message: { chat: { id: 5 }, text: `/start ${code}` } });
   assert.equal(env.kv.get(userKey('ann')), undefined);
   assert.match(env.sent.at(-1)!.body.text, /معتبر نیست/);
+});
+
+// --- Back to the book ---
+
+const SECTIONS = [
+  'The keeper lit the lamp. He had lived alone for eleven years. The wind rattled the windows all night.',
+  'One morning a small boat appeared on the horizon. The keeper watched it through his telescope. Nobody was expected until the end of the month.',
+  'The stranger was a young surveyor.',
+];
+// A book of one chapter with three sections, the first one read.
+const withBook = (env: ReturnType<typeof setup>, readToday = false) => {
+  applyChanges(env.data.store, {
+    sources: [{ id: 's1', title: 'The Lighthouse', kind: 'book', deckId: 'd', updatedAt: '2026-10-26T10:00:00Z', ...(readToday ? { reading: { '2026-10-27': { ms: 120000, words: 300, sections: 1 } } } : {}) }],
+    chapters: [{ id: 'ch1', sourceId: 's1', title: 'The Lighthouse', order: 1, chunkCount: 3, wordCount: 60, completed: [0], updatedAt: '2026-10-26T10:00:00Z' }],
+  } as SyncChanges);
+  env.texts.set('ch1', SECTIONS);
+};
+const messages = (env: ReturnType<typeof setup>) => env.sent.filter(s => s.method === 'sendMessage').map(s => s.body);
+
+test('the morning opens with the book: where we were, the next lines, a button to the page; then the words', async () => {
+  const env = setup([card('c1', 'reluctant')]);
+  await link(env);
+  withBook(env);
+  env.sent.length = 0;
+  assert.equal(await runDaily(env.deps, true, 'morning'), 1);
+  const [book, intro] = messages(env);
+  assert.match(book.text, /The Lighthouse/);
+  assert.match(book.text, /بخش ۲ از ۳/);
+  assert.match(book.text, /کجا بودیم:<\/i> .*The wind rattled the windows all night\./);
+  assert.match(book.text, /ادامه:<\/b> One morning a small boat appeared on the horizon\./);
+  assert.equal(book.reply_markup.inline_keyboard[0][0].url, 'https://lingua.example/?read=1');
+  assert.match(intro.text, /مرور امروز/);
+  // Once a day.
+  env.sent.length = 0;
+  await runDaily(env.deps, true, 'morning');
+  assert.equal(messages(env).length, 0);
+});
+
+test('the evening reminder comes only on a day without reading, once, and can be turned off', async () => {
+  const env = setup([]);
+  await link(env);
+  withBook(env);
+  env.sent.length = 0;
+  assert.equal(await runDaily(env.deps, true, 'evening'), 1);
+  assert.match(lastMessage(env), /امروز هنوز کتاب نخوانده‌ای/);
+  assert.match(lastMessage(env), /One morning a small boat appeared/);
+  assert.equal(await runDaily(env.deps, true, 'evening'), 0, 'once a day');
+
+  const read = setup([]);
+  await link(read);
+  withBook(read, true);
+  read.sent.length = 0;
+  assert.equal(await runDaily(read.deps, true, 'evening'), 0, 'a section was read today');
+  assert.equal(await runDaily(read.deps, true, 'morning'), 0, 'and the morning lines are not sent after reading either');
+
+  const off = setup([]);
+  await link(off);
+  withBook(off);
+  const state: TgLink = await off.deps.get(userKey('ann'));
+  await off.deps.set(userKey('ann'), { ...state, nudge: false, reading: false });
+  off.sent.length = 0;
+  await runDaily(off.deps, true, 'evening');
+  await runDaily(off.deps, true, 'morning');
+  assert.equal(messages(off).length, 0);
+});
+
+test('a server that checks every few minutes sends each part at its local hour; /read asks for the book any time', async () => {
+  const env = setup([]);
+  await link(env);
+  withBook(env);
+  env.sent.length = 0;
+  env.setNow(new Date('2026-10-27T03:00:00Z')); // 06:30 in Tehran
+  await runDaily(env.deps);
+  assert.equal(messages(env).length, 0);
+  env.setNow(new Date('2026-10-27T05:00:00Z')); // 08:30
+  await runDaily(env.deps);
+  assert.equal(messages(env).length, 1, 'the book in the morning');
+  env.setNow(new Date('2026-10-27T16:00:00Z')); // 19:30
+  await runDaily(env.deps);
+  assert.equal(messages(env).length, 2, 'the reminder in the evening');
+  await handleUpdate(env.deps, { message: { chat: { id: 42 }, text: '/read' } });
+  assert.match(lastMessage(env), /ادامه:/);
+});
+
+test('with no book in progress, nothing about reading is sent', async () => {
+  const env = setup([]);
+  await link(env);
+  env.sent.length = 0;
+  await runDaily(env.deps, true, 'morning');
+  await runDaily(env.deps, true, 'evening');
+  assert.equal(messages(env).length, 0);
 });

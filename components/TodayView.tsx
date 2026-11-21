@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo } from 'react';
-import { Chapter, Flashcard, KnownWord, Source, SpeechAttempt, StudyLog, UserProfile } from '../types';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Chapter, ChapterText, Flashcard, KnownWord, Source, SpeechAttempt, StudyLog, UserProfile } from '../types';
 import { dueSchedules, liveAttempts } from '../services/speechPractice';
 import { minutesLeft, todayPlan, type PlanStep } from '../services/todayPlan';
 import { lastDays, readingByDay } from '../services/readingTime';
@@ -8,6 +8,7 @@ import { stageCounts, STAGE_NAMES, MasteryStage } from '../services/masteryServi
 import { dayString, weekStrip } from '../services/calendar';
 import { currentReading } from '../services/library';
 import { weekSummary } from '../services/weekSummary';
+import { nextReading, readingInvite, readOn, type ReadingInvite } from '../services/readingInvite';
 import { backupDue, daysSinceBackup } from '../services/backup';
 import { fa, Icon, Kbd, STAGE_COLORS } from './common/ui';
 
@@ -24,6 +25,7 @@ interface TodayViewProps {
   heldBack?: number; // new cards left for the next days by the daily cap
   knownWords?: KnownWord[];
   onMoreNew?: () => void; // start ten of the new cards kept for later
+  loadText?: (chapterId: string) => Promise<ChapterText>; // for the first lines of the next section
   newDueCount: number;
   onStartReview: (mode: StudyMode) => void;
   onOpenSetup: () => void;
@@ -85,7 +87,7 @@ const TodayPlan: React.FC<{ steps: PlanStep[]; reading: Reading; onRead: () => v
 };
 
 export const TodayView: React.FC<TodayViewProps> = ({
-  userProfile, username, cards, studyLogs, sources, chapters, dueCount, newDueCount, heldBack = 0, knownWords = NO_KNOWN, onMoreNew, onStartReview, onOpenSetup, onNavigate, onOpenChunk, speechAttempts = [],
+  userProfile, username, cards, studyLogs, sources, chapters, dueCount, newDueCount, heldBack = 0, knownWords = NO_KNOWN, onMoreNew, loadText, onStartReview, onOpenSetup, onNavigate, onOpenChunk, speechAttempts = [],
 }) => {
 
   const today = dayString(new Date());
@@ -115,13 +117,38 @@ export const TodayView: React.FC<TodayViewProps> = ({
       hasBook: !!reading,
       // A section finished today is in its book's reading log. (The chapter's
       // date was used, which an edit of the text also moved to today.)
-      readToday: sources.some(s => !s.isDeleted && (s.reading?.[today]?.sections || 0) > 0),
+      readToday: readOn(sources, today),
       dueCards: dueCount,
       reviewedToday: studyLogs.filter(l => l.date === today).length,
       dueSpeech: dueSchedules(live, today).filter(x => !!x.cardId && cardIds.has(x.cardId)).length,
       speechToday: live.filter(a => dayString(new Date(a.createdAt)) === today).length,
     });
   }, [cards, speechAttempts, reading, sources, today, dueCount, studyLogs]);
+
+  // The first lines of the next section, and the last ones read: starting is
+  // the hard part, so the start is on the page already (services/readingInvite).
+  const readToday = readOn(sources, today);
+  const nextId = reading?.next ? `${reading.next.chapter.id}:${reading.next.chunk}` : '';
+  const [invite, setInvite] = useState<ReadingInvite | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setInvite(null);
+    const next = nextReading(sources, chapters);
+    if (!next || !loadText) return;
+    (async () => {
+      try {
+        const text = await loadText(next.chapter.id);
+        const previous = next.previous ? await loadText(next.previous.id).catch(() => null) : null;
+        if (alive) setInvite(readingInvite(next, text.chunks, previous?.chunks));
+      } catch {
+        // The text is not on this device and the server did not answer: the
+        // card shows without the lines.
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nextId]);
+  const restOfPlan = reading?.next ? plan.filter(step => step.id !== 'read') : plan;
 
   // Space starts the review from anywhere on this screen (not while typing).
   useEffect(() => {
@@ -147,8 +174,33 @@ export const TodayView: React.FC<TodayViewProps> = ({
         </div>
       </header>
 
-      {plan.length > 0 && (
-        <TodayPlan steps={plan} reading={reading} onRead={() => reading?.next && onOpenChunk(reading.next.chapter, reading.next.chunk)}
+      {reading?.next && (
+        <section aria-label="ادامهٔ کتاب" className="bg-white dark:bg-slate-800 rounded-3xl p-5 md:p-6 flex flex-col gap-3">
+          <div className="flex justify-between items-baseline gap-3">
+            <h2 className="font-extrabold text-lg text-ink dark:text-white">{readToday ? 'امروز خواندی. یک بخش دیگر؟' : 'فقط همین یک بخش'}</h2>
+            {invite && <span className="text-sm text-ink-muted dark:text-slate-400 whitespace-nowrap">حدود {fa(invite.minutes)} دقیقه</span>}
+          </div>
+          <p className="text-sm text-ink-muted dark:text-slate-400">
+            <bdi dir="auto" className="font-en font-bold text-ink dark:text-white">{reading.source.title}</bdi>
+            {reading.list.length > 1 && reading.next.chapter.title !== reading.source.title && <> · <bdi dir="auto" className="font-en">{reading.next.chapter.title}</bdi></>}
+            {' · '}بخش {fa(reading.next.chunk + 1)} از {fa(reading.next.chapter.chunkCount)}
+          </p>
+          {invite?.before && (
+            <div className="flex flex-col gap-0.5 text-sm text-ink-muted dark:text-slate-400">
+              <span>کجا بودیم:</span>
+              <p dir="ltr" lang="en" className="font-read italic leading-relaxed text-left">{invite.before}</p>
+            </div>
+          )}
+          {invite && <p dir="ltr" lang="en" className="font-read text-[17px] leading-8 text-slate-800 dark:text-slate-100 text-left">{invite.teaser}</p>}
+          <button type="button" onClick={() => onOpenChunk(reading.next!.chapter, reading.next!.chunk)}
+            className="self-start inline-flex items-center gap-2 min-h-[52px] px-7 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-lg">
+            <Icon.Book size={20} />{invite ? 'ادامه بده' : 'بخوان'}
+          </button>
+        </section>
+      )}
+
+      {restOfPlan.length > 0 && (
+        <TodayPlan steps={restOfPlan} reading={reading} onRead={() => reading?.next && onOpenChunk(reading.next.chapter, reading.next.chunk)}
           onReview={() => onStartReview('auto')} onSpeak={() => onNavigate('PRACTICE')} />
       )}
 
@@ -261,31 +313,18 @@ export const TodayView: React.FC<TodayViewProps> = ({
           )}
         </Card>
 
-        <Card className="md:col-span-2 order-first">
-          <div className="flex justify-between items-center">
-            <h2 className="font-bold text-ink dark:text-white">{reading ? 'ادامهٔ خواندن' : 'خواندن کتاب و مقاله'}</h2>
-            <button type="button" onClick={() => onNavigate('TEXTS')} className="text-sm text-brand-500 dark:text-brand-300 hover:underline">کتابخانه</button>
-          </div>
-          {reading && reading.next ? (
-            <button type="button" onClick={() => onOpenChunk(reading.next!.chapter, reading.next!.chunk)} className="flex items-center gap-4 text-right rounded-2xl p-1 -m-1 hover:bg-slate-50 dark:hover:bg-slate-700/50">
-              <span className="w-12 h-12 rounded-2xl bg-brand-100 text-brand-500 dark:bg-brand-900/60 dark:text-brand-200 flex items-center justify-center shrink-0"><Icon.Book /></span>
-              <span className="flex-1 min-w-0 flex flex-col gap-2">
-                <span dir="auto" className="font-en font-bold text-ink dark:text-white truncate">{reading.source.title}</span>
-                <span className="h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden" role="progressbar" aria-valuenow={reading.progress.percent} aria-valuemin={0} aria-valuemax={100}>
-                  <span className="block h-full rounded-full bg-emerald-600" style={{ width: `${reading.progress.percent}%` }} />
-                </span>
-                {reading.list.length > 1 && <span dir="auto" className="text-xs text-ink-muted dark:text-slate-400 truncate">{reading.next.chapter.title}</span>}
-              </span>
-              <span className="text-sm text-ink-muted dark:text-slate-400 whitespace-nowrap">
-                {reading.list.length > 1 ? `${fa(reading.progress.percent)}٪ خوانده شده` : `بخش ${fa(reading.next.chunk + 1)} از ${fa(reading.next.chapter.chunkCount)}`}
-              </span>
-            </button>
-          ) : (
-            <p className="text-sm text-ink-muted dark:text-slate-400">
-              یک کتاب (EPUB)، مقاله یا متن انگلیسی به کتابخانه اضافه کن تا به بخش‌های ۳۰۰ واژه‌ای تقسیم شود و واژه‌های سختش کارت شوند.
+        {!reading?.next && (
+          <Card className="md:col-span-2 order-first">
+            <div className="flex justify-between items-center">
+              <h2 className="font-bold text-ink dark:text-white">چیزی برای خواندن بیاور</h2>
+              <button type="button" onClick={() => onNavigate('TEXTS')} className="text-sm text-brand-500 dark:text-brand-300 hover:underline">کتابخانه</button>
+            </div>
+            <p className="text-sm text-ink-muted dark:text-slate-400 leading-relaxed">
+              چیزی که خودت دنبالش هستی بهتر از هر کتاب «مفیدی» خوانده می‌شود: کتابی که دوست داری (EPUB)، مقاله‌ای که می‌خواستی بخوانی (لینک)، یا زیرنویس قسمت بعدِ سریالی که می‌بینی (SRT): اول بخوانش، بعد ببین.
             </p>
-          )}
-        </Card>
+            <button type="button" onClick={() => onNavigate('TEXTS')} className="self-start min-h-[44px] px-5 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-bold">افزودن به کتابخانه</button>
+          </Card>
+        )}
       </div>
     </div>
   );
