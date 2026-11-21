@@ -1,13 +1,16 @@
 import React, { useEffect, useMemo } from 'react';
-import { Chapter, Flashcard, Source, SpeechAttempt, StudyLog, UserProfile } from '../types';
+import { Chapter, Flashcard, KnownWord, Source, SpeechAttempt, StudyLog, UserProfile } from '../types';
 import { dueSchedules, liveAttempts } from '../services/speechPractice';
 import { minutesLeft, todayPlan, type PlanStep } from '../services/todayPlan';
-import { lastDays, minutes, readingByDay } from '../services/readingTime';
+import { lastDays, readingByDay } from '../services/readingTime';
 import type { StudyMode, View } from '../hooks/useAppLogic';
 import { stageCounts, STAGE_NAMES, MasteryStage } from '../services/masteryService';
-import { dayString, weekStrip, weeklyReviewCounts } from '../services/calendar';
+import { dayString, weekStrip } from '../services/calendar';
 import { currentReading } from '../services/library';
+import { weekSummary } from '../services/weekSummary';
 import { fa, Icon, Kbd, STAGE_COLORS } from './common/ui';
+
+const NO_KNOWN: KnownWord[] = [];
 
 interface TodayViewProps {
   userProfile: UserProfile | null;
@@ -18,6 +21,7 @@ interface TodayViewProps {
   chapters: Chapter[];
   dueCount: number; // the day's queue (services/dailyQueue)
   heldBack?: number; // new cards left for the next days by the daily cap
+  knownWords?: KnownWord[];
   newDueCount: number;
   onStartReview: (mode: StudyMode) => void;
   onOpenSetup: () => void;
@@ -79,13 +83,12 @@ const TodayPlan: React.FC<{ steps: PlanStep[]; reading: Reading; onRead: () => v
 };
 
 export const TodayView: React.FC<TodayViewProps> = ({
-  userProfile, username, cards, studyLogs, sources, chapters, dueCount, newDueCount, heldBack = 0, onStartReview, onOpenSetup, onNavigate, onOpenChunk, speechAttempts = [],
+  userProfile, username, cards, studyLogs, sources, chapters, dueCount, newDueCount, heldBack = 0, knownWords = NO_KNOWN, onStartReview, onOpenSetup, onNavigate, onOpenChunk, speechAttempts = [],
 }) => {
 
   const today = dayString(new Date());
   const studied = useMemo(() => new Set(studyLogs.map(l => l.date)), [studyLogs]);
   const week = weekStrip(studied, today);
-  const weekly = weeklyReviewCounts(studyLogs.map(l => l.date), today);
   const stages = stageCounts(cards);
   // This week's reading, from every book's log.
   const readWeek = useMemo(() => {
@@ -95,6 +98,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
     return { ...sum, days: new Set(week.filter(d => (days.get(d)?.sections || 0) > 0)) };
   }, [sources]);
   const totalWords = cards.length;
+  const summary = useMemo(() => weekSummary({ sources, cards, logs: studyLogs, knownWords }), [sources, cards, studyLogs, knownWords]);
 
   // The book or article read most recently and not finished yet.
   const reading = useMemo(() => currentReading(sources, chapters), [sources, chapters]);
@@ -196,8 +200,23 @@ export const TodayView: React.FC<TodayViewProps> = ({
               </div>
             ))}
           </div>
+          <ul className="grid grid-cols-3 gap-2 text-center">
+            <li className="rounded-xl bg-slate-50 dark:bg-slate-800/60 py-2">
+              <p className="text-lg font-extrabold text-ink dark:text-white">{fa(summary.minutes)}</p>
+              <p className="text-[11px] text-ink-muted dark:text-slate-400">دقیقه خواندن{summary.previousMinutes > 0 ? ` (هفتهٔ پیش ${fa(summary.previousMinutes)})` : ''}</p>
+            </li>
+            <li className="rounded-xl bg-slate-50 dark:bg-slate-800/60 py-2">
+              <p className="text-lg font-extrabold text-ink dark:text-white">{fa(summary.newCards)}</p>
+              <p className="text-[11px] text-ink-muted dark:text-slate-400">کارت تازه{summary.knownAdded > 0 ? ` · ${fa(summary.knownAdded)} «بلدم»` : ''}</p>
+            </li>
+            <li className="rounded-xl bg-slate-50 dark:bg-slate-800/60 py-2">
+              <p className="text-lg font-extrabold text-ink dark:text-white">{summary.remembered === null ? fa(summary.reviews) : `${fa(summary.remembered)}٪`}</p>
+              <p className="text-[11px] text-ink-muted dark:text-slate-400">{summary.remembered === null ? 'مرور' : `از ${fa(summary.reviews)} مرور یادت ماند`}</p>
+            </li>
+          </ul>
           <p className="text-sm text-ink-muted dark:text-slate-400">
-              در ۷ روز گذشته: {fa(minutes(readWeek.ms))} دقیقه خواندن، {fa(readWeek.sections)} بخش، {fa(weekly.thisWeek)} مرور. روزهای پررنگ روزهایی است که کتاب خواندی.
+              در ۷ روز گذشته {fa(summary.sections)} بخش و {fa(summary.words)} واژه خواندی. روزهای پررنگ روزهایی است که کتاب خواندی.
+              {summary.advice && <span className="block mt-1 text-ink dark:text-slate-200">{summary.advice}</span>}
           </p>
         </Card>
 

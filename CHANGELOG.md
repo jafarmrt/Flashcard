@@ -9,6 +9,9 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.17.0] - 2026-11-21 - Your Week in a Glance
+- **This week, on Today:** The «این هفته» box now shows the minutes you read (next to the week before), the new cards and «بلدم» words of the week, and how many of your reviews you remembered, with one line of advice that comes from those numbers (too many new cards for what is remembered, a week with reviews but no reading, reading more or less than last week). No points and no streak: only what happened.
+
 ## [7.16.0] - 2026-11-21 - Subtitles as Something to Read
 - **Films and series:** «فایل کتاب» now also takes subtitles (.srt, .vtt). Numbers, times, tags and sound notes ([music], ♪) are left out, the lines join into paragraphs, and a pause in the film starts a new one. Read the episode with everything the reader offers, make cards of its words, then watch it.
 

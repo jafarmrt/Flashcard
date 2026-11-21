@@ -157,6 +157,7 @@ const App: React.FC = () => {
                     dueCount={queue.cards.length}
                     newDueCount={queue.fresh}
                     heldBack={queue.heldBack}
+                    knownWords={knownWords}
                     onStartReview={mode => startQuickReview(mode)}
                     onOpenSetup={() => openStudySetup()}
                     onNavigate={handleNavigate}
