@@ -763,13 +763,34 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   // Opened at a word (a note's place, a word from the list): it is brought
   // into view; opened at the end (going back from the next section), the
   // last lines are.
+  // Any other way, the section opens at its top: going on from the end of
+  // the section before left the page scrolled to the bottom, so the next
+  // section opened on its last lines.
   useEffect(() => {
     const at = entry.kind === 'word' ? entry.word : entry.kind === 'end' ? section.words.length - 1 : -1;
-    if (at < 0) return;
+    if (at < 0) { window.scrollTo({ top: 0 }); return; }
     const timer = setTimeout(() => document.querySelector(`[data-wi="${at}"]`)?.scrollIntoView({ block: 'center' }), 50);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Below xl a tapped word's sheet covers the lower half of the screen: a
+  // word under it is moved up into the part of the page still in view, so it
+  // is read in its line while its meaning shows. (Also a word opened from
+  // the list, which may be anywhere in the section.)
+  useEffect(() => {
+    const at = detail?.at ?? detail?.ranges?.[0]?.[0];
+    if (at === undefined) return;
+    const timer = setTimeout(() => {
+      const el = document.querySelector(`[data-wi="${at}"]`);
+      if (!el) return;
+      const box = el.getBoundingClientRect();
+      const covered = window.innerWidth < 1280 ? window.innerHeight * 0.45 : window.innerHeight - 80;
+      if (box.top < 70 || box.bottom > covered) window.scrollBy({ top: box.top - window.innerHeight * 0.22, behavior: 'smooth' });
+    }, 60);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedUid, detail?.at]);
 
   // Keeps the piece being read in view.
   useEffect(() => {
@@ -1217,7 +1238,17 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
                 <span className="flex-1" />
                 <button type="button" onClick={() => setSelectedUid(null)} aria-label="بستن" className={`${wide} w-9 h-9 -m-1.5 rounded-xl flex items-center justify-center text-ink-muted hover:bg-slate-100 dark:hover:bg-slate-700`}><Icon.Close size={18} /></button>
               </div>
-              <p className="text-ink dark:text-white">{shown.back}</p>
+              {/* The meaning and «+ کارت» come first: on a phone the sheet is
+                  half the screen, and a button at its end was out of sight. */}
+              <div className="flex items-start gap-3">
+                <p className="flex-1 min-w-0 text-ink dark:text-white">{shown.back}</p>
+                {!shown.alreadyInDeck && (
+                  <button type="button" onClick={() => toggle(shown.uid)} aria-pressed={!!shown.selected}
+                    className={`shrink-0 min-h-[40px] px-3 rounded-xl text-sm font-bold ${shown.selected ? 'bg-brand-500 text-white' : 'border-2 border-brand-200 dark:border-brand-700 text-brand-800 dark:text-brand-100'}`}>
+                    {shown.selected ? '✓ برای کارت' : '+ کارت'}
+                  </button>
+                )}
+              </div>
               {ownCard && (
                 <p className="self-start text-xs rounded-full px-2.5 py-0.5 bg-brand-50 text-brand-800 dark:bg-brand-900/40 dark:text-brand-200">
                   از کارت خودت · {STAGE_NAMES[masteryStage(ownCard)]}
@@ -1276,7 +1307,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
                 <p className="text-sm rounded-xl bg-rose-50 dark:bg-rose-900/30 text-rose-900 dark:text-rose-100 px-3 py-2">تمرین: {shown.practicePrompt}</p>
               )}
               {shown.exampleSentenceTarget?.[0] && shown.kind === 'grammar' && <p dir="ltr" className="text-sm text-ink dark:text-slate-200">{shown.exampleSentenceTarget[0]}</p>}
-              {shown.sourceSentence && <p dir="ltr" className="font-read text-sm italic text-ink-muted dark:text-slate-400 border-t border-slate-100 dark:border-slate-700 pt-2">“{shown.sourceSentence}”</p>}
+              {shown.sourceSentence && <p dir="ltr" className="hidden xl:block font-read text-sm italic text-ink-muted dark:text-slate-400 border-t border-slate-100 dark:border-slate-700 pt-2">“{shown.sourceSentence}”</p>}
               {detailPlace && shown.kind !== 'grammar' && (
                 <div className="flex flex-wrap gap-1.5">
                   <button type="button" disabled={detailPlace.from === 0} onClick={() => pick({ ...detailPlace, from: detailPlace.from - 1 })}
@@ -1294,12 +1325,6 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
                 </div>
               )}
               <div className="flex flex-wrap items-center gap-3 pt-1">
-                {!shown.alreadyInDeck && (
-                  <button type="button" onClick={() => toggle(shown.uid)} aria-pressed={!!shown.selected}
-                    className={`min-h-[40px] px-3 rounded-xl text-sm font-bold ${shown.selected ? 'bg-brand-500 text-white' : 'border-2 border-brand-200 dark:border-brand-700 text-brand-800 dark:text-brand-100'}`}>
-                    {shown.selected ? '✓ برای کارت' : '+ کارت'}
-                  </button>
-                )}
                 {shown.kind !== 'grammar' && (detailKnownAs
                   ? <button type="button" onClick={() => onUnmarkKnown(detailKnownAs)} className="min-h-[40px] px-3 rounded-xl text-sm border border-slate-200 dark:border-slate-600">در فهرست «بلدم» است؛ بردار</button>
                   : !shown.alreadyInDeck && <button type="button" onClick={() => markKnown(shown)} className="min-h-[40px] px-3 rounded-xl text-sm font-bold bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-900/40 dark:text-emerald-200">بلدم</button>)}

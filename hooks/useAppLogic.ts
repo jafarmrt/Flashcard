@@ -415,17 +415,21 @@ export const useAppLogic = () => {
   // it was opened.
   const PREFETCH_PER_SYNC = 8;
   const prefetching = useRef(false);
+  // Chapters whose text the server did not give (never uploaded): not asked
+  // again until the app is opened again, or every sync would ask for them.
+  const noTextOnServer = useRef(new Set<string>());
   const prefetchChapterTexts = async () => {
     if (prefetching.current || (typeof navigator !== 'undefined' && navigator.onLine === false)) return;
     prefetching.current = true;
     try {
       const have = new Set((await db.chapterTexts.toCollection().primaryKeys()) as string[]);
-      const missing = (await db.chapters.toArray()).filter(c => !c.isDeleted && !have.has(c.id)).slice(0, PREFETCH_PER_SYNC);
+      const missing = (await db.chapters.toArray()).filter(c => !c.isDeleted && !have.has(c.id) && !noTextOnServer.current.has(c.id)).slice(0, PREFETCH_PER_SYNC);
       for (const chapter of missing) {
         try {
           await loadChapterText(chapter.id);
         } catch (error) {
           if (isNetworkError(error)) break;
+          noTextOnServer.current.add(chapter.id);
           console.warn(`Fetching the text of chapter ${chapter.id} failed:`, error);
         }
       }

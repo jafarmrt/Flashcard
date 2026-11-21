@@ -22,6 +22,7 @@ interface TodayViewProps {
   dueCount: number; // the day's queue (services/dailyQueue)
   heldBack?: number; // new cards left for the next days by the daily cap
   knownWords?: KnownWord[];
+  onMoreNew?: () => void; // start ten of the new cards kept for later
   newDueCount: number;
   onStartReview: (mode: StudyMode) => void;
   onOpenSetup: () => void;
@@ -83,7 +84,7 @@ const TodayPlan: React.FC<{ steps: PlanStep[]; reading: Reading; onRead: () => v
 };
 
 export const TodayView: React.FC<TodayViewProps> = ({
-  userProfile, username, cards, studyLogs, sources, chapters, dueCount, newDueCount, heldBack = 0, knownWords = NO_KNOWN, onStartReview, onOpenSetup, onNavigate, onOpenChunk, speechAttempts = [],
+  userProfile, username, cards, studyLogs, sources, chapters, dueCount, newDueCount, heldBack = 0, knownWords = NO_KNOWN, onMoreNew, onStartReview, onOpenSetup, onNavigate, onOpenChunk, speechAttempts = [],
 }) => {
 
   const today = dayString(new Date());
@@ -158,6 +159,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
               <p className="mt-1 text-sm md:text-base text-white/90">
                 {dueCount > 0
                   ? `${fa(dueCount)} کارت برای امروز${newDueCount > 0 ? `، ${fa(newDueCount)} تا تازه` : ''}.${heldBack > 0 ? ` ${fa(heldBack)} کارت تازهٔ دیگر برای روزهای بعد کنار ماند (سقف روزانه در تنظیمات).` : ''}`
+                  : heldBack > 0 ? `کارت‌های امروز تمام شد. ${fa(heldBack)} کارت تازه برای روزهای بعد مانده؛ اگر وقت داری چندتایش را همین حالا شروع کن.`
                   : 'کارت موعدداری نمانده. با مرور آزاد یا یک بخش تازه از متن ادامه بده.'}
               </p>
             </div>
@@ -168,6 +170,13 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   شروع مرور
                   <span className="rounded-full bg-brand-100 text-brand-700 text-sm px-2.5 py-0.5">{fa(dueCount)} کارت</span>
                   <Kbd className="text-ink-muted">Space</Kbd>
+                </button>
+              ) : heldBack > 0 && onMoreNew ? (
+                // Today's allowance is used up and nothing else is due: the
+                // cards kept for later can still be started by choice.
+                <button type="button" onClick={onMoreNew}
+                  className="inline-flex items-center min-h-[52px] px-6 rounded-2xl bg-white text-ink font-extrabold text-lg hover:bg-brand-50">
+                  {fa(Math.min(10, heldBack))} کارت تازهٔ دیگر
                 </button>
               ) : (
                 <button type="button" onClick={onOpenSetup} disabled={totalWords === 0}

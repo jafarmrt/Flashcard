@@ -9,6 +9,13 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.17.1] - 2026-11-21 - Fixes From Reading on a Phone
+- **The next section opens at its top:** After «پایان این بخش و بعدی» the next section opened scrolled to its last lines; it now opens at the first line.
+- **«+ کارت» in sight:** On a phone the word's sheet is half the screen and «+ کارت» sat at its end, out of sight. It is now beside the meaning, at the top. The sheet is shorter too: the sentence, which is on the page itself, is no longer repeated in it on small screens.
+- **The word stays in view:** A tapped word that would be covered by its sheet moves up into the part of the page still in view, so you read it in its line while the meaning shows.
+- **More new cards when you want them:** When today's cards are done and new cards were kept for later by the daily cap, Today offers «۱۰ کارت تازهٔ دیگر».
+- **Fewer requests:** A chapter whose text the server does not have is no longer asked for again after every sync.
+
 ## [7.17.0] - 2026-11-21 - Your Week in a Glance
 - **This week, on Today:** The «این هفته» box now shows the minutes you read (next to the week before), the new cards and «بلدم» words of the week, and how many of your reviews you remembered, with one line of advice that comes from those numbers (too many new cards for what is remembered, a week with reviews but no reading, reading more or less than last week). No points and no streak: only what happened.
 

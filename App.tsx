@@ -158,6 +158,7 @@ const App: React.FC = () => {
                     newDueCount={queue.fresh}
                     heldBack={queue.heldBack}
                     knownWords={knownWords}
+                    onMoreNew={() => startQuickReview('auto', 10, undefined, undefined, true)}
                     onStartReview={mode => startQuickReview(mode)}
                     onOpenSetup={() => openStudySetup()}
                     onNavigate={handleNavigate}
