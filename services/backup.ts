@@ -120,6 +120,19 @@ export const planRestore = (backup: Backup, local: BackupData, newId: () => stri
   }
   const to = (table: SyncTable, id: string | undefined) => (id ? remap[table].get(id) || id : id);
 
+  // A row that is here and stays, but points to a row that came back under a
+  // new id (the place a deleted card was met in a book), is pointed to the
+  // new id; it would point to the deleted row otherwise.
+  const moved = (r: Row) => [['deckId', 'decks'], ['cardId', 'cards'], ['sourceId', 'sources'], ['chapterId', 'chapters']]
+    .some(([field, table]) => typeof r[field] === 'string' && remap[table as SyncTable].has(r[field]));
+  for (const table of SYNC_TABLES) {
+    const inFile = new Map((backup.data[table] as Row[]).map(r => [r.id, r]));
+    for (const mine of local[table] as Row[]) {
+      if (mine.isDeleted || !inFile.has(mine.id) || taken[table].some(r => r.id === mine.id)) continue;
+      if (moved(mine)) taken[table].push({ ...mine });
+    }
+  }
+
   // References follow the rows that moved.
   const rows = {} as Record<SyncTable, Row[]>;
   for (const table of SYNC_TABLES) {

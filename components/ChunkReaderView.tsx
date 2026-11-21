@@ -85,6 +85,9 @@ type Item = ExtractedWordCard & {
   senseLoading?: boolean;
   inContext?: boolean; // the meaning was chosen for this sentence
   tapped?: string; // the words as tapped or picked, to ask the AI about later
+  // A word with a card: the AI's meaning in this sentence, when asked, to
+  // see whether it is the card's meaning or another one.
+  here?: { loading?: boolean; sense?: Sense | null };
 };
 
 
@@ -95,7 +98,7 @@ const ltr = (text: string) => `\u2068${text}\u2069`;
 let uids = 0;
 const newUid = () => `i${++uids}`;
 const toItem = (card: ExtractedWordCard, extra: Partial<Item> = {}): Item => ({ ...card, uid: newUid(), key: normalizeTerm(card.front), forms: [], ...extra });
-const cardOf = ({ uid: _u, key: _k, forms: _f, ranges: _r, at: _a, loading: _l, senseLoading: _s, inContext: _c, tapped: _t, ...card }: Item): ExtractedWordCard => card;
+const cardOf = ({ uid: _u, key: _k, forms: _f, ranges: _r, at: _a, loading: _l, senseLoading: _s, inContext: _c, tapped: _t, here: _h, ...card }: Item): ExtractedWordCard => card;
 
 // How well the user knows a word that has a card: new (seed, sprout),
 // learning (sapling, tree) or learned (rooted).
@@ -443,6 +446,30 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     }
   };
 
+  // A word with a card, met here perhaps in another sense ("bank" of a
+  // river, when the card says the bank for money): the AI's meaning here,
+  // next to the card's. A different one can become a card of its own.
+  const askOwnInContext = async (it: Item) => {
+    if (it.here?.loading || it.here?.sense || !canAskAi()) return;
+    const term = it.tapped || it.front;
+    setItems(prev => prev.map(p => (p.uid === it.uid ? { ...p, here: { loading: true } } : p)));
+    const s = await senseOf(term, it.sourceSentence || '');
+    if (!alive.current) return;
+    setItems(prev => prev.map(p => (p.uid === it.uid ? { ...p, here: { sense: s } } : p)));
+    if (!s) showToast('معنی این جمله پیدا نشد.');
+  };
+  const cardForOtherSense = (it: Item, s: Sense) => {
+    const item = toItem({
+      front: s.front && tokensOf(s.front).length <= MAX_PHRASE_WORDS ? s.front : it.front,
+      back: s.back, definition: s.definition ? [s.definition] : [], partOfSpeech: s.partOfSpeech, pronunciation: s.pronunciation,
+      kind: s.kind || it.kind, notes: s.notes, level: s.level, origin: s.origin || aiOrigin(aiOptions),
+      sourceSentence: it.sourceSentence, selected: true, alreadyInDeck: false, newSense: true,
+    }, { forms: it.forms, ranges: it.ranges, at: it.at, inContext: true, tapped: it.tapped });
+    setItems(prev => [...prev, item]);
+    setSelectedUid(item.uid);
+    setSaved(false);
+  };
+
   // «معنی در این جمله»: the AI's meaning for an item the dictionary gave.
   const askInContext = async (it: Item) => {
     if (it.senseLoading || it.inContext || !canAskAi()) return;
@@ -503,7 +530,14 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     const existing = itemAt[i];
     if (existing) {
       setSelectedUid(existing);
-      setItems(prev => prev.map(p => (p.uid === existing && p.at === undefined ? { ...p, at: i } : p)));
+      // A word with a card, tapped in another sentence: its sheet speaks of
+      // this sentence («معنی در این جمله» asks about it), not the first one.
+      const here = sentenceOf(section, i)?.text;
+      setItems(prev => prev.map(p => {
+        if (p.uid !== existing) return p;
+        if (p.alreadyInDeck && here && here !== p.sourceSentence) return { ...p, at: i, sourceSentence: here, here: undefined };
+        return p.at === undefined ? { ...p, at: i } : p;
+      }));
       return;
     }
     lookUp(i, i);
@@ -1188,6 +1222,23 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
                 <p className="self-start text-xs rounded-full px-2.5 py-0.5 bg-brand-50 text-brand-800 dark:bg-brand-900/40 dark:text-brand-200">
                   از کارت خودت · {STAGE_NAMES[masteryStage(ownCard)]}
                 </p>
+              )}
+              {ownCard && detail && detail.kind !== 'grammar' && useAi && !aiOff.current && (
+                detail.here?.sense ? (
+                  <div className="rounded-xl bg-slate-50 dark:bg-slate-700/50 px-3 py-2 flex flex-col gap-1.5 text-sm">
+                    <span><span className="text-ink-muted dark:text-slate-400">در این جمله: </span><span className="font-bold text-ink dark:text-white">{detail.here.sense.back}</span></span>
+                    {detail.here.sense.notes && <span className="text-xs text-ink-muted dark:text-slate-400">{detail.here.sense.notes}</span>}
+                    <button type="button" onClick={() => cardForOtherSense(detail, detail.here!.sense!)}
+                      className="self-start min-h-[36px] px-3 rounded-xl text-sm font-bold border-2 border-brand-200 dark:border-brand-700 text-brand-800 dark:text-brand-100">
+                      معنی دیگری است؛ کارت تازه برای این معنی
+                    </button>
+                  </div>
+                ) : (
+                  <button type="button" onClick={() => askOwnInContext(detail)} disabled={!!detail.here?.loading} title="آیا این‌جا همان معنی کارتت را دارد؟"
+                    className="self-start min-h-[36px] px-3 rounded-xl text-sm font-bold bg-brand-50 text-brand-800 hover:bg-brand-100 dark:bg-brand-900/40 dark:text-brand-100 disabled:opacity-60">
+                    {detail.here?.loading ? 'در حال پرسیدن…' : 'معنی در این جمله'}
+                  </button>
+                )
               )}
               {(shown.inContext || shown.senseLoading) && (
                 <p className={`self-start text-xs rounded-full px-2.5 py-0.5 ${shown.inContext ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200' : 'bg-slate-100 text-ink-muted dark:bg-slate-700 dark:text-slate-300'}`}>

@@ -9,6 +9,15 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.14.0] - 2026-11-21 - Learning From the Book
+- **Another meaning, another card:** Tapping a word that has a card, «معنی در این جمله» shows what it means in this sentence next to your card's meaning. When it is another meaning («bank» of a river, when your card says the bank for money), «کارت تازه برای این معنی» makes a card of its own for it, instead of adding the sentence to the old card.
+- **A quiz from your books:** The quiz now asks the words you are learning in the sentences of your books, with a gap and four of your own words to choose from. It needs no AI and starts at once; the AI writes questions only when your books give too few. A wrong answer counts as forgetting the word, so it comes back in your review.
+- **Which book next:** In the library, books not started yet are sorted by how well they fit you, with a word on each («مناسب»، «کمی سخت»…) and «پیشنهاد برای خواندن بعدی» on the best one (for books whose words were measured on their page).
+- **Memory and the week ahead:** «پیشرفت» shows how many reviews of learned cards you remembered in the last 30 days (the schedule aims at 90%), how many words you know (grown cards and the «بلدم» list) and are learning, and the reviews of the next seven days.
+- **Books offline:** After each sync, the texts of chapters never opened on this device are fetched in the background, so a book added on another device can be read here without a connection.
+- **Restoring a backup:** A card that comes back under a new id keeps the places in books where it was met.
+- **Fix:** The quiz's "due" cards are the same as the review's.
+
 ## [7.13.0] - 2026-11-21 - Your Data, Safe
 - **Full backup:** Settings › Data › «ذخیرهٔ پشتیبان» saves the whole account in one file: cards with their review schedule, the review history, books with the text of every chapter, notes, kept translations and the «بلدم» list. «برگرداندن» puts back what is missing or was deleted, and never deletes or replaces anything; a deleted card comes back with its history. (The CSV is still there, for the cards' text only.)
 - **No edit lost in a long sync:** When many rows changed at once (deleting hundreds of cards, a device offline for weeks), a sync goes in rounds; a change still waiting for its round could be overwritten by another device's older copy and never sent. Now the two are merged by the server's own rule, so deleted cards no longer come back.

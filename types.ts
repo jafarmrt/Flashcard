@@ -295,6 +295,7 @@ export interface ExtractedWordCard extends CardExtras {
   notInDictionary?: boolean;
   selected?: boolean;
   alreadyInDeck?: boolean; // A card with the same term already exists
+  newSense?: boolean; // a card of its own for another meaning of a term that has a card
 }
 
 export interface StudySessionOptions {

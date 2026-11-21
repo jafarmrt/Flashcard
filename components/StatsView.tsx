@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { dueForecast, retention, vocabulary } from '../services/memoryStats';
+import { dayString } from '../services/calendar';
 import { db } from '../services/localDBService';
 import type { Chapter, Flashcard, KnownWord, Occurrence, Source, StudyLog } from '../types';
 import { stageCounts, STAGE_NAMES, type MasteryStage } from '../services/masteryService';
@@ -136,6 +138,12 @@ export const StatsView: React.FC<StatsViewProps> = ({ cards, sources, occurrence
     };
   }).filter(r => r.progress.done > 0 || r.minutes > 0).sort((a, b) => b.source.updatedAt.localeCompare(a.source.updatedAt)), [sources, chapters, userLevel, known]);
 
+  const memory = useMemo(() => ({
+    retention: retention(logs || [], dayString(new Date())),
+    forecast: dueForecast(live),
+    vocab: vocabulary(live, knownWords),
+  }), [logs, live, knownWords]);
+
   if (!logs) return <p dir="rtl" className="font-fa text-center py-20 text-ink-muted">در حال آماده‌سازی آمار…</p>;
 
   const month = days.reduce((n, d) => n + d.count, 0);
@@ -176,6 +184,31 @@ export const StatsView: React.FC<StatsViewProps> = ({ cards, sources, occurrence
           </ul>
         </Panel>
       )}
+
+      <Panel title="حافظه و مرورهای پیش رو" hint={memory.retention.percent === null
+        ? 'وقتی چند کارت را دوباره مرور کنی، این‌جا می‌بینی چند درصدشان را به یاد آوردی.'
+        : `در ۳۰ روز اخیر ${fa(memory.retention.remembered)} از ${fa(memory.retention.reviews)} مرورِ کارت‌های آموخته را به یاد آوردی. برنامهٔ مرور ۹۰٪ را هدف گرفته؛ خیلی پایین‌تر یعنی کارت تازه زیاد است یا کارت‌ها سخت‌اند.`}>
+        <div className="grid grid-cols-3 gap-3 text-center">
+          <div><p className={`text-2xl font-extrabold ${memory.retention.percent === null ? 'text-ink-muted' : memory.retention.percent >= 85 ? 'text-emerald-700 dark:text-emerald-300' : memory.retention.percent >= 75 ? 'text-amber-700 dark:text-amber-300' : 'text-red-700 dark:text-red-300'}`}>{memory.retention.percent === null ? '—' : `${fa(memory.retention.percent)}٪`}</p><p className="text-xs text-ink-muted dark:text-slate-400">به یاد ماند</p></div>
+          <div><p className="text-2xl font-extrabold text-ink dark:text-white">{fa(memory.vocab.known)}</p><p className="text-xs text-ink-muted dark:text-slate-400" title={`${fa(memory.vocab.fromCards)} از کارت‌ها، ${fa(memory.vocab.fromList)} از فهرست «بلدم»`}>واژه که بلدی</p></div>
+          <div><p className="text-2xl font-extrabold text-ink dark:text-white">{fa(memory.vocab.learning)}</p><p className="text-xs text-ink-muted dark:text-slate-400">در حال یادگیری</p></div>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <p className="text-sm font-bold text-ink dark:text-white">مرورهای ۷ روز آینده</p>
+          <div className="grid grid-cols-7 gap-1.5 items-end h-24" role="img" aria-label="تعداد کارت‌های موعددار در ۷ روز آینده">
+            {memory.forecast.map((d, i) => {
+              const max = Math.max(1, ...memory.forecast.map(x => x.count));
+              return (
+                <div key={d.day} className="h-full flex flex-col justify-end items-center gap-1" title={`${d.day}: ${fa(d.count)} کارت`}>
+                  <span className="text-[11px] text-ink-muted dark:text-slate-400">{fa(d.count)}</span>
+                  <div className={`w-full rounded-t ${i === 0 ? 'bg-brand-500' : 'bg-brand-200 dark:bg-brand-800'}`} style={{ height: `${d.count ? Math.max(6, (d.count / max) * 70) : 3}%` }} />
+                  <span className="text-[11px] text-ink-muted dark:text-slate-400">{i === 0 ? 'امروز' : new Date(`${d.day}T12:00:00`).toLocaleDateString('fa-IR', { weekday: 'short' })}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </Panel>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Tile value={fa(month)} label="مرور در ۳۰ روز" />

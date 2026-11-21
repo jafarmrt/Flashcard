@@ -22,7 +22,7 @@ import {
   SyncState, SYNC_TABLES, SyncTable, usableSyncState, withLocalAudio,
   takeIncoming,
 } from '../services/syncClient';
-import { isDue, isNewCard } from '../services/srsService';
+import { answerCard, isDue, isNewCard } from '../services/srsService';
 import { applyIncomingSettings, toSyncedSettings } from '../services/settingsSync';
 import { applyServerKeys, localKeyEntries, markKeyChanges, withoutKeys } from '../services/keySync';
 import { convertToCSV, downloadCSV, parseCollocations, parseCSV, parseKind, splitList } from '../services/csvService';
@@ -409,6 +409,31 @@ export const useAppLogic = () => {
     }
   };
 
+  // After a sync, the texts of chapters this device has never opened are
+  // fetched in the background, a few at a time, so a book added on another
+  // device can be read here offline. A chapter's text was fetched only when
+  // it was opened.
+  const PREFETCH_PER_SYNC = 8;
+  const prefetching = useRef(false);
+  const prefetchChapterTexts = async () => {
+    if (prefetching.current || (typeof navigator !== 'undefined' && navigator.onLine === false)) return;
+    prefetching.current = true;
+    try {
+      const have = new Set((await db.chapterTexts.toCollection().primaryKeys()) as string[]);
+      const missing = (await db.chapters.toArray()).filter(c => !c.isDeleted && !have.has(c.id)).slice(0, PREFETCH_PER_SYNC);
+      for (const chapter of missing) {
+        try {
+          await loadChapterText(chapter.id);
+        } catch (error) {
+          if (isNetworkError(error)) break;
+          console.warn(`Fetching the text of chapter ${chapter.id} failed:`, error);
+        }
+      }
+    } finally {
+      prefetching.current = false;
+    }
+  };
+
   // Send what changed here since the last sync and take what changed on
   // other devices, in rounds: each request carries a few hundred rows at
   // most, and a first download comes in pages. Rows edited here while a
@@ -490,6 +515,7 @@ export const useAppLogic = () => {
         lastSyncAt.current = Date.now();
         lastSyncError.current = '';
         setSyncStatus('synced');
+        void prefetchChapterTexts();
     } catch (error) {
         console.error('Sync failed:', error);
         const offline = isNetworkError(error);
@@ -1354,7 +1380,8 @@ export const useAppLogic = () => {
     const places: Occurrence[] = [];
     let attached = 0;
     for (const item of items) {
-      const existing = findCard(item.front, index);
+      // Another meaning of a word that has a card gets a card of its own.
+      const existing = item.newSense ? undefined : findCard(item.front, index);
       const card = existing || cardFromExtracted(item, deck.id, now);
       if (existing) attached++;
       else {
@@ -1382,6 +1409,27 @@ export const useAppLogic = () => {
       showToast(parts.join('؛ ') || 'چیزی برای ذخیره نبود.');
     }
     return { cardIds: places.map(p => p.cardId), added: newCards.length, attached };
+  };
+
+  // A wrong answer in the quiz: the card was not remembered, as "Again" in
+  // a review (a right answer leaves the schedule alone: choosing among four
+  // is easier than recalling).
+  const handleQuizMiss = async (cardId: string) => {
+    try {
+      const next = await db.transaction('rw', db.flashcards, db.studyHistory, async () => {
+        const card = await db.flashcards.get(cardId);
+        if (!card || card.isDeleted) return null;
+        const updated = { ...answerCard(card, 'AGAIN'), updatedAt: new Date().toISOString() };
+        await db.flashcards.put(updated);
+        await db.studyHistory.add({ uid: crypto.randomUUID(), cardId, date: dayString(new Date()), rating: 'AGAIN' });
+        return updated;
+      });
+      if (!next) return;
+      setFlashcards(prev => prev.map(c => (c.id === next.id ? next : c)));
+      setStudyLogs(await db.studyHistory.toArray());
+    } catch (error) {
+      console.warn('Saving a quiz answer failed:', error);
+    }
   };
 
   // The "I know it" list: one tap and the term is never suggested again, in
@@ -1881,7 +1929,7 @@ export const useAppLogic = () => {
       overlayEdit, openCardEditor, closeCardEditor, saveOverlayEdit,
       // Handlers
       setView, showToast, handleAddCard, handleEditCard, handleDeleteCard, handleDeleteCards, handleSaveCard,
-      handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV, handleExportBackup, handleRestoreBackup,
+      handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV, handleExportBackup, handleRestoreBackup, handleQuizMiss,
       handleResetApp, handleDeleteAllCards, handleStudyDeck, handleStartStudySession, setIsStudySetupModalOpen,
       handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
       updateSettings, handleCompleteCardDetails,

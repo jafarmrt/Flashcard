@@ -60,7 +60,10 @@ test('restoring keeps rows that are here; rows deleted here come back under new 
   assert.equal(card.deckId, 'd1', 'a reference to a row that stayed is kept');
   const chapter = plan.rows.chapters[0];
   assert.notEqual(chapter.id, 'ch1');
-  assert.equal(plan.rows.occurrences.length, 0, 'the occurrence row itself is still here');
+  assert.equal(plan.rows.occurrences.length, 1, 'the place the card was met, still here, now points to it');
+  assert.equal(plan.rows.occurrences[0].id, 'o1');
+  assert.equal(plan.rows.occurrences[0].cardId, card.id);
+  assert.equal(plan.rows.occurrences[0].chapterId, chapter.id);
   assert.equal(plan.studyHistory[0].cardId, card.id, 'the history follows the card');
   assert.notEqual(plan.studyHistory[0].uid, 'u1');
   assert.equal(plan.chapterTexts[0].id, chapter.id, 'the text follows its chapter');

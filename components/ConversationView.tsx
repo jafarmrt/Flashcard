@@ -1,4 +1,7 @@
 import React, { useMemo, useState } from 'react';
+import { bookQuiz } from '../services/bookQuiz';
+import { isDue } from '../services/srsService';
+import type { CardPlace } from '../services/library';
 import { Flashcard, Occurrence, SpeechAttempt } from '../types';
 import { AiRequestOptions, generateInstructionalQuiz, InstructionalQuizQuestion } from '../services/geminiService';
 import {
@@ -15,6 +18,8 @@ interface PracticeViewProps {
   audioOptions?: AiRequestOptions;
   speechAttempts: SpeechAttempt[];
   onSaveSpeechAttempt: (attempt: SpeechAttempt) => Promise<void> | void;
+  places?: Map<string, CardPlace[]>; // where each card was met in books
+  onQuizMiss?: (cardId: string) => void; // a wrong answer counts as forgetting the card
 }
 
 // What one pronunciation session did for each item, and when it comes back.
@@ -65,13 +70,13 @@ const StepBar: React.FC<{ label: string; value: number; total: number }> = ({ la
     </div>
 );
 
-export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences = [], aiOptions, audioOptions, speechAttempts, onSaveSpeechAttempt }) => {
+export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences = [], aiOptions, audioOptions, speechAttempts, onSaveSpeechAttempt, places, onQuizMiss }) => {
   type PracticeState = 'idle' | 'generating' | 'active' | 'finished';
   type Mode = 'quiz' | 'speaking' | 'progress';
 
   const [mode, setMode] = useState<Mode>('quiz');
   const [practiceState, setPracticeState] = useState<PracticeState>('idle');
-  const [questions, setQuestions] = useState<InstructionalQuizQuestion[]>([]);
+  const [questions, setQuestions] = useState<(InstructionalQuizQuestion & { cardId?: string })[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [score, setScore] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
@@ -119,13 +124,24 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
     setErrorMessage(null);
     if (mode === 'speaking') { startSpeaking(); return; }
 
+    // First, a quiz from the books' own sentences (no AI, every question a
+    // card of yours); the AI writes one only when the books give too few.
+    const fromBooks = places ? bookQuiz(cards, places, 5) : [];
+    if (fromBooks.length >= 3) {
+      setQuestions(fromBooks);
+      setCurrentIndex(0);
+      setScore(0);
+      setSelectedAnswer(null);
+      setIsAnswered(false);
+      setPracticeState('active');
+      return;
+    }
+
     // Tier 1: Prefer new cards
     let practicePool = cards.filter(c => c.repetition === 0);
     // Tier 2: Add due cards
     if (practicePool.length < MIN_CARDS) {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const dueCards = cards.filter(c => new Date(c.dueDate) <= today && !practicePool.find(pc => pc.id === c.id));
+      const dueCards = cards.filter(c => isDue(c) && !practicePool.find(pc => pc.id === c.id));
       practicePool = [...practicePool, ...dueCards];
     }
     // Tier 3: All cards
@@ -147,7 +163,8 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
     const generatedQuestions = await generateInstructionalQuiz(practiceCards, aiOptions);
 
     if (generatedQuestions && generatedQuestions.length > 0) {
-        setQuestions(generatedQuestions);
+        const byFront = new Map(practiceCards.map(c => [c.front.trim().toLowerCase(), c.id]));
+        setQuestions(generatedQuestions.map(q => ({ ...q, cardId: byFront.get(q.correctAnswer.trim().toLowerCase()) })));
         setCurrentIndex(0);
         setScore(0);
         setSelectedAnswer(null);
@@ -163,8 +180,11 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
     if (isAnswered) return;
     setSelectedAnswer(answer);
     setIsAnswered(true);
-    if (answer === questions[currentIndex].correctAnswer) {
+    const q = questions[currentIndex];
+    if (answer === q.correctAnswer) {
       setScore(prev => prev + 1);
+    } else if (q.cardId) {
+      onQuizMiss?.(q.cardId);
     }
   };
 
