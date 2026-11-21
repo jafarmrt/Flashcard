@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import type { SourceKind } from '../types';
 import { callProxy } from '../services/apiService';
-import { importArticle, importEpub, ImportedSource, importPlainText, splitLongChapters, splitTextIntoChapters, suggestedChapter } from '../services/importers';
+import { importArticle, importEpub, ImportedSource, importPlainText, importSubtitles, isSubtitleText, splitLongChapters, splitTextIntoChapters, suggestedChapter } from '../services/importers';
 import { splitIntoChunks, wordCount } from '../services/textChunker';
 import { fa, Icon } from './common/ui';
 
@@ -73,6 +73,8 @@ export const AddSourceForm: React.FC<AddSourceFormProps> = ({ onAdd, onCancel })
       if (/\.epub$/i.test(file.name) || file.type === 'application/epub+zip') {
         const book = await importEpub(await file.arrayBuffer());
         show({ ...book, title: book.title || file.name.replace(/\.epub$/i, '') });
+      } else if (/\.(srt|vtt)$/i.test(file.name) || isSubtitleText((await file.text()).slice(0, 2000))) {
+        show(importSubtitles(await file.text(), file.name.replace(/\.[^.]+$/, '').replace(/[._]+/g, ' ').trim()));
       } else {
         const content = await file.text();
         const imported = importPlainText(content, '', 'text');
@@ -194,9 +196,9 @@ export const AddSourceForm: React.FC<AddSourceFormProps> = ({ onAdd, onCancel })
         <div className="flex flex-col gap-3">
           <label className={`flex flex-col items-center justify-center gap-2 min-h-[140px] rounded-2xl border-2 border-dashed border-slate-300 dark:border-slate-600 cursor-pointer hover:border-brand-400 hover:bg-brand-50/40 dark:hover:bg-slate-700/40 ${busy ? 'opacity-60 pointer-events-none' : ''}`}>
             <Icon.Upload />
-            <span className="font-bold text-ink dark:text-white">{busy ? 'در حال خواندن فایل…' : 'انتخاب فایل EPUB یا TXT'}</span>
-            <span className="text-xs text-ink-muted dark:text-slate-400">فصل‌ها از فهرست خود کتاب خوانده می‌شوند؛ فایل از این دستگاه بیرون نمی‌رود.</span>
-            <input type="file" accept=".epub,.txt,application/epub+zip,text/plain" className="sr-only" onChange={e => { pickFile(e.target.files?.[0]); e.target.value = ''; }} />
+            <span className="font-bold text-ink dark:text-white">{busy ? 'در حال خواندن فایل…' : 'انتخاب فایل EPUB، TXT یا زیرنویس (SRT، VTT)'}</span>
+            <span className="text-xs text-ink-muted dark:text-slate-400">فصل‌ها از فهرست خود کتاب خوانده می‌شوند؛ زیرنویس فیلم یا سریال بی زمان‌ها و شماره‌ها مثل یک متن خوانده می‌شود. فایل از این دستگاه بیرون نمی‌رود.</span>
+            <input type="file" accept=".epub,.txt,.srt,.vtt,application/epub+zip,text/plain,text/vtt" className="sr-only" onChange={e => { pickFile(e.target.files?.[0]); e.target.value = ''; }} />
           </label>
         </div>
       )}

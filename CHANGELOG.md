@@ -9,6 +9,9 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.16.0] - 2026-11-21 - Subtitles as Something to Read
+- **Films and series:** «فایل کتاب» now also takes subtitles (.srt, .vtt). Numbers, times, tags and sound notes ([music], ♪) are left out, the lines join into paragraphs, and a pause in the film starts a new one. Read the episode with everything the reader offers, make cards of its words, then watch it.
+
 ## [7.15.0] - 2026-11-21 - Listening to Your Books
 - **Listening practice:** «تمرین مکالمه و آزمون» › «شنیدن» reads aloud a sentence from your books that holds a word you are learning, and you write what you hear. The sentence then comes back word by word (right, nearly, another word, left out), with a score and whether you caught your word. Hear it again, slower, or ask for a hint (your word and its meaning). The ear learns the same words the eye met in the book.
 
