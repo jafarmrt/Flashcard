@@ -165,10 +165,7 @@ export interface Settings {
     aiSpeechModel?: string; // the Gemini text-to-speech model
     orSpeechModel?: string; // the OpenRouter speech model
     orSpeechVoice?: string; // its voice; unset: the model's own default
-    readerMode?: 'book' | 'scroll'; // book pages (default) or one scrolling page per section
-    readerPaper?: 'cream' | 'white' | 'night'; // the page colour in book mode; unset: cream, night in the dark theme
-    readerFontSize?: number; // step 0-4 in book mode (READER_FONT_SIZES)
-    readerJustify?: boolean; // justified text in book mode (default on)
+    readerFontSize?: number; // the reader's type size, step 0-4 (READER_FONT_SIZES)
     pronunciationService?: 'auto' | 'gemini' | 'openrouter'; // who listens in pronunciation practice; auto: Gemini, then OpenRouter
     orAudioModel?: string; // the OpenRouter model that listens (one that takes audio)
     readerGloss?: 'off' | 'new' | 'learning'; // a word's meaning from its card above it in the text, while the card is new (default) or still being learned

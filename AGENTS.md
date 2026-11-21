@@ -200,6 +200,33 @@ combo, streak, badges, confetti, chests, the "garden"); they were deleted in
 7.9.0. Phases A–D of the 7.7.0 plan (calm mode, reading flow, learning from
 the book, progress that means something) shipped in 7.8.0.
 
+## Plan from the review of 2026-11-21 (the user asked for all of it, in order)
+
+Each phase is one version, tested and committed before the next.
+
+1. 7.11.0 Reading without friction: a card filled again from AI is saved
+   in one step; book pages removed (scrolling only, with type size and the
+   chapter's end page moved there); a tapped word asks only the dictionary
+   (AI on «معنی در این جمله», or by itself when the dictionary has nothing),
+   is not ticked for a card, and AI senses are kept on the device.
+2. 7.12.0 Lighter, more active review: new cards per day (setting), due
+   cards first; the mode follows the card's stage (flip while new, cloze /
+   Persian→English after); "Again" comes back ≥10 cards later; a new card
+   is asked once more in the session; typed meanings accept any part of the
+   back; cram reviews leave the schedule alone; "read today" fix.
+3. 7.13.0 Safe data: full JSON backup and restore; sync keeps local rows not
+   yet sent; server caps `updatedAt` at its own clock; auto-fix asks AI less
+   and stops on a wrong key; login attempts counted in the store; sign-out
+   ends the session everywhere; dead code removed.
+4. 7.14.0 Learning from the book: a new meaning of a word with a card can
+   become a new card; the quiz uses book sentences and a wrong answer counts
+   as "Again"; books labelled by how much of them is known; progress shows
+   vocabulary size, real retention and the next 7 days' reviews; chapter
+   texts fetched in the background for offline reading.
+5. Development ideas, after the fixes: 7.15.0 listening (a book sentence
+   heard, then written or understood); 7.16.0 subtitles (.srt) as a source;
+   7.17.0 a weekly summary on Today.
+
 ## Open ideas (ask the user before starting)
 
 1. Try the Telegram bot live (set the env on Vercel, link, wait for a day's

@@ -9,6 +9,13 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.11.0] - 2026-11-21 - Reading Without Friction
+- **A tap is a quick look:** Tapping a word shows the dictionary's meaning at once and no longer asks the AI each time. «معنی در این جمله» under it asks the AI for the meaning in this very sentence; when the dictionary does not know the word, the AI is asked by itself. A structure's word («توضیح برای این جمله») works the same way.
+- **Meanings kept:** The AI's meaning of a word in a sentence is kept on this device for three months: tapping it again in that sentence shows it at once, with no new request.
+- **Cards only when you say so:** A looked-up word is no longer picked for a card. «+ کارت» in its sheet picks it; leaving the section asks only about the words you picked.
+- **One scrolling page:** Book pages are gone; every text reads as one scrolling page per section. The type size moved to the reader's header (A A). «پایان این بخش و بعدی» goes on to the next section, and the chapter's last section ends with what was on the book's end page: how much of the next chapter you know, a review of the chapter's words, and the next chapter. Notes in the list take you to their place on the page.
+- **Filling a card again in one step:** Editing a card, «گذاشتن و ذخیرهٔ کارت» puts the picked suggestions in the card and saves it; a second «ذخیره» is no longer needed. (A new card is only filled, as before.)
+
 ## [7.10.0] - 2026-10-31 - Delete the Cards You Choose
 - **Choose cards to delete:** On the cards page, «انتخاب» puts a box beside each card; tick the ones you want gone (or a whole page at once) and press «حذف». Only cards in the list as it is filtered now are deleted.
 - **Always asked first:** Deleting one card or many opens a window that names the cards and how many, with «انصراف» chosen by default; nothing is deleted until you press the red button. The trash button on each card, which used to delete at once, now asks too.

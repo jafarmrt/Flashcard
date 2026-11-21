@@ -361,9 +361,7 @@ const App: React.FC = () => {
     // English, left-to-right layout inside the same shell.
     const PERSIAN_VIEWS = ['TODAY', 'ME', 'TEXTS', 'READER', 'STUDY', 'SETTINGS', 'USAGE', 'DECKS', 'LIST', 'FORM', 'BULK_ADD', 'STATS', 'PROFILE', 'PRACTICE', 'AI_EXTRACT', 'CHANGELOG'];
     const isStudy = view === 'STUDY';
-    // Reading a book in pages fills the screen: no menus around the page.
-    const bookReading = view === 'READER' && settings.readerMode !== 'scroll';
-    const fullScreen = isStudy || bookReading;
+    const fullScreen = isStudy;
 
     return (
         <div dir="rtl" className="min-h-screen flex bg-[#F5F6FA] dark:bg-slate-950 font-fa">

@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { locateNote, newNote, notesAtWords, notesInOrder, notesMarkdown, notesOfSection, savedTranslation } from '../services/notes';
 import { readerSection } from '../services/readerText';
 import { cleanEditedText } from '../services/library';
-import { pageOfOffset, pageLayout } from '../components/reader/BookPages';
 
 const T = new Date('2026-10-16T10:00:00Z');
 const text = 'It was a cold day. She was reluctant to leave the house.\n\nNobody knew what had happened to the letters.';
@@ -58,14 +57,4 @@ test("a book's notes export as Markdown, in reading order, under chapter heading
 test('an edited section: one blank line between paragraphs, no stray spaces', () => {
   assert.equal(cleanEditedText('  First   line.\r\nstill first.  \r\n\r\n\r\n\r\n  Second.  \n\n   \n'), 'First line.\nstill first.\n\nSecond.');
   assert.equal(cleanEditedText('   \n\n  '), '', 'a section can be emptied');
-});
-
-test('pages: one page on a phone, two facing pages on a wide screen; a word a little before its column stays on its page', () => {
-  assert.deepEqual(pageLayout(390, 700), { width: 390, height: 700, spread: 1, roomWidth: 390 });
-  assert.equal(pageLayout(800, 700).width, 700, 'one page is no wider than a book page');
-  assert.equal(pageLayout(1300, 700).spread, 2);
-  assert.equal(pageOfOffset(0, 350), 0);
-  assert.equal(pageOfOffset(412, 350), 1, 'two pixels before the second page (the word\'s own margin)');
-  assert.equal(pageOfOffset(349, 350), 0);
-  assert.equal(pageOfOffset(828, 350), 2);
 });
