@@ -125,7 +125,8 @@ exists; otherwise register). Stop it with
 - Env: `TELEGRAM_BOT_TOKEN` (required), `CRON_SECRET`, optional
   `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_URL`, `TELEGRAM_POLLING`.
 - Telegram is blocked from this machine: only the fakes and
-  tests/telegramApi.test.ts (mocked fetch) have run it. Not yet tried live.
+  tests/telegramApi.test.ts (mocked fetch) have run it here. The user uses
+  the bot live on Vercel and says it works (2026-11-21).
 
 ## No game parts (7.9.0)
 
@@ -231,8 +232,8 @@ vault, and moving the sync loop out of hooks/useAppLogic.ts.
 
 1. Ask how 7.11–7.17 feel in daily use: the daily cap (15), the «خودکار»
    review, a tap without AI, listening, subtitles.
-2. Try the Telegram bot live (set the env on Vercel, link, wait for a day's
-   message) and ask how it feels; maybe a choice of hour (needs an hourly
-   cron, which Vercel Hobby does not allow, or an outside cron service).
+2. Telegram works live. Only if the user asks: a choice of hour for the
+   daily message (needs an hourly cron, which Vercel Hobby does not allow,
+   or an outside cron service).
 3. Pronunciation has not yet been tried with a real voice and a real Gemini /
    OpenRouter key on the deployed site; ask the user how it went.
