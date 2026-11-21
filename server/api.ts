@@ -17,9 +17,9 @@ import { cleanSentKeys, mergeKeyEntries } from '../services/keySync.js';
 import { cleanOpenRouterName, cleanSpeechName, DEFAULT_OPENROUTER_SPEECH_MODEL, DEFAULT_SPEECH_MODEL, DEFAULT_SPEECH_VOICE, generateSpeech, listOpenRouterSpeechModels, MAX_SPEECH_CHARS, openRouterSpeech, SpeechError } from './speech.js';
 import {
   PUBLIC_ACTIONS, USERNAME_PATTERN, MIN_PASSWORD_LENGTH, registrationAllowed,
-  hashPassword, verifyPassword, getSessionSecret, createSessionToken, sessionUser,
+  hashPassword, verifyPassword, getSessionSecret, createSessionToken, sessionOf,
   sessionCookieHeader, clearSessionCookieHeader, loginLockMinutes, recordLoginFailure,
-  clearLoginFailures, isAllowedAudioUrl,
+  clearLoginFailures, isAllowedAudioUrl, accountLockMinutes, nextFailureRecord, FailureRecord,
 } from './auth.js';
 
 // The parts of Express's and Vercel's request/response objects the API uses.
@@ -104,6 +104,15 @@ function persistStore(store: Map<string, any>) {
 const getUserKey = (username: string) => `user:${username.toLowerCase()}`;
 const accountKeysKey = (username: string) => `keys:${username.toLowerCase()}`;
 const chapterKey = (username: string, chapterId: string) => `chapter:${username.toLowerCase()}:${chapterId}`;
+// Small records of their own, so checking them does not read the account.
+const sessionVersionKey = (username: string) => `session:${username.toLowerCase()}`;
+const loginFailKey = (username: string) => `login-fail:${username.toLowerCase()}`;
+const SESSION_CHECKED = new Set(['auth-session', 'sync', 'keys-sync', 'chapter-put', 'chapter-get',
+  'telegram-status', 'telegram-link', 'telegram-update', 'telegram-send', 'telegram-unlink']);
+const sessionVersion = async (username: string): Promise<number> => {
+  const v = Number(await getKey(sessionVersionKey(username)));
+  return Number.isSafeInteger(v) && v > 0 ? v : 0;
+};
 const CHAPTER_ID = /^[A-Za-z0-9_-]{1,100}$/;
 const MAX_CHAPTER_CHARS = 2_000_000; // under Vercel's 4.5 MB request limit
 
@@ -608,8 +617,17 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
     return res.status(500).json({ error: (e as Error).message });
   }
   const cookie = req.headers.cookie;
-  const signedInUser = sessionUser(Array.isArray(cookie) ? cookie.join('; ') : cookie, secret);
+  const session = sessionOf(Array.isArray(cookie) ? cookie.join('; ') : cookie, secret);
+  const signedInUser = session?.username ?? null;
   if (!PUBLIC_ACTIONS.has(action) && !signedInUser) {
+    return res.status(401).json({ error: 'Please sign in again.', code: 'AUTH_REQUIRED' });
+  }
+  // The account's data and keys open only for a session made after the last
+  // "sign out everywhere". (Checked for these actions only: one more read of
+  // the store on every AI or dictionary request would cost more than it saves.)
+  if (signedInUser && SESSION_CHECKED.has(action) && (await sessionVersion(signedInUser)) !== session!.version) {
+    res.setHeader('Set-Cookie', clearSessionCookieHeader(secure));
+    if (action === 'auth-session') return res.status(200).json({ username: null });
     return res.status(401).json({ error: 'Please sign in again.', code: 'AUTH_REQUIRED' });
   }
 
@@ -861,7 +879,8 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
           return res.status(400).json({ error: 'Username and password are required.' });
         }
         const ip = clientIp(req);
-        const lockedMinutes = loginLockMinutes(ip, username);
+        const failed = (await getKey(loginFailKey(username))) as FailureRecord | null;
+        const lockedMinutes = Math.max(loginLockMinutes(ip, username), accountLockMinutes(failed));
         if (lockedMinutes > 0) {
           return res.status(429).json({ error: `Too many failed attempts. Try again in ${lockedMinutes} minute(s).` });
         }
@@ -870,15 +889,17 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         const check = await verifyPassword(password, user?.password);
         if (!user || !check.ok) {
           recordLoginFailure(ip, username);
+          await setKey(loginFailKey(username), nextFailureRecord(failed));
           return res.status(401).json({ error: 'Invalid username or password.' });
         }
         clearLoginFailures(ip, username);
+        if (failed) await delKey(loginFailKey(username));
         if (check.needsRehash) {
           user.password = await hashPassword(password); // replace a legacy plain-text password
           await setUser(user);
         }
 
-        res.setHeader('Set-Cookie', sessionCookieHeader(createSessionToken(username, secret), secure));
+        res.setHeader('Set-Cookie', sessionCookieHeader(createSessionToken(username, secret, Date.now(), await sessionVersion(username)), secure));
         return res.status(200).json({ message: 'Login successful.', username: username.toLowerCase() });
       }
 
@@ -888,6 +909,10 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
       }
 
       case 'auth-logout': {
+        // "Everywhere": every session of the account ends, on every device.
+        if (payload.everywhere === true && signedInUser) {
+          await setKey(sessionVersionKey(signedInUser), (await sessionVersion(signedInUser)) + 1);
+        }
         res.setHeader('Set-Cookie', clearSessionCookieHeader(secure));
         return res.status(200).json({ message: 'Logged out.' });
       }

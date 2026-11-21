@@ -52,7 +52,7 @@ export const ConfirmDeleteCards: React.FC<{
           {more > 0 && <li className="text-sm text-ink-muted dark:text-slate-400 px-1 py-0.5">و {fa(more)} کارت دیگر</li>}
         </ul>
         <p className="text-sm leading-7 text-ink-muted dark:text-slate-300">
-          {one ? 'کارت با سابقهٔ مرورش از همهٔ دستگاه‌هایت پاک می‌شود و برنمی‌گردد.' : 'کارت‌ها با سابقهٔ مرورشان از همهٔ دستگاه‌هایت پاک می‌شوند و برنمی‌گردند.'} کتاب‌ها و یادداشت‌ها دست نمی‌خورند.
+          {one ? 'کارت با سابقهٔ مرورش از همهٔ دستگاه‌هایت پاک می‌شود؛ فقط از یک «پشتیبان کامل» (تنظیمات › داده‌ها) برمی‌گردد.' : 'کارت‌ها با سابقهٔ مرورشان از همهٔ دستگاه‌هایت پاک می‌شوند؛ فقط از یک «پشتیبان کامل» (تنظیمات › داده‌ها) برمی‌گردند.'} کتاب‌ها و یادداشت‌ها دست نمی‌خورند.
         </p>
         <div className="flex gap-2 justify-end mt-1">
           <button ref={cancelRef} type="button" onClick={onCancel} disabled={busy}

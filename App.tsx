@@ -81,7 +81,7 @@ const App: React.FC = () => {
         settings, userProfile, autoFixReport,
         // Handlers
         setView, showToast, handleAddCard, handleEditCard, handleDeleteCards, handleSaveCard,
-        handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV,
+        handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV, handleExportBackup, handleRestoreBackup,
         handleResetApp, handleDeleteAllCards, handleStudyDeck, handleStartStudySession, setIsStudySetupModalOpen,
         handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
         updateSettings, studyCards,
@@ -265,6 +265,8 @@ const App: React.FC = () => {
                     onUpdateSettings={updateSettings}
                     onExportCSV={handleExportCSV}
                     onImportCSV={handleImportCSV}
+                    onExportBackup={handleExportBackup}
+                    onRestoreBackup={handleRestoreBackup}
                     onResetApp={handleResetApp}
                     onDeleteAllCards={handleDeleteAllCards}
                     onNavigateToChangelog={() => setView('CHANGELOG')}

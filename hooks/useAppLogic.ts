@@ -6,6 +6,7 @@ import { APP_VERSION, RELEASES } from '../services/appVersion';
 import { unseenReleases } from '../services/changelog';
 import { dayString } from '../services/calendar';
 import { dailyQueue, DEFAULT_NEW_PER_DAY } from '../services/dailyQueue';
+import { BackupData, BackupError, makeBackup, planRestore, readBackup, RestorePlan } from '../services/backup';
 import { addReading } from '../services/readingTime';
 import { tokensOf } from '../services/lemma';
 import { buildSource, cardIndex, cardsInText, chaptersOf, cleanEditedText, findCard, markChunkDone, migrateTexts, newOccurrence, sectionEnds, SourceInput } from '../services/library';
@@ -15,10 +16,11 @@ import { forgetRows, newKnownWord } from '../services/knownWords';
 import { compactAttempts } from '../services/speechPractice';
 import { aiRequestOptions } from '../services/aiSettings';
 import { AUTH_REQUIRED_EVENT, callProxy } from '../services/apiService';
-import { applicableRows, cardStamp, deckStamp, newStudyLogs, profileStamp, stampMap, syncFingerprint } from '../services/syncState';
+import { cardStamp, deckStamp, newStudyLogs, profileStamp, stampMap, syncFingerprint } from '../services/syncState';
 import {
   confirmReceived, confirmSent, freshSyncState, hasUnsentChanges, isEmptyOutgoing, LocalData, markAllSynced, nextLogCursor, nextOutgoing,
   SyncState, SYNC_TABLES, SyncTable, usableSyncState, withLocalAudio,
+  takeIncoming,
 } from '../services/syncClient';
 import { isDue, isNewCard } from '../services/srsService';
 import { applyIncomingSettings, toSyncedSettings } from '../services/settingsSync';
@@ -118,6 +120,22 @@ const cardFromExtracted = (cardData: ExtractedWordCard, deckId: string, now: Dat
     updatedAt: at,
     dueDate: at,
   };
+};
+
+// Cards "complete all" tried on this device, with when: not tried again for
+// a month, so a card the dictionaries cannot fill costs nothing each run.
+const AUTO_FIX_KEY = 'lc_autofix_tried';
+const AUTO_FIX_AGAIN_MS = 30 * 24 * 60 * 60 * 1000;
+const readAutoFixTried = (): Map<string, number> => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(AUTO_FIX_KEY) || '{}') as Record<string, number>;
+    return new Map(Object.entries(saved).filter(([, at]) => Date.now() - at < AUTO_FIX_AGAIN_MS));
+  } catch {
+    return new Map();
+  }
+};
+const writeAutoFixTried = (tried: Map<string, number>) => {
+  try { localStorage.setItem(AUTO_FIX_KEY, JSON.stringify(Object.fromEntries(tried))); } catch { /* private mode */ }
 };
 
 export const useAppLogic = () => {
@@ -435,13 +453,14 @@ export const useAppLogic = () => {
                     const incoming = changes[table];
                     if (!Array.isArray(incoming) || incoming.length === 0) continue;
                     const current = await SYNC_DB_TABLES[table].toArray();
-                    let { rows } = applicableRows<any>(incoming, before[table], stampMap(current, stampOf(table)));
+                    const taken = takeIncoming<any>(table, incoming, current, before[table], state.stamps[table] || {});
+                    let rows = taken.write;
                     if (table === 'cards') {
                         const byId = new Map<string, Flashcard>(current.map((c: Flashcard) => [c.id, c]));
                         rows = rows.map((c: Flashcard) => withLocalAudio(c, byId.get(c.id)));
                     }
                     if (rows.length) await SYNC_DB_TABLES[table].bulkPut(rows);
-                    state = confirmReceived(state, table, rows);
+                    state = confirmReceived(state, table, taken.confirm);
                 }
                 const logs = await db.studyHistory.toArray();
                 maxBefore = logs.reduce((m, l) => Math.max(m, l.id || 0), 0);
@@ -858,6 +877,75 @@ export const useAppLogic = () => {
     } catch (error) {
         console.error('Export failed:', error);
         showToast('ساختن فایل خروجی ناموفق بود.');
+    }
+  };
+
+  // The whole account in one JSON file (services/backup), and back.
+  const readBackupData = async (): Promise<BackupData> => {
+    const local = await readLocal();
+    return {
+      decks: local.decks, cards: local.cards, sources: local.sources, chapters: local.chapters, occurrences: local.occurrences,
+      knownWords: local.knownWords, speechAttempts: local.speechAttempts, notes: local.notes || [], studyHistory: local.logs,
+      chapterTexts: await db.chapterTexts.toArray(),
+    };
+  };
+
+  const handleExportBackup = async () => {
+    try {
+      // Chapters never opened on this device have their text only on the
+      // server: it is fetched for the file. One that cannot be fetched
+      // (offline) is left out, and the message says so.
+      const live = (await db.chapters.toArray()).filter(c => !c.isDeleted);
+      const have = new Set((await db.chapterTexts.toArray()).map(t => t.id));
+      let missing = 0;
+      for (const chapter of live.filter(c => !have.has(c.id))) {
+        try { await loadChapterText(chapter.id); } catch { missing++; }
+      }
+      const backup = makeBackup(await readBackupData(), APP_VERSION);
+      const url = URL.createObjectURL(new Blob([JSON.stringify(backup)], { type: 'application/json' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `lingua-cards-backup-${dayString(new Date())}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      showToast(`پشتیبان کامل ذخیره شد: ${fa(backup.data.cards.length)} کارت، ${fa(backup.data.sources.length)} کتاب و متن.${missing ? ` متن ${fa(missing)} فصل از سرور نرسید و در فایل نیست.` : ''}`);
+    } catch (error) {
+      console.error('Backup failed:', error);
+      showToast('ساختن فایل پشتیبان ناموفق بود.');
+    }
+  };
+
+  const handleRestoreBackup = async (text: string) => {
+    let plan: RestorePlan;
+    try {
+      plan = planRestore(readBackup(text), await readBackupData(), () => crypto.randomUUID());
+    } catch (error) {
+      showToast(error instanceof BackupError ? error.message : 'خواندن فایل پشتیبان ناموفق بود.');
+      return;
+    }
+    const c = plan.counts;
+    const total = Object.values(c).reduce((a, b) => a + b, 0) + plan.chapterTexts.length;
+    if (total === 0) { showToast('همهٔ چیزهای این پشتیبان همین حالا هم هست؛ چیزی اضافه نشد.'); return; }
+    const parts = [
+      c.cards && `${fa(c.cards)} کارت`, c.decks && `${fa(c.decks)} دسته`, c.sources && `${fa(c.sources)} کتاب و متن`,
+      c.chapters && `${fa(c.chapters)} فصل`, c.notes && `${fa(c.notes)} یادداشت`, c.knownWords && `${fa(c.knownWords)} واژهٔ «بلدم»`,
+      c.studyHistory && `${fa(c.studyHistory)} مرور ثبت‌شده`,
+    ].filter(Boolean).join('، ');
+    if (!window.confirm(`از این پشتیبان برمی‌گردد: ${parts || 'متن فصل‌ها'}.\nچیزی پاک یا جایگزین نمی‌شود. ادامه؟`)) return;
+    try {
+      await (db as any).transaction('rw', [...SYNC_TABLES.map(t => SYNC_DB_TABLES[t]), db.studyHistory, db.chapterTexts], async () => {
+        for (const table of SYNC_TABLES) if (plan.rows[table].length) await SYNC_DB_TABLES[table].bulkPut(plan.rows[table]);
+        if (plan.studyHistory.length) await db.studyHistory.bulkAdd(plan.studyHistory);
+        if (plan.chapterTexts.length) await db.chapterTexts.bulkPut(plan.chapterTexts);
+      });
+      await fetchData();
+      showToast('پشتیبان برگردانده شد؛ با همگام‌سازی بعدی به دستگاه‌های دیگر هم می‌رسد.');
+      mergeWithCloud().catch(error => console.warn('Sync after restore failed:', error));
+    } catch (error) {
+      console.error('Restore failed:', error);
+      showToast('برگرداندن پشتیبان ناموفق بود؛ چیزی تغییر نکرد.');
     }
   };
 
@@ -1496,8 +1584,10 @@ export const useAppLogic = () => {
       }
   };
 
-  const handleLogout = async () => {
-    if(confirm('از حسابت خارج می‌شوی؟')) {
+  // `everywhere`: every device signed in to the account is signed out too
+  // (a lost phone, a shared computer).
+  const handleLogout = async (everywhere = false) => {
+    if(confirm(everywhere ? 'از حسابت روی همهٔ دستگاه‌ها خارج می‌شوی؟ هر دستگاه باید دوباره وارد شود.' : 'از حسابت خارج می‌شوی؟')) {
         // What changed here goes up first: if another account signs in on
         // this browser, this account's data is cleared from it.
         if (signedInUser.current) {
@@ -1516,7 +1606,7 @@ export const useAppLogic = () => {
             }
             if (readSavedSettings().keysChanged?.length && !confirm('کلیدی که این‌جا وارد کرده‌ای هنوز به سرور نرسیده و با خروج از این مرورگر پاک می‌شود. باز هم خارج می‌شوی؟')) return;
         }
-        await callProxy('auth-logout', {}).catch(e => console.error('Logout request failed:', e));
+        await callProxy('auth-logout', everywhere ? { everywhere: true } : {}).catch(e => console.error('Logout request failed:', e));
         localStorage.removeItem(LAST_USER_KEY);
         // The keys stay with the account, not in this browser.
         localStorage.setItem('appSettings', JSON.stringify(withoutKeys(readSavedSettings())));
@@ -1525,9 +1615,12 @@ export const useAppLogic = () => {
   };
 
 
-  const handleCompleteCardDetails = async (cardId: string, options: { silent?: boolean } = {}): Promise<{
+  // `ai`: 'missing-meaning' asks the AI only for a card with no Persian
+  // meaning (not for a missing note, which most cards have), 'off' never.
+  const handleCompleteCardDetails = async (cardId: string, options: { silent?: boolean; ai?: 'always' | 'missing-meaning' | 'off' } = {}): Promise<{
     success: boolean;
     updates: { audio: boolean; def: boolean; ex: boolean; pron: boolean; trans: boolean };
+    aiError?: unknown;
   }> => {
     const cardToComplete = await db.flashcards.get(cardId);
     const updates = { audio: false, def: false, ex: false, pron: false, trans: false };
@@ -1560,16 +1653,22 @@ export const useAppLogic = () => {
         }
 
         let persianDetails = { back: cardToComplete.back, notes: cardToComplete.notes };
-        if (!cardToComplete.back || !cardToComplete.notes) {
+        let aiError: unknown;
+        const aiMode = options.ai || 'always';
+        const askAi = aiMode === 'always' ? !cardToComplete.back || !cardToComplete.notes : aiMode === 'missing-meaning' && !cardToComplete.back;
+        if (askAi) {
              try {
                 const ai = await generatePersianDetails(cardToComplete.front, aiRequestOptions(settings));
                 persianDetails = { back: cardToComplete.back || ai.back, notes: cardToComplete.notes || ai.notes };
              } catch (e) {
                  console.error("AI Generation failed during complete, using free translation:", e);
+                 aiError = e;
                  persianDetails = { back: cardToComplete.back || enrichment?.translation || '', notes: cardToComplete.notes || '' };
              }
-             if (persianDetails.back && persianDetails.back !== cardToComplete.back) updates.trans = true;
+        } else if (!cardToComplete.back) {
+             persianDetails = { back: enrichment?.translation || '', notes: cardToComplete.notes || '' };
         }
+        if (persianDetails.back && persianDetails.back !== cardToComplete.back) updates.trans = true;
 
         if (!cardToComplete.pronunciation && details.pronunciation) updates.pron = true;
         if ((!cardToComplete.definition || cardToComplete.definition.length === 0) && details.definitions.length > 0) updates.def = true;
@@ -1598,12 +1697,12 @@ export const useAppLogic = () => {
             await db.flashcards.put(next);
             return next;
         });
-        if (!updatedCard) return { success: false, updates };
+        if (!updatedCard) return { success: false, updates, aiError };
 
         setFlashcards(prev => prev.map(c => c.id === updatedCard.id ? updatedCard : c));
 
         if (!options.silent) showToast(`کارت «${cardToComplete.front}» کامل شد.`);
-        return { success: true, updates };
+        return { success: true, updates, aiError };
 
     } catch (error) {
         console.error("Failed to complete card details:", error);
@@ -1612,24 +1711,30 @@ export const useAppLogic = () => {
     }
   };
 
+  // "Complete all": cards with an empty part the dictionaries fill, or with
+  // no meaning. A missing note alone no longer counts (most cards have
+  // none, so every run asked the AI once per card), the AI is asked only for
+  // a missing meaning, and a card tried in the last month is not tried again
+  // (this device keeps the list). A wrong or missing key stops the AI for
+  // the rest of the run instead of failing once per card.
   const handleAutoFixCards = async () => {
     cancelAutoFixRef.current = false;
-    const incompleteCards = flashcards.filter(c => 
-        !c.isDeleted && (
-            !c.audioSrc || 
+    const tried = readAutoFixTried();
+    const incompleteCards = flashcards.filter(c =>
+        !c.isDeleted && c.kind !== 'grammar' && !tried.has(c.id) && (
+            !c.audioSrc ||
             !c.definition || c.definition.length === 0 ||
             !c.exampleSentenceTarget || c.exampleSentenceTarget.length === 0 ||
             !c.pronunciation ||
-            !c.back ||
-            !c.notes
+            !c.back
         )
     );
 
     if (incompleteCards.length === 0) {
-        showToast('همهٔ کارت‌ها کامل‌اند.');
+        showToast(tried.size > 0 ? 'کارت تازه‌ای برای کامل کردن نیست (کارت‌هایی که این ماه امتحان شدند دوباره امتحان نمی‌شوند).' : 'همهٔ کارت‌ها کامل‌اند.');
         return;
     }
-    if (!confirm(`${fa(incompleteCards.length)} کارت جای خالی دارند. فقط جاهای خالی پر می‌شوند و هر چه کارت دارد، حتی چیزی که دستی نوشته‌ای، دست نمی‌خورد.\n\nتلفظ، تعریف، مثال، صدا و ترکیب‌ها از دیکشنری‌های رایگان (به ترتیب تنظیمات) می‌آیند. معنی فارسی و یادداشت از هوش مصنوعی با کلیدهای خودت، و اگر جواب ندهد، معنی از ترجمهٔ رایگان.\n\nشروع شود؟`)) return;
+    if (!confirm(`${fa(incompleteCards.length)} کارت جای خالی دارند. فقط جاهای خالی پر می‌شوند و هر چه کارت دارد، حتی چیزی که دستی نوشته‌ای، دست نمی‌خورد.\n\nتلفظ، تعریف، مثال، صدا و ترکیب‌ها از دیکشنری‌های رایگان (به ترتیب تنظیمات) می‌آیند. هوش مصنوعی فقط برای کارتی که معنی فارسی ندارد پرسیده می‌شود؛ اگر جواب ندهد، معنی از ترجمهٔ رایگان.\n\nشروع شود؟`)) return;
 
     setAutoFixProgress({ current: 0, total: incompleteCards.length });
 
@@ -1643,12 +1748,15 @@ export const useAppLogic = () => {
         translationsAdded: 0,
     };
 
+    let aiStopped = false;
     for (let i = 0; i < incompleteCards.length; i++) {
         if (cancelAutoFixRef.current) {
             break;
         }
         const card = incompleteCards[i];
-        const result = await handleCompleteCardDetails(card.id, { silent: true });
+        const result = await handleCompleteCardDetails(card.id, { silent: true, ai: aiStopped ? 'off' : 'missing-meaning' });
+        if (result.aiError && isPermanentAiError(result.aiError)) aiStopped = true;
+        tried.set(card.id, Date.now());
         
         if (result.success) {
             const u = result.updates;
@@ -1664,7 +1772,9 @@ export const useAppLogic = () => {
         setAutoFixProgress({ current: i + 1, total: incompleteCards.length });
     }
 
+    writeAutoFixTried(tried);
     setAutoFixProgress(null);
+    if (aiStopped) showToast('هوش مصنوعی جواب نداد (کلید را در تنظیمات بررسی کن)؛ بقیهٔ کارت‌ها بی آن کامل شدند.');
     // Set report to trigger modal
     if (!cancelAutoFixRef.current) {
         setAutoFixReport(stats);
@@ -1771,7 +1881,7 @@ export const useAppLogic = () => {
       overlayEdit, openCardEditor, closeCardEditor, saveOverlayEdit,
       // Handlers
       setView, showToast, handleAddCard, handleEditCard, handleDeleteCard, handleDeleteCards, handleSaveCard,
-      handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV,
+      handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV, handleExportBackup, handleRestoreBackup,
       handleResetApp, handleDeleteAllCards, handleStudyDeck, handleStartStudySession, setIsStudySetupModalOpen,
       handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
       updateSettings, handleCompleteCardDetails,

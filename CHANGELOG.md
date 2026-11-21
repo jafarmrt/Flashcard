@@ -9,6 +9,14 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.13.0] - 2026-11-21 - Your Data, Safe
+- **Full backup:** Settings › Data › «ذخیرهٔ پشتیبان» saves the whole account in one file: cards with their review schedule, the review history, books with the text of every chapter, notes, kept translations and the «بلدم» list. «برگرداندن» puts back what is missing or was deleted, and never deletes or replaces anything; a deleted card comes back with its history. (The CSV is still there, for the cards' text only.)
+- **No edit lost in a long sync:** When many rows changed at once (deleting hundreds of cards, a device offline for weeks), a sync goes in rounds; a change still waiting for its round could be overwritten by another device's older copy and never sent. Now the two are merged by the server's own rule, so deleted cards no longer come back.
+- **A wrong clock does not win:** A device whose clock runs ahead no longer wins every conflict; the server brings such times back to its own clock.
+- **"Complete all" asks the AI less:** A card missing only a note no longer counts as incomplete, the AI is asked only for a card with no Persian meaning, a card tried in the last month is not tried again, and a wrong or missing key stops the AI for the rest of the run instead of failing on every card.
+- **Sign out everywhere:** Settings › Account › «خروج از همه» signs every device out of the account (a lost phone, a shared computer).
+- **Safer sign-in:** Failed sign-ins are counted per account on the server (twenty in fifteen minutes lock it for fifteen), so they no longer start again from zero on each of Vercel's servers.
+
 ## [7.12.0] - 2026-11-21 - A Lighter, More Active Review
 - **New cards per day:** Today's review brings the cards you are learning first, then at most 15 new cards (Settings › Study › «کارت تازه در روز»: 5 to 50, or no cap). The rest wait for the next days, and Today says how many. Forty words saved from one chapter no longer mean forty extra reviews today and a heap three days later. «ادامه» at the end of a session still takes more.
 - **Asked by how well you know it («خودکار», the default):** A new card is flipped; once you are learning it, you have to bring the word back yourself: in the book's sentence with a gap, or from its Persian meaning.
