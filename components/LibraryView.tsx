@@ -12,7 +12,7 @@ import { needsCheck } from '../services/cardCheck';
 import type { AiRequestOptions } from '../services/geminiService';
 import { cardsOfSource } from '../services/readingStats';
 import { isDue } from '../services/srsService';
-import { coverageOf, knownByFrom, savedProfile } from '../services/coverage';
+import { coverageOf, knownByFrom, savedProfile, VERDICT_SHORT, VERDICT_TEXT } from '../services/coverage';
 import { AddSourceForm } from './AddSourceForm';
 import { BookCoverage } from './library/BookCoverage';
 import { SourceNotes } from './library/SourceNotes';
@@ -411,11 +411,18 @@ const Shelf: React.FC<ShelfProps> = ({ sources, chapters, cardsBySource, knownBy
     const list = chaptersOf(s.id, chapters);
     const p = sourceProgress(list);
     const profile = savedProfile(s.id);
-    return { s, list, p, next: continuePoint(s, list), coverage: profile ? coverageOf(profile, userLevel, knownBy).percent : null };
+    const cov = profile ? coverageOf(profile, userLevel, knownBy) : null;
+    return { s, list, p, next: continuePoint(s, list), coverage: cov ? cov.percent : null, verdict: cov?.verdict };
   });
+  // Books not started yet, the ones that fit best first: a book where about
+  // 95% of the words are known is read with ease and still teaches. The best
+  // of them is marked as the one to read next.
+  const fit = (r: (typeof rows)[number]) => (r.coverage === null ? -1 : r.verdict === 'easy' || r.verdict === 'fits' ? 100 - Math.abs(r.coverage - 96) : r.coverage / 10);
+  const unstarted = rows.filter(r => r.p.done === 0).sort((a, b) => fit(b) - fit(a));
+  const suggested = unstarted.find(r => r.verdict === 'fits' || r.verdict === 'easy')?.s.id;
   const groups = [
     { title: 'در حال خواندن', rows: rows.filter(r => r.p.done > 0 && !r.p.finished) },
-    { title: 'هنوز شروع نشده', rows: rows.filter(r => r.p.done === 0) },
+    { title: 'هنوز شروع نشده', rows: unstarted },
     { title: 'تمام‌شده', rows: rows.filter(r => r.p.finished) },
   ].filter(g => g.rows.length > 0);
   const chaptersDone = rows.reduce((n, r) => n + r.list.filter(isChapterFinished).length, 0);
@@ -432,7 +439,7 @@ const Shelf: React.FC<ShelfProps> = ({ sources, chapters, cardsBySource, knownBy
         <section key={g.title} className="flex flex-col gap-3">
           <h2 className="text-sm font-bold text-ink-muted dark:text-slate-400">{g.title}</h2>
           <ul className="grid gap-3 sm:grid-cols-2">
-            {g.rows.map(({ s, list, p, next, coverage }) => (
+            {g.rows.map(({ s, list, p, next, coverage, verdict }) => (
               <li key={s.id}>
                 <button type="button" onClick={() => onOpen(s.id)} className="w-full h-full text-right bg-white dark:bg-slate-800 rounded-3xl p-4 flex gap-4 hover:ring-2 hover:ring-brand-200 dark:hover:ring-brand-800">
                   <span className={`relative w-20 h-28 shrink-0 rounded-xl bg-gradient-to-br ${coverOf(s.title)} text-white p-2 flex flex-col justify-between overflow-hidden shadow-[inset_4px_0_0_rgba(0,0,0,0.18)]`} aria-hidden="true">
@@ -445,7 +452,8 @@ const Shelf: React.FC<ShelfProps> = ({ sources, chapters, cardsBySource, knownBy
                     {s.author && <span dir="auto" className="font-en text-sm text-ink-muted dark:text-slate-400 truncate">{s.author}</span>}
                     <span className="flex flex-wrap gap-1.5">
                       <span className={`text-xs rounded-full px-2.5 py-0.5 ${KIND_STYLE[s.kind]}`}>{KIND_NAMES[s.kind]}</span>
-                      {coverage !== null && <span className="text-xs rounded-full px-2.5 py-0.5 bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-100" title="درصد واژه‌های متن که بلدی">{fa(Math.round(coverage))}٪ بلدی</span>}
+                      {coverage !== null && <span className="text-xs rounded-full px-2.5 py-0.5 bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-100" title={verdict ? VERDICT_TEXT[verdict] : 'درصد واژه‌های متن که بلدی'}>{fa(Math.round(coverage))}٪ بلدی{verdict ? ` · ${VERDICT_SHORT[verdict]}` : ''}</span>}
+                      {s.id === suggested && <span className="text-xs font-bold rounded-full px-2.5 py-0.5 bg-emerald-100 text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100">پیشنهاد برای خواندن بعدی</span>}
                     </span>
                     <span className="text-sm text-ink-muted dark:text-slate-400">
                       {p.finished ? 'تمام شد' : next && list.length > 1 ? `فصل ${fa(next.chapter.order)} از ${fa(list.length)}` : next ? `بخش ${fa(next.chunk + 1)} از ${fa(next.chapter.chunkCount)}` : ''}

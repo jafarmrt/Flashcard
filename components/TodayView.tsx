@@ -1,13 +1,16 @@
 import React, { useEffect, useMemo } from 'react';
-import { Chapter, Flashcard, Source, SpeechAttempt, StudyLog, UserProfile } from '../types';
+import { Chapter, Flashcard, KnownWord, Source, SpeechAttempt, StudyLog, UserProfile } from '../types';
 import { dueSchedules, liveAttempts } from '../services/speechPractice';
 import { minutesLeft, todayPlan, type PlanStep } from '../services/todayPlan';
-import { lastDays, minutes, readingByDay } from '../services/readingTime';
+import { lastDays, readingByDay } from '../services/readingTime';
 import type { StudyMode, View } from '../hooks/useAppLogic';
 import { stageCounts, STAGE_NAMES, MasteryStage } from '../services/masteryService';
-import { dayString, weekStrip, weeklyReviewCounts } from '../services/calendar';
+import { dayString, weekStrip } from '../services/calendar';
 import { currentReading } from '../services/library';
+import { weekSummary } from '../services/weekSummary';
 import { fa, Icon, Kbd, STAGE_COLORS } from './common/ui';
+
+const NO_KNOWN: KnownWord[] = [];
 
 interface TodayViewProps {
   userProfile: UserProfile | null;
@@ -16,7 +19,9 @@ interface TodayViewProps {
   studyLogs: StudyLog[];
   sources: Source[];
   chapters: Chapter[];
-  dueCount: number;
+  dueCount: number; // the day's queue (services/dailyQueue)
+  heldBack?: number; // new cards left for the next days by the daily cap
+  knownWords?: KnownWord[];
   newDueCount: number;
   onStartReview: (mode: StudyMode) => void;
   onOpenSetup: () => void;
@@ -78,13 +83,12 @@ const TodayPlan: React.FC<{ steps: PlanStep[]; reading: Reading; onRead: () => v
 };
 
 export const TodayView: React.FC<TodayViewProps> = ({
-  userProfile, username, cards, studyLogs, sources, chapters, dueCount, newDueCount, onStartReview, onOpenSetup, onNavigate, onOpenChunk, speechAttempts = [],
+  userProfile, username, cards, studyLogs, sources, chapters, dueCount, newDueCount, heldBack = 0, knownWords = NO_KNOWN, onStartReview, onOpenSetup, onNavigate, onOpenChunk, speechAttempts = [],
 }) => {
 
   const today = dayString(new Date());
   const studied = useMemo(() => new Set(studyLogs.map(l => l.date)), [studyLogs]);
   const week = weekStrip(studied, today);
-  const weekly = weeklyReviewCounts(studyLogs.map(l => l.date), today);
   const stages = stageCounts(cards);
   // This week's reading, from every book's log.
   const readWeek = useMemo(() => {
@@ -94,6 +98,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
     return { ...sum, days: new Set(week.filter(d => (days.get(d)?.sections || 0) > 0)) };
   }, [sources]);
   const totalWords = cards.length;
+  const summary = useMemo(() => weekSummary({ sources, cards, logs: studyLogs, knownWords }), [sources, cards, studyLogs, knownWords]);
 
   // The book or article read most recently and not finished yet.
   const reading = useMemo(() => currentReading(sources, chapters), [sources, chapters]);
@@ -104,14 +109,15 @@ export const TodayView: React.FC<TodayViewProps> = ({
     const live = liveAttempts(speechAttempts);
     return todayPlan({
       hasBook: !!reading,
-      // A section finished today moves its chapter's date to today.
-      readToday: chapters.some(c => !c.isDeleted && c.completed.length > 0 && dayString(new Date(c.updatedAt)) === today),
+      // A section finished today is in its book's reading log. (The chapter's
+      // date was used, which an edit of the text also moved to today.)
+      readToday: sources.some(s => !s.isDeleted && (s.reading?.[today]?.sections || 0) > 0),
       dueCards: dueCount,
       reviewedToday: studyLogs.filter(l => l.date === today).length,
       dueSpeech: dueSchedules(live, today).filter(x => !!x.cardId && cardIds.has(x.cardId)).length,
       speechToday: live.filter(a => dayString(new Date(a.createdAt)) === today).length,
     });
-  }, [cards, speechAttempts, reading, chapters, today, dueCount, studyLogs]);
+  }, [cards, speechAttempts, reading, sources, today, dueCount, studyLogs]);
 
   // Space starts the review from anywhere on this screen (not while typing).
   useEffect(() => {
@@ -119,7 +125,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
       const el = e.target as HTMLElement;
       if (e.code !== 'Space' || dueCount === 0 || el.closest('input, textarea, select, button, [contenteditable]')) return;
       e.preventDefault();
-      onStartReview('flip');
+      onStartReview('auto');
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -139,7 +145,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
 
       {plan.length > 0 && (
         <TodayPlan steps={plan} reading={reading} onRead={() => reading?.next && onOpenChunk(reading.next.chapter, reading.next.chunk)}
-          onReview={() => onStartReview('flip')} onSpeak={() => onNavigate('PRACTICE')} />
+          onReview={() => onStartReview('auto')} onSpeak={() => onNavigate('PRACTICE')} />
       )}
 
       <div className="grid gap-5 md:grid-cols-2">
@@ -151,13 +157,13 @@ export const TodayView: React.FC<TodayViewProps> = ({
               </h2>
               <p className="mt-1 text-sm md:text-base text-white/90">
                 {dueCount > 0
-                  ? `${fa(dueCount)} کارت موعد دارد${newDueCount > 0 ? `، ${fa(newDueCount)} تا تازه` : ''}.`
+                  ? `${fa(dueCount)} کارت برای امروز${newDueCount > 0 ? `، ${fa(newDueCount)} تا تازه` : ''}.${heldBack > 0 ? ` ${fa(heldBack)} کارت تازهٔ دیگر برای روزهای بعد کنار ماند (سقف روزانه در تنظیمات).` : ''}`
                   : 'کارت موعدداری نمانده. با مرور آزاد یا یک بخش تازه از متن ادامه بده.'}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
               {dueCount > 0 ? (
-                <button type="button" onClick={() => onStartReview('flip')}
+                <button type="button" onClick={() => onStartReview('auto')}
                   className="inline-flex items-center gap-2.5 min-h-[52px] px-6 rounded-2xl bg-white text-ink font-extrabold text-lg hover:bg-brand-50">
                   شروع مرور
                   <span className="rounded-full bg-brand-100 text-brand-700 text-sm px-2.5 py-0.5">{fa(dueCount)} کارت</span>
@@ -169,8 +175,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   مرور آزاد
                 </button>
               )}
-              <button type="button" onClick={() => onStartReview('type')} disabled={dueCount === 0}
-                className="min-h-[52px] px-4 rounded-2xl bg-white/15 hover:bg-white/25 font-bold disabled:opacity-40">نوشتنی</button>
+              <button type="button" onClick={() => onStartReview('flip')} disabled={dueCount === 0} title="فقط برگرداندن کارت‌ها"
+                className="min-h-[52px] px-4 rounded-2xl bg-white/15 hover:bg-white/25 font-bold disabled:opacity-40">برگرداندن</button>
               <button type="button" onClick={() => onStartReview('cloze')} disabled={dueCount === 0} title="واژه در جملهٔ کتاب جا افتاده؛ بنویسش"
                 className="min-h-[52px] px-4 rounded-2xl bg-white/15 hover:bg-white/25 font-bold disabled:opacity-40">جای خالی</button>
               <button type="button" onClick={() => onNavigate('PRACTICE')} disabled={totalWords === 0}
@@ -194,8 +200,23 @@ export const TodayView: React.FC<TodayViewProps> = ({
               </div>
             ))}
           </div>
+          <ul className="grid grid-cols-3 gap-2 text-center">
+            <li className="rounded-xl bg-slate-50 dark:bg-slate-800/60 py-2">
+              <p className="text-lg font-extrabold text-ink dark:text-white">{fa(summary.minutes)}</p>
+              <p className="text-[11px] text-ink-muted dark:text-slate-400">دقیقه خواندن{summary.previousMinutes > 0 ? ` (هفتهٔ پیش ${fa(summary.previousMinutes)})` : ''}</p>
+            </li>
+            <li className="rounded-xl bg-slate-50 dark:bg-slate-800/60 py-2">
+              <p className="text-lg font-extrabold text-ink dark:text-white">{fa(summary.newCards)}</p>
+              <p className="text-[11px] text-ink-muted dark:text-slate-400">کارت تازه{summary.knownAdded > 0 ? ` · ${fa(summary.knownAdded)} «بلدم»` : ''}</p>
+            </li>
+            <li className="rounded-xl bg-slate-50 dark:bg-slate-800/60 py-2">
+              <p className="text-lg font-extrabold text-ink dark:text-white">{summary.remembered === null ? fa(summary.reviews) : `${fa(summary.remembered)}٪`}</p>
+              <p className="text-[11px] text-ink-muted dark:text-slate-400">{summary.remembered === null ? 'مرور' : `از ${fa(summary.reviews)} مرور یادت ماند`}</p>
+            </li>
+          </ul>
           <p className="text-sm text-ink-muted dark:text-slate-400">
-              در ۷ روز گذشته: {fa(minutes(readWeek.ms))} دقیقه خواندن، {fa(readWeek.sections)} بخش، {fa(weekly.thisWeek)} مرور. روزهای پررنگ روزهایی است که کتاب خواندی.
+              در ۷ روز گذشته {fa(summary.sections)} بخش و {fa(summary.words)} واژه خواندی. روزهای پررنگ روزهایی است که کتاب خواندی.
+              {summary.advice && <span className="block mt-1 text-ink dark:text-slate-200">{summary.advice}</span>}
           </p>
         </Card>
 

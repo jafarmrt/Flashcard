@@ -73,7 +73,8 @@ const ProposalPanel: React.FC<{
   sourceName: string;
   onApply: (fields: RefreshField[]) => void;
   onDismiss: () => void;
-}> = ({ card, proposal, sourceName, onApply, onDismiss }) => {
+  saveLabel: string; // an existing card is saved with the picked fields at once; a new one is only filled
+}> = ({ card, proposal, sourceName, onApply, onDismiss, saveLabel }) => {
   const changes = proposalChanges(card, proposal);
   const [picked, setPicked] = useState<Set<RefreshField>>(() => new Set(changes.map(c => c.field)));
   const toggle = (field: RefreshField) => setPicked(prev => {
@@ -123,7 +124,7 @@ const ProposalPanel: React.FC<{
         {changes.length > 0 && (
           <button type="button" disabled={picked.size === 0} onClick={() => onApply(changes.map(c => c.field).filter(f => picked.has(f)))}
             className="min-h-[44px] px-5 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 disabled:opacity-40">
-            گذاشتن انتخاب‌ها در کارت
+            {saveLabel}
           </button>
         )}
       </div>
@@ -244,13 +245,25 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
     }
   };
 
-  const handleApply = (fields: RefreshField[]) => {
+  // Editing a card, the picked fields are saved with it at once: a second
+  // "save" after "put in the card" was one step too many. A new card is only
+  // filled, since its deck and meaning may still be missing.
+  const handleApply = async (fields: RefreshField[]) => {
     if (!proposal) return;
     const next = applyProposal(current(), proposal.value, fields);
     setFormData(next);
     showLists(next);
     setProposal(null);
-    showToast('پیشنهاد در کارت گذاشته شد. برای ماندن، کارت را ذخیره کن.');
+    if (!card || !next.front.trim() || !next.back.trim() || !deckName.trim()) {
+      showToast('پیشنهاد در کارت گذاشته شد. برای ماندن، کارت را ذخیره کن.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(next, deckName);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleToggleRecording = async () => {
@@ -376,7 +389,7 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
           {askError && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{askError}</p>}
           {proposal && (
             <ProposalPanel key={proposal.sourceName + JSON.stringify(proposal.value)} card={current()} proposal={proposal.value} sourceName={proposal.sourceName}
-              onApply={handleApply} onDismiss={() => setProposal(null)} />
+              onApply={handleApply} onDismiss={() => setProposal(null)} saveLabel={card ? 'گذاشتن و ذخیرهٔ کارت' : 'گذاشتن انتخاب‌ها در کارت'} />
           )}
         </div>
 

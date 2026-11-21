@@ -185,6 +185,8 @@ export const knownByTerms = (cards: Flashcard[], list: Set<string>): ((word: str
   };
 };
 
+export const VERDICT_SHORT: Record<Coverage['verdict'], string> = { easy: 'آسان', fits: 'مناسب', stretch: 'کمی سخت', hard: 'سخت' };
+
 export const VERDICT_TEXT: Record<Coverage['verdict'], string> = {
   easy: 'آسان؛ برای روان‌خوانی خوب است.',
   fits: 'مناسب سطح تو؛ واژه‌های تازه کم و قابل‌حدس‌اند.',

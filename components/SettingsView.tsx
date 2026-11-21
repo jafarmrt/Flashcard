@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { DEFAULT_NEW_PER_DAY } from '../services/dailyQueue';
 import { AiProviderId, AiProviderSetting, CardKind, DictionaryEntrySetting, Settings } from '../types';
 import { dictionaryKey, dictionaryList, dictionaryNote } from '../services/dictSettings';
 import { DictionaryId, DictionaryKeyId, dictionaryInfo } from '../services/dictionaryCatalog';
@@ -18,13 +19,15 @@ interface SettingsViewProps {
     onUpdateSettings: (newSettings: Partial<Settings>) => void;
     onExportCSV: () => void;
     onImportCSV: (csvText: string) => void;
+    onExportBackup?: () => void;
+    onRestoreBackup?: (text: string) => void;
     onResetApp: () => void;
     onDeleteAllCards: () => void;
     onNavigateToChangelog: () => void;
     onNavigateToProfile: () => void;
     onNavigateToUsage: () => void;
     currentUser: { username: string } | null;
-    onLogout: () => void;
+    onLogout: (everywhere?: boolean) => void;
 }
 
 // Defined outside SettingsView: a component created inside it would be a new
@@ -690,10 +693,17 @@ const TelegramSettings: React.FC = () => {
 };
 
 const SettingsView: React.FC<SettingsViewProps> = ({
-    settings, onUpdateSettings, onExportCSV, onImportCSV, onResetApp, onDeleteAllCards, onNavigateToChangelog,
+    settings, onUpdateSettings, onExportCSV, onImportCSV, onExportBackup, onRestoreBackup, onResetApp, onDeleteAllCards, onNavigateToChangelog,
     onNavigateToProfile, onNavigateToUsage, currentUser, onLogout,
 }) => {
     const importFileRef = useRef<HTMLInputElement>(null);
+    const backupFileRef = useRef<HTMLInputElement>(null);
+    const handleBackupFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        event.target.value = '';
+        if (!file || !onRestoreBackup) return;
+        file.text().then(onRestoreBackup, () => onRestoreBackup(''));
+    };
 
     const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
@@ -712,8 +722,11 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                 <Row title="وارد شده با" hint="کارت‌ها و پیشرفت با همین حساب روی همهٔ دستگاه‌ها همگام می‌شوند.">
                     <div className="flex items-center gap-3">
                         <span dir="ltr" className="font-en font-bold text-brand-600 dark:text-brand-300">{currentUser?.username}</span>
-                        <button type="button" onClick={onLogout} className={button}>خروج</button>
+                        <button type="button" onClick={() => onLogout()} className={button}>خروج</button>
                     </div>
+                </Row>
+                <Row title="خروج از همهٔ دستگاه‌ها" hint="اگر گوشی گم شد یا روی رایانهٔ دیگری وارد شده بودی: همهٔ دستگاه‌ها، از جمله همین‌جا، از حساب خارج می‌شوند.">
+                    <button type="button" onClick={() => onLogout(true)} className={button}>خروج از همه</button>
                 </Row>
             </Card>
 
@@ -722,6 +735,13 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                     <select value={settings.userLevel || 'B2'} onChange={e => onUpdateSettings({ userLevel: e.target.value as Settings['userLevel'] })}
                         className="min-h-[40px] px-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm">
                         {LEVELS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+                    </select>
+                </Row>
+                <Row title="کارت تازه در روز" hint="مرور امروز اول کارت‌هایی را می‌آورد که در حال یادگیری‌اند، بعد حداکثر این تعداد کارت تازه. بقیهٔ کارت‌های تازه برای روزهای بعد می‌مانند تا مرورها انبوه نشوند.">
+                    <select value={settings.newCardsPerDay ?? DEFAULT_NEW_PER_DAY} onChange={e => onUpdateSettings({ newCardsPerDay: Number(e.target.value) })} aria-label="کارت تازه در روز"
+                        className="min-h-[40px] px-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm">
+                        {[5, 10, 15, 20, 30, 50].map(n => <option key={n} value={n}>{fa(n)}</option>)}
+                        <option value={0}>بدون سقف</option>
                     </select>
                 </Row>
                 <Row title="معنی بالای واژه‌های کارت‌دار" hint="هنگام خواندن، معنی کوتاه کارت خودت با خط ریز بالای واژه نوشته می‌شود تا لازم نباشد رویش بزنی؛ وقتی واژه را یاد گرفتی، خودش کنار می‌رود.">
@@ -788,7 +808,16 @@ const SettingsView: React.FC<SettingsViewProps> = ({
             </Card>
 
             <Card title="داده‌ها">
-                <Row title="پشتیبان CSV" hint="همهٔ کارت‌ها با همهٔ جزئیات در یک فایل؛ همین فایل دوباره وارد می‌شود.">
+                {onExportBackup && onRestoreBackup && (
+                    <Row title="پشتیبان کامل" hint="همهٔ حساب در یک فایل: کارت‌ها با برنامهٔ مرورشان، تاریخچهٔ مرور، کتاب‌ها و متن فصل‌ها، یادداشت‌ها و فهرست «بلدم». برگرداندن فقط چیزهای جاافتاده یا پاک‌شده را اضافه می‌کند و چیزی را پاک نمی‌کند.">
+                        <div className="flex gap-2">
+                            <input type="file" ref={backupFileRef} onChange={handleBackupFile} accept=".json,application/json" className="hidden" />
+                            <button type="button" onClick={() => backupFileRef.current?.click()} className={button}>برگرداندن</button>
+                            <button type="button" onClick={onExportBackup} className={button}>ذخیرهٔ پشتیبان</button>
+                        </div>
+                    </Row>
+                )}
+                <Row title="کارت‌ها در CSV" hint="متن کارت‌ها در یک جدول، برای Excel یا برنامه‌های دیگر؛ برنامهٔ مرور و کتاب‌ها در آن نیست (برای آن «پشتیبان کامل»).">
                     <div className="flex gap-2">
                         <input type="file" ref={importFileRef} onChange={handleFileImport} accept=".csv" className="hidden" />
                         <button type="button" onClick={() => importFileRef.current?.click()} className={button}>ورود از CSV</button>

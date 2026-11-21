@@ -151,6 +151,27 @@ Do not bring these back without the user asking.
 
 ## What is done (latest first)
 
+- 7.11.0–7.17.0 (the plan from the review of 2026-11-21, all shipped):
+  7.11 a tap asks only the dictionary (AI on «معنی در این جمله» or when the
+  dictionary has nothing; senses kept in services/senseCache), looked-up
+  words not ticked for cards, book pages removed (scroll only; type size
+  and chapter end moved there), refill from AI saves in one step;
+  7.12 daily new-card cap (services/dailyQueue, `Settings.newCardsPerDay`),
+  `auto` and `reverse` study modes, a new card asked twice, "Again" after
+  ten cards, `meaningMatches` for typed meanings, `answerCard` (early
+  Good/Easy keep the schedule); 7.13 JSON backup/restore (services/backup),
+  `takeIncoming` + services/rowMerge for unsent rows in a multi-round sync,
+  server clock cap (`CLOCK_SLACK_MS`), auto-fix asks AI only for a missing
+  meaning, session versions ("sign out everywhere", `session:<user>`) and
+  per-account login failures (`login-fail:<user>`); 7.14 a new sense of a
+  carded word becomes its own card (`newSense`), quiz from book sentences
+  (services/bookQuiz, a miss = "Again"), library sorted by fit, progress
+  memory panel (services/memoryStats), chapter texts prefetched after
+  sync; 7.15 listening/dictation (services/dictation,
+  components/practice/ListeningPractice); 7.16 .srt/.vtt import
+  (importers `subtitlesToText`); 7.17 weekly summary on Today
+  (services/weekSummary).
+
 - 7.9.0: game parts deleted (above); main bundle 810 → 265 kB (lazy
   screens, vendor chunk); the 7 hooks warnings fixed; tried in the browser:
   review end screen, paragraph translation from a word, next chapter's
@@ -200,10 +221,18 @@ combo, streak, badges, confetti, chests, the "garden"); they were deleted in
 7.9.0. Phases A–D of the 7.7.0 plan (calm mode, reading flow, learning from
 the book, progress that means something) shipped in 7.8.0.
 
+## Plan from the review of 2026-11-21
+
+Done in 7.11.0–7.17.0 (above). Not done from the review: a hard limit on
+the server's own GEMINI_API_KEY per account, a separate secret for the key
+vault, and moving the sync loop out of hooks/useAppLogic.ts.
+
 ## Open ideas (ask the user before starting)
 
-1. Try the Telegram bot live (set the env on Vercel, link, wait for a day's
+1. Ask how 7.11–7.17 feel in daily use: the daily cap (15), the «خودکار»
+   review, a tap without AI, listening, subtitles.
+2. Try the Telegram bot live (set the env on Vercel, link, wait for a day's
    message) and ask how it feels; maybe a choice of hour (needs an hourly
    cron, which Vercel Hobby does not allow, or an outside cron service).
-2. Pronunciation has not yet been tried with a real voice and a real Gemini /
+3. Pronunciation has not yet been tried with a real voice and a real Gemini /
    OpenRouter key on the deployed site; ask the user how it went.

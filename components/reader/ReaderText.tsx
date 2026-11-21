@@ -11,7 +11,7 @@ interface ReaderTextProps {
   onSelect: (range: Range) => void;
   paragraphFooter?: (paragraph: number) => React.ReactNode; // shown under each paragraph (reading aloud, translation)
   // Book pages: the type the reader chose, paragraphs indented as in print.
-  book?: { fontSize: number; justify: boolean };
+  fontSize?: number; // px, from the reader's type size
   glosses?: (string | undefined)[]; // a meaning written small above a word (services/gloss)
 }
 
@@ -30,7 +30,7 @@ const wordAt = (x: number, y: number): number | null => {
 // The section's text, each word a button. A tap looks a word up; dragging
 // over several words (with a mouse at once, with a finger after resting on
 // the first word), or shift-clicking, picks a phrase or a sentence.
-export const ReaderText: React.FC<ReaderTextProps> = ({ section, selection, classFor, onTap, onSelect, paragraphFooter, book, glosses }) => {
+export const ReaderText: React.FC<ReaderTextProps> = ({ section, selection, classFor, onTap, onSelect, paragraphFooter, fontSize, glosses }) => {
   const glossed = !!glosses?.some(Boolean);
   const [drag, setDrag] = useState<Range | null>(null);
   // `last`: the last word the pointer was over, for a release on a space or
@@ -126,10 +126,8 @@ export const ReaderText: React.FC<ReaderTextProps> = ({ section, selection, clas
     <div ref={box} dir="ltr" lang="en"
       onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={end}
       onContextMenu={e => { if ((e.target as HTMLElement).closest('[data-wi]')) e.preventDefault(); }}
-      style={book ? { fontSize: book.fontSize, textAlign: book.justify ? 'justify' : 'left', hyphens: book.justify ? 'auto' : 'manual', WebkitHyphens: book.justify ? 'auto' : 'manual' } : undefined}
-      className={book
-        ? `font-read ${glossed ? 'leading-[2.5]' : 'leading-[1.75]'} select-none [-webkit-touch-callout:none]`
-        : `font-read text-[17px] md:text-[19px] ${glossed ? 'leading-[2.6]' : 'leading-[2]'} text-slate-800 dark:text-slate-100 max-w-[68ch] select-none [-webkit-touch-callout:none]`}>
+      style={fontSize ? { fontSize } : undefined}
+      className={`font-read ${fontSize ? '' : 'text-[17px] md:text-[19px]'} ${glossed ? 'leading-[2.6]' : 'leading-[2]'} text-slate-800 dark:text-slate-100 max-w-[68ch] select-none [-webkit-touch-callout:none]`}>
       {section.paragraphs.map((p, pi) => {
         const parts: React.ReactNode[] = [];
         let cursor = p.start;
@@ -168,8 +166,6 @@ export const ReaderText: React.FC<ReaderTextProps> = ({ section, selection, clas
           }
         });
         if (cursor < p.end) parts.push(section.text.slice(cursor, p.end));
-        // In a book, paragraphs are indented and not spaced; the first is not indented.
-        if (book) return <p key={pi} className={`m-0 [orphans:2] [widows:2] ${pi === 0 ? '' : 'indent-[1.5em]'}`}>{parts}</p>;
         if (!paragraphFooter) return <p key={pi} className="mb-4 last:mb-0">{parts}</p>;
         return (
           <div key={pi} className="mb-4 last:mb-0">

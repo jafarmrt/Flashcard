@@ -19,6 +19,7 @@ import { RecapPanel } from './reader/Recap';
 import { ChapterCoverage } from './reader/ChapterCoverage';
 import { phraseRanges, rangeText, readerSection, sentenceOf } from '../services/readerText';
 import { analyzeSentence, grammarCards, Sense, SenseBatcher, sensesInContext } from '../services/senseService';
+import { keepSense, savedSense, senseKey } from '../services/senseCache';
 import { detectGrammar, ruleById } from '../services/grammarPatterns';
 import { explainInSentence, ruleCard, ruleIdsWithCards } from '../services/grammarCards';
 import { normalizeTerm } from '../services/vocabMerge';
@@ -30,7 +31,6 @@ import { useReadAloud } from '../hooks/useReadAloud';
 import { fa, Icon } from './common/ui';
 import { Range, ReaderText } from './reader/ReaderText';
 import { SelectionBar, SelectionTask, sheetClass } from './reader/SelectionBar';
-import { PageColumns, usePagination } from './reader/BookPages';
 import { TextEditor } from './reader/TextEditor';
 
 interface ChunkReaderViewProps {
@@ -67,20 +67,9 @@ export type CompleteThen = 'library' | 'next' | 'stay';
 // section), the page of a word, or where the reader left it on this device.
 export type ReaderEntry = { kind: 'start' | 'end' | 'resume' } | { kind: 'word'; word: number };
 
-// Book mode: type sizes, and the paper (night is the dark theme's paper).
+// Type sizes of the reader's text (Settings.readerFontSize is an index).
 export const READER_FONT_SIZES = [16, 18, 20, 22, 25];
 const DEFAULT_FONT_STEP = 1;
-type Paper = NonNullable<Settings['readerPaper']>;
-const PAPER: Record<Paper, { label: string; page: string; swatch: string }> = {
-  cream: { label: 'کرم', page: 'bg-[#FBF6EC] text-[#2E2A24]', swatch: 'bg-[#FBF6EC]' },
-  white: { label: 'سفید', page: 'bg-white text-slate-800', swatch: 'bg-white' },
-  night: { label: 'شب', page: 'dark bg-[#18191C] text-[#DAD5C8]', swatch: 'bg-[#18191C]' },
-};
-// The place on the page, kept on this device: the first word of the page.
-const placeKey = (chapterId: string, chunk: number) => `lc_reader_at:${chapterId}:${chunk}`;
-const savedPlace = (chapterId: string, chunk: number): number => {
-  try { return Math.max(0, Number(localStorage.getItem(placeKey(chapterId, chunk))) || 0); } catch { return 0; }
-};
 
 // `uid` stays with an item while its term changes (the dictionary's headword,
 // then the AI's form in this sentence); `key` is its term, normalised.
@@ -95,6 +84,10 @@ type Item = ExtractedWordCard & {
   loading?: boolean;
   senseLoading?: boolean;
   inContext?: boolean; // the meaning was chosen for this sentence
+  tapped?: string; // the words as tapped or picked, to ask the AI about later
+  // A word with a card: the AI's meaning in this sentence, when asked, to
+  // see whether it is the card's meaning or another one.
+  here?: { loading?: boolean; sense?: Sense | null };
 };
 
 
@@ -105,7 +98,7 @@ const ltr = (text: string) => `\u2068${text}\u2069`;
 let uids = 0;
 const newUid = () => `i${++uids}`;
 const toItem = (card: ExtractedWordCard, extra: Partial<Item> = {}): Item => ({ ...card, uid: newUid(), key: normalizeTerm(card.front), forms: [], ...extra });
-const cardOf = ({ uid: _u, key: _k, forms: _f, ranges: _r, at: _a, loading: _l, senseLoading: _s, inContext: _c, ...card }: Item): ExtractedWordCard => card;
+const cardOf = ({ uid: _u, key: _k, forms: _f, ranges: _r, at: _a, loading: _l, senseLoading: _s, inContext: _c, tapped: _t, here: _h, ...card }: Item): ExtractedWordCard => card;
 
 // How well the user knows a word that has a card: new (seed, sprout),
 // learning (sapling, tree) or learned (rooted).
@@ -362,8 +355,29 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     };
   };
 
-  // A tapped word or a picked phrase: the dictionary answers first (fast,
-  // kept on this device); with AI on, the meaning in this sentence follows.
+  // The AI's meaning of a term in its sentence: from this device when it
+  // was asked before, else asked (several taps go in one request).
+  const senseOf = async (term: string, sentence: string): Promise<Sense | null> => {
+    const key = senseKey(term, sentence, level);
+    const kept = await savedSense(key);
+    if (kept) return kept;
+    try {
+      const s = await batcher.current!.request({ term, sentence });
+      if (s) keepSense(key, s);
+      return s;
+    } catch (error) {
+      aiFailed(error, 'sense');
+      return null;
+    }
+  };
+  const canAskAi = () => useAi && !aiOff.current;
+
+  // A tapped word or a picked phrase: the dictionary answers (fast, free,
+  // kept on this device). The AI is asked only when the reader asks for the
+  // meaning in this sentence, or when the dictionary has nothing; an answer
+  // the AI gave before for this sentence shows at once. A tap used to ask
+  // the AI every time, which cost a request for each quick look.
+  // A looked-up word is not picked for a card: the reader adds it.
   const lookUp = async (from: number, to: number) => {
     const single = from === to;
     const term = single ? section.words[from].text.toLowerCase().replace(/’/g, "'") : rangeText(section, from, to);
@@ -377,7 +391,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     const own = cardForTerm(cardIndex, surface);
     if (own) {
       const item = toItem({ front: own.front, back: own.back, kind: own.kind || (single ? 'word' : 'phrase'), sourceSentence: sentence, selected: false, alreadyInDeck: true }, {
-        forms: single ? [surface] : [], ranges: single ? undefined : [[from, to]], at: from,
+        forms: single ? [surface] : [], ranges: single ? undefined : [[from, to]], at: from, tapped: term,
       });
       setItems(prev => [...prev, item]);
       setSelectedUid(item.uid);
@@ -386,16 +400,13 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     }
     pending.current.add(surface);
     const inDeck = hasCard(surface);
-    const wantSense = useAi && !aiOff.current && !inDeck;
-    const temp = toItem({ front: term, back: '…', kind: single ? 'word' : 'phrase', sourceSentence: sentence, selected: !inDeck, alreadyInDeck: inDeck }, {
-      forms: single ? [surface] : [], ranges: single ? undefined : [[from, to]], at: from, loading: true,
+    const temp = toItem({ front: term, back: '…', kind: single ? 'word' : 'phrase', sourceSentence: sentence, selected: false, alreadyInDeck: inDeck }, {
+      forms: single ? [surface] : [], ranges: single ? undefined : [[from, to]], at: from, loading: true, tapped: term,
     });
     setItems(prev => [...prev, temp]);
     setSelectedUid(temp.uid);
     setSelection(null);
-    const sense = wantSense
-      ? batcher.current!.request({ term, sentence }).catch(error => { aiFailed(error, 'sense'); return null; })
-      : Promise.resolve(null);
+    const kept = useAi && !inDeck ? savedSense(senseKey(term, sentence, level)) : Promise.resolve(null);
     try {
       let entry: FreeEnrichment | null = null;
       let unreachable = false;
@@ -407,12 +418,13 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
       }
       if (!alive.current) return;
       const known = !!entry && (entry.found || !!entry.translation);
+      const wantSense = !known && canAskAi() && !inDeck;
       if (known) {
         settle(temp.uid, it => {
           const card = enrichmentToCard(surface, sentence, entry!, it.kind);
           const front = single ? card.front : term; // a dictionary headword for a phrase is the phrase itself
           const deck = hasCard(front) || inDeck;
-          return { ...it, ...card, front, key: normalizeTerm(front), loading: false, senseLoading: wantSense, alreadyInDeck: deck, selected: !deck };
+          return { ...it, ...card, front, key: normalizeTerm(front), loading: false, alreadyInDeck: deck, selected: false };
         });
         setSaved(false);
       } else if (!wantSense) {
@@ -420,24 +432,58 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
         drop(temp.uid);
         return;
       }
-      const s = await sense;
+      const s = (await kept) || (wantSense ? await senseOf(term, sentence) : null);
       if (!alive.current) return;
       if (s) {
-        settle(temp.uid, it => withSense(it, s));
+        settle(temp.uid, it => ({ ...withSense(it, s), selected: false }));
         setSaved(false);
       } else if (!known) {
         showToast(unreachable ? 'جست‌وجوی واژه ناموفق بود. اتصال را بررسی کن.' : `معنی «${ltr(term)}» پیدا نشد.`);
         drop(temp.uid);
-      } else {
-        settle(temp.uid, it => ({ ...it, senseLoading: false }));
       }
     } finally {
       pending.current.delete(surface);
     }
   };
 
-  // A structure the rules found: its card from the app's own explanation;
-  // with AI, an explanation about this very sentence follows.
+  // A word with a card, met here perhaps in another sense ("bank" of a
+  // river, when the card says the bank for money): the AI's meaning here,
+  // next to the card's. A different one can become a card of its own.
+  const askOwnInContext = async (it: Item) => {
+    if (it.here?.loading || it.here?.sense || !canAskAi()) return;
+    const term = it.tapped || it.front;
+    setItems(prev => prev.map(p => (p.uid === it.uid ? { ...p, here: { loading: true } } : p)));
+    const s = await senseOf(term, it.sourceSentence || '');
+    if (!alive.current) return;
+    setItems(prev => prev.map(p => (p.uid === it.uid ? { ...p, here: { sense: s } } : p)));
+    if (!s) showToast('معنی این جمله پیدا نشد.');
+  };
+  const cardForOtherSense = (it: Item, s: Sense) => {
+    const item = toItem({
+      front: s.front && tokensOf(s.front).length <= MAX_PHRASE_WORDS ? s.front : it.front,
+      back: s.back, definition: s.definition ? [s.definition] : [], partOfSpeech: s.partOfSpeech, pronunciation: s.pronunciation,
+      kind: s.kind || it.kind, notes: s.notes, level: s.level, origin: s.origin || aiOrigin(aiOptions),
+      sourceSentence: it.sourceSentence, selected: true, alreadyInDeck: false, newSense: true,
+    }, { forms: it.forms, ranges: it.ranges, at: it.at, inContext: true, tapped: it.tapped });
+    setItems(prev => [...prev, item]);
+    setSelectedUid(item.uid);
+    setSaved(false);
+  };
+
+  // «معنی در این جمله»: the AI's meaning for an item the dictionary gave.
+  const askInContext = async (it: Item) => {
+    if (it.senseLoading || it.inContext || !canAskAi()) return;
+    const term = it.tapped || it.front;
+    const sentence = it.sourceSentence || '';
+    settle(it.uid, x => ({ ...x, senseLoading: true }));
+    const s = await senseOf(term, sentence);
+    if (!alive.current) return;
+    settle(it.uid, x => (s ? { ...withSense(x, s), selected: x.selected } : { ...x, senseLoading: false }));
+  };
+
+  // A structure the rules found: its card from the app's own explanation.
+  // An explanation about this very sentence comes from the AI when the
+  // reader asks for it («توضیح برای این جمله»), not on every tap.
   const openRule = (id: string, wordIndex?: number) => {
     const rule = ruleById(id);
     if (!rule) return;
@@ -447,19 +493,23 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     if (twin) { setSelectedUid(twin.uid); return; }
     const sentence = wordIndex !== undefined ? sentenceOf(section, wordIndex)?.text : undefined;
     const deck = rulesInDeck.has(id) || hasCard(rule.name);
-    const wantAi = useAi && !aiOff.current && !deck && !!sentence;
-    const item = toItem({ ...ruleCard(rule, sentence), selected: !deck, alreadyInDeck: deck }, { senseLoading: wantAi });
+    const item = toItem({ ...ruleCard(rule, sentence), selected: false, alreadyInDeck: deck });
     setItems(prev => [...prev, item]);
     setSelectedUid(item.uid);
-    if (!deck) setSaved(false);
-    if (!wantAi) return;
-    explainInSentence(rule, sentence!, aiOptions)
-      .then(r => { if (alive.current) settle(item.uid, it => ({ ...it, back: r.explanation, notes: rule.explanation, origin: r.origin, inContext: true, senseLoading: false })); })
+  };
+  const explainRule = (it: Item) => {
+    const rule = it.grammarId ? ruleById(it.grammarId) : undefined;
+    const sentence = it.sourceSentence;
+    if (!rule || !sentence || it.senseLoading || it.inContext || !canAskAi()) return;
+    settle(it.uid, x => ({ ...x, senseLoading: true }));
+    explainInSentence(rule, sentence, aiOptions)
+      .then(r => { if (alive.current) settle(it.uid, x => ({ ...x, back: r.explanation, notes: rule.explanation, origin: r.origin, inContext: true, senseLoading: false })); })
       .catch(error => {
         aiFailed(error, 'explain');
-        if (alive.current) settle(item.uid, it => ({ ...it, senseLoading: false }));
+        if (alive.current) settle(it.uid, x => ({ ...x, senseLoading: false }));
       });
   };
+
 
   const tapWord = (i: number) => {
     setSentenceResult(null);
@@ -480,7 +530,14 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     const existing = itemAt[i];
     if (existing) {
       setSelectedUid(existing);
-      setItems(prev => prev.map(p => (p.uid === existing && p.at === undefined ? { ...p, at: i } : p)));
+      // A word with a card, tapped in another sentence: its sheet speaks of
+      // this sentence («معنی در این جمله» asks about it), not the first one.
+      const here = sentenceOf(section, i)?.text;
+      setItems(prev => prev.map(p => {
+        if (p.uid !== existing) return p;
+        if (p.alreadyInDeck && here && here !== p.sourceSentence) return { ...p, at: i, sourceSentence: here, here: undefined };
+        return p.at === undefined ? { ...p, at: i } : p;
+      }));
       return;
     }
     lookUp(i, i);
@@ -620,8 +677,6 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   useEffect(() => {
     if (!settings.preReadAuto || done || section.words.length === 0) return;
     runPreRead();
-    // In book mode the hard words open beside the page.
-    if (settings.readerMode !== 'scroll') setPanel('words');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -652,28 +707,41 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     }
   };
 
-  const finish = () => {
-    if (toSave.length > 0 && !window.confirm(`${fa(toSave.length)} واژهٔ انتخاب‌شده هنوز کارت نشده‌اند. بدون ساختن کارت تمام شود؟`)) return;
-    onComplete('library');
+  // Leaving a section with words picked for cards but not saved: they are
+  // saved, or left, as the reader says; going on is never blocked.
+  const leaveSection = async () => {
+    if (toSave.length === 0) return;
+    if (window.confirm(`${fa(toSave.length)} واژهٔ انتخاب‌شده هنوز کارت نشده. کارتشان ساخته شود؟\n(لغو: بی‌کارت ادامه بده)`)) await save();
+  };
+  // Finishing a section goes on to the next one, as reading a book does; the
+  // chapter's last section ends on the chapter's end.
+  const finishing = useRef(false);
+  const finish = async () => {
+    if (finishing.current) return;
+    finishing.current = true;
+    try {
+      await leaveSection();
+      readAloud.stop();
+      if (isLastSection) {
+        if (!done) await onComplete('stay');
+        if (!alive.current) return;
+        setEndPage(true);
+        window.scrollTo({ top: 0 });
+      } else if (!done) {
+        await onComplete('next');
+      } else {
+        onOpenChunk(index + 1, { kind: 'start' });
+      }
+    } finally {
+      finishing.current = false;
+    }
   };
 
-  // --- Book mode: the section as pages ---
-  const bookMode = settings.readerMode !== 'scroll';
   const fontStep = Math.max(0, Math.min(READER_FONT_SIZES.length - 1, settings.readerFontSize ?? DEFAULT_FONT_STEP));
-  const justify = settings.readerJustify !== false;
-  const appDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
-  const paper: Paper = appDark ? 'night' : settings.readerPaper || 'cream';
-  const room = useRef<HTMLDivElement>(null);
-  const pageText = useRef<HTMLDivElement>(null);
-  const firstAnchor = useMemo(() => (entry.kind === 'start' ? 0
-    : entry.kind === 'end' ? Math.max(0, section.words.length - 1)
-    : entry.kind === 'word' ? entry.word
-    : savedPlace(chapter.id, index)), []); // eslint-disable-line react-hooks/exhaustive-deps
-  const pagination = usePagination(room, pageText, firstAnchor, `${bookMode}|${fontStep}|${justify}|${chunk.length}`);
-  const { layout, pages, page } = pagination;
-  // The chapter's last section ends on a page of its own.
+  // The chapter's last section, once finished, ends on a part of its own:
+  // what the next chapter holds, a review of the chapter's words, the next
+  // chapter. (Book pages had it; they were taken out in 7.11.0.)
   const [endPage, setEndPage] = useState(false);
-  const [panel, setPanel] = useState<'type' | 'words' | null>(null);
   const [editing, setEditing] = useState(false);
   const editor = editing && onEditText && (
     <TextEditor title={`${chapterCount > 1 ? `${chapter.title}، ` : ''}بخش ${fa(index + 1)} از ${fa(chunks.length)}`} text={chunk}
@@ -692,110 +760,20 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   const isLastSection = index >= chunks.length - 1;
   const sectionEmpty = section.words.length === 0;
 
-  const turnTo = (p: number) => {
-    pagination.turnTo(p);
-    setSelection(null);
-  };
-  // The place on the page is kept for the next time this section opens here.
+  // Opened at a word (a note's place, a word from the list): it is brought
+  // into view; opened at the end (going back from the next section), the
+  // last lines are.
   useEffect(() => {
-    if (!bookMode || !layout) return;
-    try { localStorage.setItem(placeKey(chapter.id, index), String(pagination.firstWordOn(page))); } catch { /* private mode */ }
+    const at = entry.kind === 'word' ? entry.word : entry.kind === 'end' ? section.words.length - 1 : -1;
+    if (at < 0) return;
+    const timer = setTimeout(() => document.querySelector(`[data-wi="${at}"]`)?.scrollIntoView({ block: 'center' }), 50);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, layout]);
-
-  // Leaving a section with words picked but not saved: they are saved, or
-  // left, as the reader says; turning the page is never blocked.
-  const leaveSection = async () => {
-    if (toSave.length === 0) return;
-    if (window.confirm(`${fa(toSave.length)} واژهٔ انتخاب‌شده هنوز کارت نشده. کارتشان ساخته شود؟\n(لغو: بی‌کارت ادامه بده)`)) await save();
-  };
-  const turning = useRef(false);
-  const nextPage = async () => {
-    if (endPage || turning.current) return;
-    if (page < pages - 1) { turnTo(page + 1); return; }
-    turning.current = true;
-    try {
-      await leaveSection();
-      readAloud.stop();
-      if (isLastSection) {
-        if (!done) await onComplete('stay');
-        setEndPage(true);
-      } else if (!done) {
-        await onComplete('next');
-      } else {
-        onOpenChunk(index + 1, { kind: 'start' });
-      }
-    } finally {
-      turning.current = false;
-    }
-  };
-  const prevPage = () => {
-    if (endPage) { setEndPage(false); return; }
-    if (page > 0) { turnTo(page - 1); return; }
-    if (index > 0) { readAloud.stop(); onOpenChunk(index - 1, { kind: 'end' }); }
-  };
-  const atStart = !endPage && page === 0 && index === 0;
-
-  // Arrow keys and Page Up/Down turn pages, as in an e-book.
-  useEffect(() => {
-    if (!bookMode) return;
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (t && (t.closest('input, textarea, select, [contenteditable="true"]') || e.altKey || e.ctrlKey || e.metaKey)) return;
-      if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); nextPage(); }
-      else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); prevPage(); }
-      else if (e.key === 'Escape') { setPanel(null); setSelection(null); setSelectedUid(null); }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  });
-
-  // A swipe with a finger turns the page; a tap on a word still looks it up.
-  const swipe = useRef<{ id: number; x: number; y: number; t: number } | null>(null);
-  const swiped = useRef(false);
-  const onSwipeStart = (e: React.PointerEvent) => {
-    if (e.pointerType === 'mouse') return;
-    swipe.current = { id: e.pointerId, x: e.clientX, y: e.clientY, t: Date.now() };
-    swiped.current = false;
-  };
-  const onSwipeEnd = (e: React.PointerEvent) => {
-    const s = swipe.current;
-    swipe.current = null;
-    if (!s || s.id !== e.pointerId) return;
-    const dx = e.clientX - s.x;
-    const dy = e.clientY - s.y;
-    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.4 || Date.now() - s.t > 800) return;
-    swiped.current = true;
-    if (dx < 0) nextPage(); else prevPage();
-  };
-
-  // Reading aloud starts on the page in view, and the pages follow it.
-  const readFromPage = () => {
-    if (readAloud.status !== 'idle') { readAloud.toggle(); return; }
-    const first = pagination.firstWordOn(page);
-    const from = pieces.findIndex(p => p.to >= first);
-    readAloud.play(from >= 0 ? from : 0);
-  };
-  useEffect(() => {
-    if (!bookMode || !readAloud.active || !readingPiece || !layout) return;
-    const p = pagination.pageOfWord(readingPiece.from);
-    if (p !== page) pagination.turnTo(p);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [readAloud.index, readAloud.active]);
-
-  // A word opened from the list is brought into view.
-  useEffect(() => {
-    if (!bookMode || !detail || !layout) return;
-    const place = placeOf(detail);
-    if (!place) return;
-    const p = pagination.pageOfWord(place.from);
-    if (p !== page) pagination.turnTo(p);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedUid]);
+  }, []);
 
   // Keeps the piece being read in view.
   useEffect(() => {
-    if (bookMode || !readAloud.active || !readingPiece) return;
+    if (!readAloud.active || !readingPiece) return;
     const el = document.querySelector(`[data-wi="${readingPiece.from}"]`);
     if (!el) return;
     const box = el.getBoundingClientRect();
@@ -1021,11 +999,10 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
         {notes.filter(n => !n.isDeleted).sort((a, b) => a.chunk - b.chunk || a.from - b.from).map(n => (
           <li key={n.id}>
             <button type="button" onClick={() => {
-              setPanel(null);
               if (n.chunk === index) {
                 const range = placedNotes.find(p => p.note.id === n.id)?.range;
                 if (!range) { showToast('واژه‌های این یادداشت در متن ویرایش‌شده پیدا نشد.'); return; }
-                if (bookMode) pagination.turnTo(pagination.pageOfWord(range.from));
+                document.querySelector(`[data-wi="${range.from}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
                 setSelectedUid(null);
                 setNotesOpenAt(range.from);
               } else {
@@ -1246,12 +1223,35 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
                   از کارت خودت · {STAGE_NAMES[masteryStage(ownCard)]}
                 </p>
               )}
+              {ownCard && detail && detail.kind !== 'grammar' && useAi && !aiOff.current && (
+                detail.here?.sense ? (
+                  <div className="rounded-xl bg-slate-50 dark:bg-slate-700/50 px-3 py-2 flex flex-col gap-1.5 text-sm">
+                    <span><span className="text-ink-muted dark:text-slate-400">در این جمله: </span><span className="font-bold text-ink dark:text-white">{detail.here.sense.back}</span></span>
+                    {detail.here.sense.notes && <span className="text-xs text-ink-muted dark:text-slate-400">{detail.here.sense.notes}</span>}
+                    <button type="button" onClick={() => cardForOtherSense(detail, detail.here!.sense!)}
+                      className="self-start min-h-[36px] px-3 rounded-xl text-sm font-bold border-2 border-brand-200 dark:border-brand-700 text-brand-800 dark:text-brand-100">
+                      معنی دیگری است؛ کارت تازه برای این معنی
+                    </button>
+                  </div>
+                ) : (
+                  <button type="button" onClick={() => askOwnInContext(detail)} disabled={!!detail.here?.loading} title="آیا این‌جا همان معنی کارتت را دارد؟"
+                    className="self-start min-h-[36px] px-3 rounded-xl text-sm font-bold bg-brand-50 text-brand-800 hover:bg-brand-100 dark:bg-brand-900/40 dark:text-brand-100 disabled:opacity-60">
+                    {detail.here?.loading ? 'در حال پرسیدن…' : 'معنی در این جمله'}
+                  </button>
+                )
+              )}
               {(shown.inContext || shown.senseLoading) && (
                 <p className={`self-start text-xs rounded-full px-2.5 py-0.5 ${shown.inContext ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200' : 'bg-slate-100 text-ink-muted dark:bg-slate-700 dark:text-slate-300'}`}>
                   {shown.kind === 'grammar'
                     ? (shown.inContext ? 'توضیح برای همین جمله' : 'در حال نوشتن توضیح برای همین جمله…')
                     : (shown.inContext ? 'معنی در همین جمله' : 'در حال پیدا کردن معنی در همین جمله…')}
                 </p>
+              )}
+              {!ownCard && !shown.inContext && !shown.senseLoading && useAi && !aiOff.current && (shown.kind !== 'grammar' || (!!shown.grammarId && !!shown.sourceSentence)) && (
+                <button type="button" onClick={() => (shown.kind === 'grammar' ? explainRule(shown) : askInContext(shown))} title="با هوش مصنوعی، برای همین جمله"
+                  className="self-start min-h-[36px] px-3 rounded-xl text-sm font-bold bg-brand-50 text-brand-800 hover:bg-brand-100 dark:bg-brand-900/40 dark:text-brand-100">
+                  {shown.kind === 'grammar' ? 'توضیح برای این جمله' : 'معنی در این جمله'}
+                </button>
               )}
               {detailRules.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1.5 text-sm">
@@ -1295,10 +1295,10 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
               )}
               <div className="flex flex-wrap items-center gap-3 pt-1">
                 {!shown.alreadyInDeck && (
-                  <label className={`${wide} flex items-center gap-2 text-sm`}>
-                    <input type="checkbox" checked={!!shown.selected} onChange={() => toggle(shown.uid)} className="w-[18px] h-[18px] accent-brand-500" />
-                    کارت ساخته شود
-                  </label>
+                  <button type="button" onClick={() => toggle(shown.uid)} aria-pressed={!!shown.selected}
+                    className={`min-h-[40px] px-3 rounded-xl text-sm font-bold ${shown.selected ? 'bg-brand-500 text-white' : 'border-2 border-brand-200 dark:border-brand-700 text-brand-800 dark:text-brand-100'}`}>
+                    {shown.selected ? '✓ برای کارت' : '+ کارت'}
+                  </button>
                 )}
                 {shown.kind !== 'grammar' && (detailKnownAs
                   ? <button type="button" onClick={() => onUnmarkKnown(detailKnownAs)} className="min-h-[40px] px-3 rounded-xl text-sm border border-slate-200 dark:border-slate-600">در فهرست «بلدم» است؛ بردار</button>
@@ -1315,188 +1315,28 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
     );
   };
 
-  // Book mode: the page fills the screen; the tools sit in a thin bar above
-  // it and open in panels, so nothing but the text is on the page.
-  const renderBook = () => {
-    const chapterShare = Math.round((100 * (index + (endPage ? 1 : sectionEmpty ? 1 : (page + 1) / Math.max(1, pages)))) / Math.max(1, chunks.length));
-    const sideZone = layout ? Math.max(20, (layout.roomWidth - layout.width) / 2) : 20;
-    // At the reader's own pace once there is enough reading to measure it.
-    const leftMinutes = minutesFor(chapter.wordCount * Math.max(0, 1 - chapterShare / 100), wordsPerMinute(totalOf(book.reading)));
-    const toolButton = 'inline-flex items-center justify-center gap-1.5 min-h-[40px] min-w-[40px] px-2.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10';
-    const pageButton = 'w-11 h-11 rounded-full flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-25';
-    return (
-      <div dir="rtl" className={`font-fa fixed inset-0 z-20 flex flex-col ${PAPER[paper].page}`}>
-        <header className="shrink-0 flex items-center gap-1.5 px-2 md:px-5 h-14 border-b border-black/[0.06] dark:border-white/10">
-          <button type="button" onClick={onBack} aria-label="برگشت به کتاب" title="برگشت به کتاب" className={toolButton}><Icon.Back /></button>
-          <div className="flex-1 min-w-0 px-1">
-            <h1 dir="auto" className="font-en font-bold text-[15px] truncate text-right">{book.title}</h1>
-            <p className="text-[11px] opacity-60 truncate">{chapterCount > 1 && <><bdi dir="auto">{chapter.title}</bdi> · </>}بخش {fa(index + 1)} از {fa(chunks.length)}</p>
-          </div>
-          <button type="button" onClick={readFromPage} disabled={sectionEmpty || endPage} aria-label={readAloud.active ? 'مکث خواندن' : 'خواندن بلند از همین صفحه'} title="خواندن بلند"
-            className={`${toolButton} ${readAloud.active ? 'text-amber-700 dark:text-amber-300' : ''} disabled:opacity-30`}>
-            {readAloud.active ? <Icon.Pause size={18} /> : <Icon.Speaker size={18} />}
-            <span className="hidden md:inline text-sm">{readAloud.status === 'loading' ? 'آماده کردن…' : readAloud.status === 'playing' ? 'مکث' : readAloud.status === 'paused' ? 'ادامه' : 'خواندن'}</span>
-          </button>
-          <button type="button" onClick={() => setPanel(panel === 'words' ? null : 'words')} aria-expanded={panel === 'words'} title="واژه‌های این بخش" className={`${toolButton} relative`}>
-            <Icon.List size={18} /><span className="hidden md:inline text-sm">واژه‌ها</span>
-            {(toSave.length > 0 || loading) && <span className="absolute -top-0.5 -left-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-brand-500 text-white text-[11px] font-bold flex items-center justify-center">{loading ? '…' : fa(toSave.length)}</span>}
-          </button>
-          <button type="button" onClick={() => setPanel(panel === 'type' ? null : 'type')} aria-expanded={panel === 'type'} title="ظاهر صفحه" className={`${toolButton} font-en font-bold`}>Aa</button>
-        </header>
-
-        <div className="relative flex-1 min-h-0 px-5 md:px-12 py-5 md:py-8" style={{ touchAction: 'pan-y' }}
-          onPointerDown={onSwipeStart} onPointerUp={onSwipeEnd} onPointerCancel={() => { swipe.current = null; }}
-          onClickCapture={e => { if (swiped.current) { swiped.current = false; e.stopPropagation(); e.preventDefault(); } }}>
-          <div ref={room} className="h-full w-full">
-            {endPage ? (
-              <section aria-label="پایان فصل" className="h-full flex flex-col items-center justify-center gap-4 text-center max-w-md mx-auto">
-                <p className="text-sm opacity-60">پایان</p>
-                <h2 dir="auto" className="font-read text-3xl font-bold">{chapterCount > 1 ? chapter.title : book.title}</h2>
-                <p className="opacity-75">{fa(chunks.length)} بخش خوانده شد.{nextChapter ? '' : chapterCount > 1 ? ' این آخرین فصل کتاب بود.' : ''}</p>
-                {nextChapter && loadChapter && (
-                  <ChapterCoverage chapterId={nextChapter.id} loadTexts={() => loadChapter(nextChapter.id)} cards={cards} knownTerms={knownTerms} userLevel={settings.userLevel} />
-                )}
-                <div className="flex flex-col gap-2 w-full mt-2">
-                  {onReviewChapter && <button type="button" onClick={onReviewChapter} className="min-h-[48px] rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-bold">مرور واژه‌های {chapterCount > 1 ? 'این فصل' : 'این متن'}</button>}
-                  {nextChapter && <button type="button" onClick={nextChapter.open} className="min-h-[48px] rounded-2xl border-2 border-current/20 font-bold hover:bg-black/5 dark:hover:bg-white/10">فصل بعد: <bdi dir="auto">{nextChapter.title}</bdi></button>}
-                  <button type="button" onClick={onBack} className="min-h-[44px] rounded-2xl font-bold opacity-80 hover:bg-black/5 dark:hover:bg-white/10">برگشت به کتاب</button>
-                </div>
-              </section>
-            ) : sectionEmpty ? (
-              <div className="h-full flex flex-col items-center justify-center gap-2 text-center opacity-70">
-                <p>این بخش متنی ندارد.</p>
-                <p className="text-sm">با صفحهٔ بعد ادامه بده.</p>
-              </div>
-            ) : layout && (
-              <PageColumns layout={layout} page={page} contentRef={pageText}>
-                <ReaderText section={section} selection={selection} classFor={classFor} onTap={tapWord} onSelect={pick} glosses={glosses}
-                  book={{ fontSize: READER_FONT_SIZES[fontStep], justify }} />
-              </PageColumns>
-            )}
-          </div>
-          {/* The margins beside the page turn it, like the edge of a paper page. */}
-          <button type="button" onClick={prevPage} disabled={atStart} aria-label="صفحهٔ قبل" tabIndex={-1}
-            className="absolute inset-y-0 left-0 cursor-w-resize disabled:cursor-default" style={{ width: sideZone }} />
-          <button type="button" onClick={nextPage} disabled={endPage} aria-label="صفحهٔ بعد" tabIndex={-1}
-            className="absolute inset-y-0 right-0 cursor-e-resize disabled:cursor-default" style={{ width: sideZone }} />
-        </div>
-
-        <footer dir="ltr" className="shrink-0 flex items-center gap-2 px-2 md:px-5 h-14 border-t border-black/[0.06] dark:border-white/10 pb-[env(safe-area-inset-bottom)]">
-          <button type="button" onClick={prevPage} disabled={atStart} aria-label="صفحهٔ قبل" className={pageButton}><Icon.Back size={22} className="rotate-180" /></button>
-          <div className="flex-1 flex flex-col items-center gap-1 min-w-0">
-            <div className="w-full max-w-md h-1 rounded-full bg-black/10 dark:bg-white/15 overflow-hidden" role="progressbar" aria-valuenow={chapterShare} aria-valuemin={0} aria-valuemax={100} aria-label="پیشرفت در فصل">
-              <div className="h-full bg-brand-500 rounded-full" style={{ width: `${chapterShare}%` }} />
-            </div>
-            <span dir="rtl" className="text-xs opacity-60 flex gap-2">
-              <bdi>{endPage ? 'پایان فصل' : sectionEmpty ? 'بخش خالی' : `صفحهٔ ${fa(page + 1)} از ${fa(pages)}`}</bdi>
-              <span aria-hidden>·</span>
-              <bdi>{`${fa(chapterShare)}٪ ${chapterCount > 1 ? 'فصل' : 'متن'}`}</bdi>
-              {!endPage && chapterShare < 100 && <><span aria-hidden>·</span><bdi>{`حدود ${fa(leftMinutes)} دقیقه تا پایان ${chapterCount > 1 ? 'فصل' : 'متن'}`}</bdi></>}
-            </span>
-          </div>
-          <button type="button" onClick={nextPage} disabled={endPage} aria-label={!endPage && page >= pages - 1 && !done ? 'پایان این بخش و رفتن به بعدی' : 'صفحهٔ بعد'} className={pageButton}><Icon.Back size={22} /></button>
-        </footer>
-
-        {panel === 'type' && (
-          <div className="fixed inset-0 z-40" onClick={() => setPanel(null)}>
-            <section aria-label="ظاهر صفحه" onClick={e => e.stopPropagation()}
-              className="absolute top-14 left-2 md:left-5 w-[min(22rem,calc(100vw-1rem))] max-h-[calc(100vh-5rem)] overflow-y-auto rounded-3xl bg-white dark:bg-slate-800 text-ink dark:text-slate-100 shadow-2xl ring-1 ring-black/5 p-5 flex flex-col gap-4 text-sm">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-bold">اندازهٔ قلم</span>
-                <div dir="ltr" className="flex items-center gap-1">
-                  <button type="button" onClick={() => onUpdateSettings({ readerFontSize: fontStep - 1 })} disabled={fontStep === 0} aria-label="قلم کوچک‌تر" className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-700 font-read text-sm disabled:opacity-40">A</button>
-                  <span className="w-12 text-center font-en">{READER_FONT_SIZES[fontStep]}</span>
-                  <button type="button" onClick={() => onUpdateSettings({ readerFontSize: fontStep + 1 })} disabled={fontStep === READER_FONT_SIZES.length - 1} aria-label="قلم بزرگ‌تر" className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-700 font-read text-xl disabled:opacity-40">A</button>
-                </div>
-              </div>
-              <div className="flex flex-col gap-2">
-                <span className="font-bold">رنگ کاغذ</span>
-                <div className="flex gap-2">
-                  {(Object.keys(PAPER) as Paper[]).map(p => (
-                    <button key={p} type="button" onClick={() => onUpdateSettings({ readerPaper: p })} disabled={appDark && p !== 'night'} aria-pressed={paper === p}
-                      className={`flex-1 flex flex-col items-center gap-1 rounded-xl p-2 ${paper === p ? 'ring-2 ring-brand-500' : 'ring-1 ring-slate-200 dark:ring-slate-600'} disabled:opacity-40`}>
-                      <span className={`w-full h-8 rounded-lg ring-1 ring-black/10 ${PAPER[p].swatch}`} />
-                      {PAPER[p].label}
-                    </button>
-                  ))}
-                </div>
-                {appDark && <p className="text-xs text-ink-muted dark:text-slate-400">در حالت تیرهٔ برنامه، کاغذ شب است؛ برای کرم یا سفید، ظاهر برنامه را در تنظیمات روشن کن.</p>}
-              </div>
-              <label className="flex items-center justify-between gap-2 cursor-pointer">
-                <span className="font-bold">تراز دو طرف (مثل کتاب چاپی)</span>
-                <input type="checkbox" checked={justify} onChange={e => onUpdateSettings({ readerJustify: e.target.checked })} className="w-5 h-5 accent-brand-500" />
-              </label>
-              <label className="flex items-center justify-between gap-2 cursor-pointer">
-                <span className={`font-bold px-0.5 ${GRAMMAR_MARK}`}>نشان دادن ساختارهای دستوری</span>
-                <input type="checkbox" checked={showGrammar} onChange={e => onUpdateSettings({ hideGrammar: !e.target.checked })} className="w-5 h-5 accent-rose-500" />
-              </label>
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-bold">صدای خواندن</span>
-                <div className="flex p-1 rounded-xl bg-slate-100 dark:bg-slate-700">
-                  {(['device', 'ai'] as ReadAloudVoice[]).map(v => (
-                    <button key={v} type="button" aria-pressed={voice === v} onClick={() => onUpdateSettings({ readAloudVoice: v })} disabled={v === 'device' && !isSpeechSupported()}
-                      className={`min-h-[32px] px-3 rounded-lg text-xs disabled:opacity-40 ${voice === v ? 'bg-white dark:bg-slate-600 shadow-sm font-bold' : 'opacity-70'}`}>
-                      {v === 'device' ? 'دستگاه' : 'هوش مصنوعی'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {masteryShown.size > 0 && (
-                <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted dark:text-slate-400">
-                  <span>زیرخط واژه‌های کارت‌دار:</span>
-                  {(['new', 'learning', 'learned'] as Mastery[]).filter(m => masteryShown.has(m)).map(m => (
-                    <span key={m} className="inline-flex items-center gap-1"><span className={`w-2.5 h-2.5 rounded-full ${MASTERY[m].dot}`} />{MASTERY[m].label}</span>
-                  ))}
-                </p>
-              )}
-              <p className="text-xs text-ink-muted dark:text-slate-400 leading-relaxed">
-                ورق زدن: کشیدن انگشت به چپ و راست، زدن کنارهٔ صفحه، یا کلیدهای ← و →. روی واژه بزن تا معنی‌اش بیاید؛ برای عبارت، انگشت را روی واژهٔ اول نگه دار و بکش.
-              </p>
-              {onEditText && (
-                <button type="button" onClick={() => { setPanel(null); setEditing(true); }} className="min-h-[40px] rounded-xl border border-slate-200 dark:border-slate-600 font-bold">
-                  ویرایش یا حذف متن این بخش
-                </button>
-              )}
-              <button type="button" onClick={() => { setPanel(null); onUpdateSettings({ readerMode: 'scroll' }); }} className="min-h-[40px] rounded-xl border border-slate-200 dark:border-slate-600 font-bold">
-                خواندن به‌صورت پیوسته (اسکرول)
-              </button>
-            </section>
-          </div>
-        )}
-
-        {panel === 'words' && (
-          <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setPanel(null)}>
-            <aside aria-label="واژه‌های این بخش" onClick={e => e.stopPropagation()}
-              className="absolute inset-y-0 right-0 w-full sm:w-[25rem] overflow-y-auto bg-[#F5F6FA] dark:bg-slate-900 text-ink dark:text-slate-100 shadow-2xl p-4 flex flex-col gap-4">
-              <div className="flex items-center gap-2">
-                <h2 className="flex-1 font-extrabold text-lg">واژه‌های بخش {fa(index + 1)}</h2>
-                <button type="button" onClick={() => setPanel(null)} aria-label="بستن" className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10"><Icon.Close size={20} /></button>
-              </div>
-              {preReadBlock}
-              {wordList}
-              {notesList}
-              {toSave.length > 0 && (
-                <button type="button" onClick={save} disabled={saving} className="min-h-[52px] rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold disabled:opacity-60">
-                  {saving ? 'در حال ساخت…' : `ساخت ${fa(toSave.length)} کارت`}
-                </button>
-              )}
-              {waiting > 0 && <p className="text-center text-xs text-ink-muted dark:text-slate-400">معنی {fa(waiting)} واژه در همین جمله هنوز در راه است.</p>}
-              {saved && <p className="text-center text-sm text-emerald-700 dark:text-emerald-300">کارت‌ها ساخته شد و در مرور بعدی می‌آیند.</p>}
-              <p className="text-xs text-ink-muted dark:text-slate-400 leading-relaxed">
-                با ورق زدن از صفحهٔ آخر، این بخش تمام می‌شود و بخش بعد می‌آید.
-                {!done && metAgain > 0 && <> {fa(metAgain)} واژهٔ این بخش از قبل کارت دارد؛ دیده‌شدنشان در این کتاب ثبت می‌شود.</>}
-              </p>
-            </aside>
-          </div>
-        )}
-
-        {panel !== 'words' && sheets(true)}
-        {editor}
+  // The chapter's end: how much of the next chapter is known already, a
+  // review of this chapter's words, and the next chapter.
+  const chapterEnd = (
+    <section aria-label="پایان فصل" className="flex flex-col items-center gap-4 text-center max-w-md mx-auto py-8">
+      <p className="text-sm text-ink-muted dark:text-slate-400">پایان</p>
+      <h2 dir="auto" className="font-read text-3xl font-bold text-ink dark:text-white">{chapterCount > 1 ? chapter.title : book.title}</h2>
+      <p className="text-ink-muted dark:text-slate-300">{fa(chunks.length)} بخش خوانده شد.{nextChapter ? '' : chapterCount > 1 ? ' این آخرین فصل کتاب بود.' : ''}</p>
+      {nextChapter && loadChapter && (
+        <ChapterCoverage chapterId={nextChapter.id} loadTexts={() => loadChapter(nextChapter.id)} cards={cards} knownTerms={knownTerms} userLevel={settings.userLevel} />
+      )}
+      <div className="flex flex-col gap-2 w-full mt-2">
+        {onReviewChapter && <button type="button" onClick={onReviewChapter} className="min-h-[48px] rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-bold">مرور واژه‌های {chapterCount > 1 ? 'این فصل' : 'این متن'}</button>}
+        {nextChapter && <button type="button" onClick={nextChapter.open} className="min-h-[48px] rounded-2xl border-2 border-brand-200 dark:border-slate-600 font-bold text-ink dark:text-white hover:bg-brand-50 dark:hover:bg-slate-700">فصل بعد: <bdi dir="auto">{nextChapter.title}</bdi></button>}
+        <button type="button" onClick={() => setEndPage(false)} className="min-h-[44px] rounded-2xl font-bold text-ink-muted dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700">دوباره دیدن متن این بخش</button>
+        <button type="button" onClick={onBack} className="min-h-[44px] rounded-2xl font-bold text-ink-muted dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700">برگشت به کتاب</button>
       </div>
-    );
-  };
-
-  if (bookMode) return renderBook();
+    </section>
+  );
+  // Reading time left in the chapter, at the reader's own pace once there is
+  // enough reading to measure it.
+  const chapterShare = Math.round((100 * (index + (endPage || done ? 1 : 0))) / Math.max(1, chunks.length));
+  const leftMinutes = minutesFor(chapter.wordCount * Math.max(0, 1 - chapterShare / 100), wordsPerMinute(totalOf(book.reading)));
 
   return (
     <div dir="rtl" className="font-fa flex flex-col gap-5 w-full">
@@ -1536,10 +1376,10 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
               className="w-9 h-9 rounded-[10px] flex items-center justify-center bg-white dark:bg-slate-800 disabled:opacity-40"><Icon.Back size={18} className="rotate-180" /></button>
           </nav>
         )}
-        <button type="button" onClick={() => onUpdateSettings({ readerMode: 'book' })} title="خواندن صفحه‌به‌صفحه، مثل کتاب"
-          className="inline-flex items-center gap-1.5 min-h-[36px] px-3 rounded-xl text-sm font-bold bg-white dark:bg-slate-800 hover:bg-brand-50 dark:hover:bg-slate-700">
-          <Icon.Book size={16} />حالت کتاب
-        </button>
+        <div role="group" aria-label="اندازهٔ قلم" dir="ltr" className="flex items-center rounded-xl bg-white dark:bg-slate-800">
+          <button type="button" onClick={() => onUpdateSettings({ readerFontSize: fontStep - 1 })} disabled={fontStep === 0} aria-label="قلم کوچک‌تر" className="w-9 h-9 rounded-xl font-read text-sm disabled:opacity-40 hover:bg-brand-50 dark:hover:bg-slate-700">A</button>
+          <button type="button" onClick={() => onUpdateSettings({ readerFontSize: fontStep + 1 })} disabled={fontStep === READER_FONT_SIZES.length - 1} aria-label="قلم بزرگ‌تر" className="w-9 h-9 rounded-xl font-read text-xl disabled:opacity-40 hover:bg-brand-50 dark:hover:bg-slate-700">A</button>
+        </div>
         {onEditText && (
           <button type="button" onClick={() => setEditing(true)} title="درست کردن یا حذف بخشی از متن"
             className="min-h-[36px] px-3 rounded-xl text-sm font-bold bg-white dark:bg-slate-800 hover:bg-brand-50 dark:hover:bg-slate-700">
@@ -1551,6 +1391,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
 
       <div className="flex flex-wrap gap-5 items-start">
         <article className="flex-[999_1_30rem] min-w-0 bg-white dark:bg-slate-800 rounded-3xl p-5 md:p-9 flex flex-col gap-4">
+          {endPage ? chapterEnd : <>
           {preReadBlock}
           <div className="flex flex-wrap justify-between items-center gap-2 text-xs text-ink-muted dark:text-slate-400">
             <span>روی واژه بزن تا معنی‌اش بیاید؛ برای عبارت یا جمله، روی چند واژه بکش (در موبایل: اول انگشت را نگه دار).</span>
@@ -1594,7 +1435,10 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
               )}
             </p>
           )}
-          <ReaderText section={section} selection={selection} classFor={classFor} onTap={tapWord} onSelect={pick} glosses={glosses} paragraphFooter={paragraphFooter} />
+          {sectionEmpty && <p className="text-ink-muted dark:text-slate-400">این بخش متنی ندارد؛ با «بخش بعد» ادامه بده.</p>}
+          <ReaderText section={section} selection={selection} classFor={classFor} onTap={tapWord} onSelect={pick} glosses={glosses} paragraphFooter={paragraphFooter}
+            fontSize={READER_FONT_SIZES[fontStep]} />
+          </>}
         </article>
 
         <aside className="flex-[1_1_20rem] max-w-full lg:max-w-md flex flex-col gap-4 lg:sticky lg:top-6">
@@ -1609,10 +1453,15 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
               </button>
             )}
             {waiting > 0 && <p className="text-center text-xs text-ink-muted dark:text-slate-400">معنی {fa(waiting)} واژه در همین جمله هنوز در راه است.</p>}
-            <button type="button" onClick={finish}
-              className={`min-h-[52px] rounded-2xl font-extrabold ${toSave.length === 0 ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'border-2 border-emerald-600 text-emerald-800 dark:text-emerald-200'}`}>
-              {done ? 'برگشت به فهرست بخش‌ها' : 'پایان این بخش'}
-            </button>
+            {!endPage && (
+              <button type="button" onClick={finish}
+                className={`min-h-[52px] rounded-2xl font-extrabold ${toSave.length === 0 ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'border-2 border-emerald-600 text-emerald-800 dark:text-emerald-200'}`}>
+                {isLastSection ? (done ? 'پایان فصل' : 'پایان این بخش و فصل') : done ? 'بخش بعد' : 'پایان این بخش و بعدی'}
+              </button>
+            )}
+            {!endPage && chapterShare < 100 && chapter.wordCount > 0 && (
+              <p className="text-center text-xs text-ink-muted dark:text-slate-400">{`حدود ${fa(leftMinutes)} دقیقه تا پایان ${chapterCount > 1 ? 'فصل' : 'متن'}`}</p>
+            )}
             {saved && <p className="text-center text-sm text-emerald-700 dark:text-emerald-300">کارت‌ها ساخته شد و در مرور بعدی می‌آیند.</p>}
             {!done && metAgain > 0 && (
               <p className="text-center text-xs text-ink-muted dark:text-slate-400">{fa(metAgain)} واژهٔ این بخش از قبل کارت دارد (زیرخط رنگی)؛ با پایان بخش، دیده‌شدنشان در این کتاب ثبت می‌شود و کارت‌های بخش را می‌توانی مرور کنی.</p>

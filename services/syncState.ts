@@ -3,7 +3,6 @@
 //   - a cheap fingerprint of the data, so the automatic sync only runs when
 //     something changed since the last one (reloading the merged data used to
 //     start a new sync every 2 seconds, forever);
-//   - protection for edits made while a sync request is in flight;
 //   - study logs keyed the same way on every device.
 
 import type { Chapter, Deck, Flashcard, KnownWord, Occurrence, Source, SpeechAttempt, StudyLog, TextDoc, TextNote, UserAchievement, UserProfile } from '../types';
@@ -51,23 +50,6 @@ export const syncFingerprint = (s: SyncSnapshotInput): string => [
 
 export const stampMap = <T extends Row>(rows: T[], stamp: (r: T) => string): Map<string, string> =>
   new Map(rows.map(r => [r.id, stamp(r)]));
-
-// Rows of the merged answer that may be written over local ones: a row that
-// changed here while the request was in flight keeps its local version (the
-// next sync sends it). `skipped` counts those rows.
-export const applicableRows = <T extends Row>(
-  merged: T[] | undefined,
-  sent: Map<string, string>,
-  now: Map<string, string>,
-): { rows: T[]; skipped: number } => {
-  const rows: T[] = [];
-  let skipped = 0;
-  for (const row of merged || []) {
-    if (now.get(row.id) === sent.get(row.id)) rows.push(row);
-    else skipped++;
-  }
-  return { rows, skipped };
-};
 
 // A study log is the same review on every device when its uid matches; logs
 // from before uids existed fall back to card, day and rating.

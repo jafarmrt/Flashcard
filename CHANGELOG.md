@@ -9,6 +9,49 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.17.0] - 2026-11-21 - Your Week in a Glance
+- **This week, on Today:** The «این هفته» box now shows the minutes you read (next to the week before), the new cards and «بلدم» words of the week, and how many of your reviews you remembered, with one line of advice that comes from those numbers (too many new cards for what is remembered, a week with reviews but no reading, reading more or less than last week). No points and no streak: only what happened.
+
+## [7.16.0] - 2026-11-21 - Subtitles as Something to Read
+- **Films and series:** «فایل کتاب» now also takes subtitles (.srt, .vtt). Numbers, times, tags and sound notes ([music], ♪) are left out, the lines join into paragraphs, and a pause in the film starts a new one. Read the episode with everything the reader offers, make cards of its words, then watch it.
+
+## [7.15.0] - 2026-11-21 - Listening to Your Books
+- **Listening practice:** «تمرین مکالمه و آزمون» › «شنیدن» reads aloud a sentence from your books that holds a word you are learning, and you write what you hear. The sentence then comes back word by word (right, nearly, another word, left out), with a score and whether you caught your word. Hear it again, slower, or ask for a hint (your word and its meaning). The ear learns the same words the eye met in the book.
+
+## [7.14.0] - 2026-11-21 - Learning From the Book
+- **Another meaning, another card:** Tapping a word that has a card, «معنی در این جمله» shows what it means in this sentence next to your card's meaning. When it is another meaning («bank» of a river, when your card says the bank for money), «کارت تازه برای این معنی» makes a card of its own for it, instead of adding the sentence to the old card.
+- **A quiz from your books:** The quiz now asks the words you are learning in the sentences of your books, with a gap and four of your own words to choose from. It needs no AI and starts at once; the AI writes questions only when your books give too few. A wrong answer counts as forgetting the word, so it comes back in your review.
+- **Which book next:** In the library, books not started yet are sorted by how well they fit you, with a word on each («مناسب»، «کمی سخت»…) and «پیشنهاد برای خواندن بعدی» on the best one (for books whose words were measured on their page).
+- **Memory and the week ahead:** «پیشرفت» shows how many reviews of learned cards you remembered in the last 30 days (the schedule aims at 90%), how many words you know (grown cards and the «بلدم» list) and are learning, and the reviews of the next seven days.
+- **Books offline:** After each sync, the texts of chapters never opened on this device are fetched in the background, so a book added on another device can be read here without a connection.
+- **Restoring a backup:** A card that comes back under a new id keeps the places in books where it was met.
+- **Fix:** The quiz's "due" cards are the same as the review's.
+
+## [7.13.0] - 2026-11-21 - Your Data, Safe
+- **Full backup:** Settings › Data › «ذخیرهٔ پشتیبان» saves the whole account in one file: cards with their review schedule, the review history, books with the text of every chapter, notes, kept translations and the «بلدم» list. «برگرداندن» puts back what is missing or was deleted, and never deletes or replaces anything; a deleted card comes back with its history. (The CSV is still there, for the cards' text only.)
+- **No edit lost in a long sync:** When many rows changed at once (deleting hundreds of cards, a device offline for weeks), a sync goes in rounds; a change still waiting for its round could be overwritten by another device's older copy and never sent. Now the two are merged by the server's own rule, so deleted cards no longer come back.
+- **A wrong clock does not win:** A device whose clock runs ahead no longer wins every conflict; the server brings such times back to its own clock.
+- **"Complete all" asks the AI less:** A card missing only a note no longer counts as incomplete, the AI is asked only for a card with no Persian meaning, a card tried in the last month is not tried again, and a wrong or missing key stops the AI for the rest of the run instead of failing on every card.
+- **Sign out everywhere:** Settings › Account › «خروج از همه» signs every device out of the account (a lost phone, a shared computer).
+- **Safer sign-in:** Failed sign-ins are counted per account on the server (twenty in fifteen minutes lock it for fifteen), so they no longer start again from zero on each of Vercel's servers.
+
+## [7.12.0] - 2026-11-21 - A Lighter, More Active Review
+- **New cards per day:** Today's review brings the cards you are learning first, then at most 15 new cards (Settings › Study › «کارت تازه در روز»: 5 to 50, or no cap). The rest wait for the next days, and Today says how many. Forty words saved from one chapter no longer mean forty extra reviews today and a heap three days later. «ادامه» at the end of a session still takes more.
+- **Asked by how well you know it («خودکار», the default):** A new card is flipped; once you are learning it, you have to bring the word back yourself: in the book's sentence with a gap, or from its Persian meaning.
+- **Persian to English:** A new review mode shows the Persian meaning; you recall the English word, then see the answer.
+- **Asked once more:** A new card you answer right the first time comes back once later in the session, to be sure it was learned and not just seen.
+- **"Again" comes back later:** A card you forgot comes back after ten other cards (or at the end), not after four, when the answer was still in mind.
+- **Synonyms count:** In the written review, any one of the meanings on the card is right («قصد کردن» for «تصمیم گرفتن، قصد کردن»); Arabic ي/ك and the half space no longer make a right answer wrong.
+- **Cramming does not fool the schedule:** Answering «خوب» or «آسان» to a card that is not due yet (a free review of all cards, a book's weakest words) leaves its schedule as it was; forgetting it still counts.
+- **Fix:** Editing a section's text no longer ticks off "read today" on Today's plan.
+
+## [7.11.0] - 2026-11-21 - Reading Without Friction
+- **A tap is a quick look:** Tapping a word shows the dictionary's meaning at once and no longer asks the AI each time. «معنی در این جمله» under it asks the AI for the meaning in this very sentence; when the dictionary does not know the word, the AI is asked by itself. A structure's word («توضیح برای این جمله») works the same way.
+- **Meanings kept:** The AI's meaning of a word in a sentence is kept on this device for three months: tapping it again in that sentence shows it at once, with no new request.
+- **Cards only when you say so:** A looked-up word is no longer picked for a card. «+ کارت» in its sheet picks it; leaving the section asks only about the words you picked.
+- **One scrolling page:** Book pages are gone; every text reads as one scrolling page per section. The type size moved to the reader's header (A A). «پایان این بخش و بعدی» goes on to the next section, and the chapter's last section ends with what was on the book's end page: how much of the next chapter you know, a review of the chapter's words, and the next chapter. Notes in the list take you to their place on the page.
+- **Filling a card again in one step:** Editing a card, «گذاشتن و ذخیرهٔ کارت» puts the picked suggestions in the card and saves it; a second «ذخیره» is no longer needed. (A new card is only filled, as before.)
+
 ## [7.10.0] - 2026-10-31 - Delete the Cards You Choose
 - **Choose cards to delete:** On the cards page, «انتخاب» puts a box beside each card; tick the ones you want gone (or a whole page at once) and press «حذف». Only cards in the list as it is filtered now are deleted.
 - **Always asked first:** Deleting one card or many opens a window that names the cards and how many, with «انصراف» chosen by default; nothing is deleted until you press the red button. The trash button on each card, which used to delete at once, now asks too.

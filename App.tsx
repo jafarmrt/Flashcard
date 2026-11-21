@@ -12,7 +12,7 @@ import { TodayView } from './components/TodayView';
 import { MeView } from './components/MeView';
 import { chaptersOf, currentChunkOf, currentReading, placesByCard } from './services/library';
 import { knownTermSet } from './services/knownWords';
-import { isDue, isNewCard } from './services/srsService';
+import { dailyQueue, DEFAULT_NEW_PER_DAY } from './services/dailyQueue';
 import { dayString } from './services/calendar';
 import { AutoFixReportModal } from './components/AutoFixReportModal';
 
@@ -81,7 +81,7 @@ const App: React.FC = () => {
         settings, userProfile, autoFixReport,
         // Handlers
         setView, showToast, handleAddCard, handleEditCard, handleDeleteCards, handleSaveCard,
-        handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV,
+        handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV, handleExportBackup, handleRestoreBackup, handleQuizMiss,
         handleResetApp, handleDeleteAllCards, handleStudyDeck, handleStartStudySession, setIsStudySetupModalOpen,
         handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
         updateSettings, studyCards,
@@ -102,7 +102,10 @@ const App: React.FC = () => {
     const visibleDecks = decks.filter(d => !d.isDeleted);
     const cardSources = useMemo(() => refreshSources(settings), [settings]);
     const backdropPress = useRef(false);
-    const dueCards = visibleFlashcards.filter(c => isDue(c));
+    // The day's review: due cards, new ones up to the daily cap (services/dailyQueue).
+    const today = dayString(new Date());
+    const queue = useMemo(() => dailyQueue(visibleFlashcards, studyLogs, today, settings.newCardsPerDay ?? DEFAULT_NEW_PER_DAY),
+        [visibleFlashcards, studyLogs, today, settings.newCardsPerDay]);
     const health = [
         { label: 'DB', status: dbStatus },
         { label: 'AI', status: apiStatus },
@@ -151,8 +154,10 @@ const App: React.FC = () => {
                     studyLogs={studyLogs}
                     sources={sources}
                     chapters={chapters}
-                    dueCount={dueCards.length}
-                    newDueCount={dueCards.filter(isNewCard).length}
+                    dueCount={queue.cards.length}
+                    newDueCount={queue.fresh}
+                    heldBack={queue.heldBack}
+                    knownWords={knownWords}
                     onStartReview={mode => startQuickReview(mode)}
                     onOpenSetup={() => openStudySetup()}
                     onNavigate={handleNavigate}
@@ -243,7 +248,7 @@ const App: React.FC = () => {
                     allCards={visibleFlashcards}
                 />;
             case 'PRACTICE':
-                return <PracticeView cards={visibleFlashcards} occurrences={occurrences} speechAttempts={speechAttempts} onSaveSpeechAttempt={handleSaveSpeechAttempt} aiOptions={aiRequestOptions(settings)} audioOptions={pronunciationOptions(settings)} />;
+                return <PracticeView cards={visibleFlashcards} occurrences={occurrences} places={places} onQuizMiss={handleQuizMiss} speechAttempts={speechAttempts} onSaveSpeechAttempt={handleSaveSpeechAttempt} aiOptions={aiRequestOptions(settings)} audioOptions={pronunciationOptions(settings)} />;
             case 'AI_EXTRACT':
                 return <AiTextExtractorView
                     decks={visibleDecks}
@@ -261,6 +266,8 @@ const App: React.FC = () => {
                     onUpdateSettings={updateSettings}
                     onExportCSV={handleExportCSV}
                     onImportCSV={handleImportCSV}
+                    onExportBackup={handleExportBackup}
+                    onRestoreBackup={handleRestoreBackup}
                     onResetApp={handleResetApp}
                     onDeleteAllCards={handleDeleteAllCards}
                     onNavigateToChangelog={() => setView('CHANGELOG')}
@@ -361,23 +368,21 @@ const App: React.FC = () => {
     // English, left-to-right layout inside the same shell.
     const PERSIAN_VIEWS = ['TODAY', 'ME', 'TEXTS', 'READER', 'STUDY', 'SETTINGS', 'USAGE', 'DECKS', 'LIST', 'FORM', 'BULK_ADD', 'STATS', 'PROFILE', 'PRACTICE', 'AI_EXTRACT', 'CHANGELOG'];
     const isStudy = view === 'STUDY';
-    // Reading a book in pages fills the screen: no menus around the page.
-    const bookReading = view === 'READER' && settings.readerMode !== 'scroll';
-    const fullScreen = isStudy || bookReading;
+    const fullScreen = isStudy;
 
     return (
         <div dir="rtl" className="min-h-screen flex bg-[#F5F6FA] dark:bg-slate-950 font-fa">
             {!fullScreen && (
                 <Sidebar
                     view={view}
-                    dueCount={dueCards.length}
+                    dueCount={queue.cards.length}
                     userProfile={userProfile}
                     username={currentUser?.username}
                     syncStatus={syncStatus}
                     health={health}
                     hasCards={visibleFlashcards.length > 0}
                     onNavigate={handleNavigate}
-                    onStartReview={() => startQuickReview('flip')}
+                    onStartReview={() => startQuickReview('auto')}
                     onAddCard={handleAddCard}
                 />
             )}

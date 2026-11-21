@@ -79,6 +79,64 @@ export const importPlainText = (text: string, title = '', kind: SourceKind = 'te
   return { kind, title: guessed, chapters: splitLongChapters(splitTextIntoChapters(text)) };
 };
 
+// --- Subtitles (.srt, .vtt) ---
+//
+// A film's or a series' subtitles read as a text: numbers, times and tags
+// go, the lines join into paragraphs, and a pause of a few seconds (a new
+// scene, another speaker after a silence) starts a new paragraph. Watching
+// the episode after reading it, the words are already known.
+
+const TIME = /(?:\d{1,2}:)?\d{1,2}:\d{2}[.,]\d{1,3}/;
+const CUE_TIME = new RegExp(`^\\s*(${TIME.source})\\s*-->\\s*(${TIME.source})`);
+const PAUSE_SECONDS = 4;
+const PARAGRAPH_WORDS = 90;
+
+const seconds = (t: string): number => {
+  const parts = t.replace(',', '.').split(':').map(Number);
+  return parts.reduce((sum, n) => sum * 60 + n, 0);
+};
+
+export const isSubtitleText = (text: string): boolean => /-->/.test(text) && CUE_TIME.test(text.split('\n').find(l => l.includes('-->')) || '');
+
+export const subtitlesToText = (raw: string): string => {
+  const lines = raw.replace(/^\uFEFF/, '').replace(/\r/g, '').split('\n');
+  const cues: { start: number; end: number; text: string }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = CUE_TIME.exec(lines[i]);
+    if (!m) continue;
+    const text: string[] = [];
+    for (i++; i < lines.length && lines[i].trim() !== ''; i++) text.push(lines[i]);
+    const clean = text.join(' ')
+      .replace(/<[^>]+>/g, '') // <i>, <font>, <c.yellow>
+      .replace(/\{\\[^}]*\}/g, '') // {\an8}
+      .replace(/\[[^\]]*\]|\([A-Z][A-Z\s]+\)/g, '') // [music], (LAUGHS)
+      .replace(/[♪♫]+/g, '')
+      .replace(/^\s*-\s*/, '').replace(/\s+-\s+(?=[A-Z])/g, ' ')
+      .replace(/\s+/g, ' ').trim();
+    if (clean) cues.push({ start: seconds(m[1]), end: seconds(m[2]), text: clean });
+  }
+  const paragraphs: string[] = [];
+  let current: string[] = [];
+  let words = 0;
+  let lastEnd = 0;
+  for (const cue of cues) {
+    const pause = cue.start - lastEnd >= PAUSE_SECONDS;
+    const full = words >= PARAGRAPH_WORDS && /[.!?…]["']?$/.test(current[current.length - 1] || '');
+    if (current.length && (pause || full)) { paragraphs.push(current.join(' ')); current = []; words = 0; }
+    // A cue repeated from the one before (karaoke-style roll-up) is said once.
+    if (current[current.length - 1] !== cue.text) { current.push(cue.text); words += wordCount(cue.text); }
+    lastEnd = cue.end;
+  }
+  if (current.length) paragraphs.push(current.join(' '));
+  return paragraphs.join('\n\n');
+};
+
+export const importSubtitles = (raw: string, title: string): ImportedSource => {
+  const text = subtitlesToText(raw);
+  if (!text.trim()) throw new ImportError('در این فایل زیرنویس متنی پیدا نشد.');
+  return { kind: 'text', title, chapters: splitLongChapters([{ title, text }]) };
+};
+
 // Chapters worth reading by default: front matter, a table of contents or a
 // copyright page is offered but left unticked.
 export const suggestedChapter = (c: ChapterInput): boolean =>

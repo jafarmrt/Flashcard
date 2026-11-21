@@ -345,3 +345,43 @@ test('pronunciation tries sync between devices, and a store saved before them ge
   const other = await call({ action: 'sync', since: 0, changes: {} }, 'jafar');
   assert.deepEqual(other.body.changes.speechAttempts, [attempt]);
 });
+
+test('an edit stamped ahead of the server clock is brought back to it, so a fast clock does not win every conflict', () => {
+  const store = fresh();
+  const now = Date.parse(T1);
+  const echo = applyChanges(store, { cards: [card('a', { updatedAt: '2027-01-01T00:00:00.000Z' })] }, now);
+  assert.equal(store.cards[0].updatedAt, new Date(now).toISOString());
+  assert.equal(echo.rows.has('cards:a'), false, 'sent back to the device with the corrected time');
+  applyChanges(store, { cards: [card('b', { updatedAt: new Date(now + 60_000).toISOString() })] }, now);
+  assert.equal(store.cards[1].updatedAt, new Date(now + 60_000).toISOString(), 'a minute ahead is within the slack');
+});
+
+test('"sign out everywhere" ends every session made before it; a new sign-in works', async () => {
+  setupServer();
+  await call({ action: 'auth-register', username: 'mina', password: 'long-enough-password' });
+  assert.equal((await call({ action: 'sync', since: 0 }, 'mina')).status, 200);
+  assert.equal((await call({ action: 'auth-logout', everywhere: true }, 'mina')).status, 200);
+  assert.equal((await call({ action: 'sync', since: 0 }, 'mina')).status, 401, 'an old cookie no longer opens the account');
+  assert.deepEqual((await call({ action: 'auth-session' }, 'mina')).body, { username: null });
+  const cookies: string[] = [];
+  const res: ProxyResponse = { status() { return res; }, json(b) { return b; }, send(b) { return b; }, setHeader(_n: string, v: any) { cookies.push(String(v)); return undefined; } };
+  await (handleProxy as any)({ body: { action: 'auth-login', username: 'mina', password: 'long-enough-password' }, headers: {} }, res);
+  const token = decodeURIComponent(/lc_session=([^;]+)/.exec(cookies[0])![1]);
+  const out: { status: number } = { status: 0 };
+  const res2: ProxyResponse = { status(c) { out.status = c; return res2; }, json(b) { return b; }, send(b) { return b; }, setHeader() { return undefined; } };
+  await (handleProxy as any)({ body: { action: 'sync', since: 0 }, headers: { cookie: `lc_session=${token}` } }, res2);
+  assert.equal(out.status, 200, 'a sign-in after it carries the new version');
+});
+
+test('failed sign-ins are counted per account in the store, whatever the address', async () => {
+  setupServer();
+  await call({ action: 'auth-register', username: 'reza', password: 'long-enough-password' });
+  let last = 0;
+  for (let i = 0; i < 21; i++) {
+    const out: { status: number } = { status: 0 };
+    const res: ProxyResponse = { status(c) { out.status = c; return res; }, json(b) { return b; }, send(b) { return b; }, setHeader() { return undefined; } };
+    await (handleProxy as any)({ body: { action: 'auth-login', username: 'reza', password: 'wrong-password-1' }, headers: { 'x-forwarded-for': `10.0.0.${i}` }, socket: { remoteAddress: `10.0.0.${i}` } }, res);
+    last = out.status;
+  }
+  assert.equal(last, 429);
+});

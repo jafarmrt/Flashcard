@@ -10,7 +10,7 @@ import type { ChapterText, Settings } from '../types';
 import { migrateTexts } from '../services/library.js';
 import { newerSettings } from '../services/settingsSync.js';
 import { studyLogKey } from '../services/syncState.js';
-import { mergeReading } from '../services/readingTime.js';
+import { mergeRow } from '../services/rowMerge.js';
 
 export const STORE_VERSION = 2;
 export const ROW_TABLES = ['decks', 'cards', 'sources', 'chapters', 'occurrences', 'knownWords', 'speechAttempts', 'notes'] as const;
@@ -109,24 +109,10 @@ export const upgradeStore = (data: any, newId: () => string): { store: StoreData
   return { store, chapterTexts: migrated.chapterTexts };
 };
 
-const time = (iso?: string) => new Date(iso || 0).getTime() || 0;
+// One row from each side (services/rowMerge, shared with the devices).
+export { mergeRow };
 
-// One row from each side: the newer edit wins (the device on a tie), a row
-// deleted anywhere stays deleted, and a section finished anywhere stays
-// finished.
-export const mergeRow = (table: RowTable, cloud: Row | undefined, client: Row): Row => {
-  if (!cloud) return client;
-  const winner = time(client.updatedAt) >= time(cloud.updatedAt) ? client : cloud;
-  const merged: Row = { ...winner };
-  if (cloud.isDeleted || client.isDeleted) merged.isDeleted = true;
-  if (table === 'chapters') {
-    const done = new Set<number>([...(cloud.completed || []), ...(client.completed || [])]);
-    merged.completed = Array.from(done).sort((a, b) => a - b);
-  }
-  // Minutes read on either device are kept.
-  if (table === 'sources' && (cloud.reading || client.reading)) merged.reading = mergeReading(cloud.reading, client.reading);
-  return merged;
-};
+const time = (iso?: string) => new Date(iso || 0).getTime() || 0;
 
 // The profile: the name and the "about me" come from the newer edit. Fields
 // of profiles saved before 7.9.0 (points, goals, streak) stay as they were.
@@ -161,7 +147,14 @@ const strip = <T extends Record<string, any>>(item: T): T => {
 
 // Merges a device's changes into the store, giving every item that changed a
 // new rev.
-export const applyChanges = (store: StoreData, changes: SyncChanges | undefined): Echo => {
+// A device whose clock runs ahead would win every conflict ("the newer edit
+// wins") until real time caught up. An edit is never later than the
+// server's clock, give or take a few minutes.
+export const CLOCK_SLACK_MS = 5 * 60 * 1000;
+const notInFuture = (row: Row, now: number): Row =>
+  row.updatedAt && time(row.updatedAt) > now + CLOCK_SLACK_MS ? { ...row, updatedAt: new Date(now).toISOString() } : row;
+
+export const applyChanges = (store: StoreData, changes: SyncChanges | undefined, now: number = Date.now()): Echo => {
   const echo: Echo = { rows: new Set(), logs: new Set(), achievements: new Set(), profile: false, settings: false };
   if (!changes || typeof changes !== 'object') return echo;
 
@@ -173,7 +166,8 @@ export const applyChanges = (store: StoreData, changes: SyncChanges | undefined)
     rows.forEach((r, i) => at.set(r.id, i));
     for (const raw of incoming) {
       if (!raw || typeof raw.id !== 'string' || !raw.id) continue;
-      const client = strip(table === 'cards' ? withoutLocalAudio(raw) : raw);
+      const sent = strip(table === 'cards' ? withoutLocalAudio(raw) : raw);
+      const client = notInFuture(sent, now);
       const i = at.get(client.id);
       const cloud = i === undefined ? undefined : rows[i];
       const merged = mergeRow(table, cloud && strip(cloud), client);
@@ -182,7 +176,8 @@ export const applyChanges = (store: StoreData, changes: SyncChanges | undefined)
         merged._rev = ++store.rev;
         if (i === undefined) { at.set(client.id, rows.length); rows.push(merged); } else rows[i] = merged;
       }
-      if (canonical(merged) === canonical(client)) echo.rows.add(`${table}:${client.id}`);
+      // Only a row the device holds as it is now needs no answer.
+      if (canonical(merged) === canonical(sent)) echo.rows.add(`${table}:${client.id}`);
     }
   }
 

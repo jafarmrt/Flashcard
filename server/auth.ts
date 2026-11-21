@@ -83,24 +83,37 @@ export function getSessionSecret(dataDir: string = process.cwd()): string {
 
 const sign = (payload: string, secret: string) => crypto.createHmac('sha256', secret).update(payload).digest('base64url');
 
-export function createSessionToken(username: string, secret: string, now = Date.now()): string {
+// A token carries the account's session version: "sign out everywhere"
+// raises the version, and every token made before stops opening the account.
+// Tokens from before versions existed read as version 0.
+export function createSessionToken(username: string, secret: string, now = Date.now(), version = 0): string {
   const expires = now + SESSION_DAYS * 24 * 60 * 60 * 1000;
-  const payload = `${Buffer.from(username.toLowerCase()).toString('base64url')}.${expires}`;
+  const payload = `${Buffer.from(username.toLowerCase()).toString('base64url')}.${expires}${version > 0 ? `.${version}` : ''}`;
   return `${payload}.${sign(payload, secret)}`;
+}
+
+export interface Session { username: string; version: number }
+
+// The account and version of a valid, unexpired token; null otherwise.
+export function verifySession(token: string | undefined, secret: string, now = Date.now()): Session | null {
+  if (!token) return null;
+  const parts = token.split('.');
+  if (parts.length !== 3 && parts.length !== 4) return null;
+  const signature = parts[parts.length - 1];
+  const payload = parts.slice(0, -1).join('.');
+  const expected = sign(payload, secret);
+  if (!safeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
+  const expires = Number(parts[1]);
+  if (!Number.isFinite(expires) || expires < now) return null;
+  const version = parts.length === 4 ? Number(parts[2]) : 0;
+  if (!Number.isSafeInteger(version) || version < 0) return null;
+  const username = Buffer.from(parts[0], 'base64url').toString();
+  return username.trim() ? { username, version } : null; // older accounts may predate USERNAME_PATTERN
 }
 
 // The username of a valid, unexpired token; null otherwise.
 export function verifySessionToken(token: string | undefined, secret: string, now = Date.now()): string | null {
-  if (!token) return null;
-  const parts = token.split('.');
-  if (parts.length !== 3) return null;
-  const [userB64, expiresStr, signature] = parts;
-  const expected = sign(`${userB64}.${expiresStr}`, secret);
-  if (!safeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
-  const expires = Number(expiresStr);
-  if (!Number.isFinite(expires) || expires < now) return null;
-  const username = Buffer.from(userB64, 'base64url').toString();
-  return username.trim() ? username : null; // older accounts may predate USERNAME_PATTERN
+  return verifySession(token, secret, now)?.username ?? null;
 }
 
 export function readCookie(cookieHeader: string | undefined, name: string): string | undefined {
@@ -129,6 +142,10 @@ export const clearSessionCookieHeader = (secure: boolean) =>
 
 export function sessionUser(cookieHeader: string | undefined, secret: string): string | null {
   return verifySessionToken(readCookie(cookieHeader, SESSION_COOKIE), secret);
+}
+
+export function sessionOf(cookieHeader: string | undefined, secret: string): Session | null {
+  return verifySession(readCookie(cookieHeader, SESSION_COOKIE), secret);
 }
 
 // Actions anyone may call; every other action needs a session.
@@ -161,6 +178,22 @@ export function recordLoginFailure(ip: string, username: string, now = Date.now(
 }
 
 export const clearLoginFailures = (ip: string, username: string) => failures.delete(limitKey(ip, username));
+
+// Failed sign-ins per account, kept in the store: the counts above live in
+// one server's memory, and every Vercel instance (and every cold start)
+// began again from zero. Twenty failures in fifteen minutes, from any
+// address, lock the account's sign-in for fifteen minutes.
+export const ACCOUNT_MAX_FAILURES = 20;
+export interface FailureRecord { count: number; first: number; lockedUntil: number }
+
+export const accountLockMinutes = (record: FailureRecord | null | undefined, now = Date.now()): number =>
+  record && record.lockedUntil > now ? Math.ceil((record.lockedUntil - now) / 60000) : 0;
+
+export const nextFailureRecord = (record: FailureRecord | null | undefined, now = Date.now()): FailureRecord => {
+  if (!record || now - record.first > LOCK_MS) return { count: 1, first: now, lockedUntil: 0 };
+  const count = record.count + 1;
+  return { count, first: record.first, lockedUntil: count >= ACCOUNT_MAX_FAILURES ? now + LOCK_MS : record.lockedUntil };
+};
 
 // --- Audio proxy allow-list -------------------------------------------------
 

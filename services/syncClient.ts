@@ -8,6 +8,7 @@
 
 import type { Chapter, Deck, Flashcard, KnownWord, Occurrence, Source, SpeechAttempt, StudyLog, TextNote, UserAchievement, UserProfile } from '../types';
 import { cardStamp, deckStamp, profileStamp } from './syncState.js';
+import { mergeRow } from './rowMerge.js';
 
 export const SYNC_TABLES = ['decks', 'cards', 'sources', 'chapters', 'occurrences', 'knownWords', 'speechAttempts', 'notes'] as const;
 export type SyncTable = (typeof SYNC_TABLES)[number];
@@ -193,4 +194,43 @@ export const confirmReceived = (state: SyncState, table: SyncTable, rows: Stampe
 export const nextLogCursor = (state: SyncState, out: Outgoing, maxIdBeforeAdding: number, maxIdAfterAdding: number): number => {
   if (out.lastLogId === undefined) return maxIdBeforeAdding <= state.logCursor ? Math.max(state.logCursor, maxIdAfterAdding) : state.logCursor;
   return maxIdBeforeAdding === out.lastLogId ? maxIdAfterAdding : out.lastLogId;
+};
+
+// Rows from the server, against this browser's rows after a round:
+//   - a row changed here while the request was out is left alone (the next
+//     round sends it);
+//   - a row changed here before, but not sent yet (a round carries at most
+//     ROWS_PER_REQUEST rows), is merged with the server's copy by the
+//     server's own rule (services/rowMerge). When the local edit wins, the
+//     merged row is written and stays unconfirmed, so the next round sends
+//     it. Writing the server's copy over it lost the edit for good: a
+//     "delete all" of a thousand cards brought back every card another
+//     device had reviewed;
+//   - any other row is the server's and is taken as it is.
+// `confirm` are the rows the server is now known to have.
+export const takeIncoming = <T extends Stamped>(
+  table: SyncTable,
+  incoming: T[] | undefined,
+  current: T[],
+  stampsBefore: Map<string, string>,
+  known: Record<string, string>,
+): { write: T[]; confirm: T[]; skipped: number } => {
+  const local = new Map(current.map(r => [r.id, r]));
+  const write: T[] = [];
+  const confirm: T[] = [];
+  let skipped = 0;
+  for (const row of incoming || []) {
+    const mine = local.get(row.id);
+    const now = mine ? rowStamp(table, mine) : undefined;
+    if (now !== stampsBefore.get(row.id)) { skipped++; continue; }
+    if (mine && now !== known[row.id]) {
+      const merged = mergeRow(table, row, mine) as T;
+      write.push(merged);
+      if (rowStamp(table, merged) === rowStamp(table, row)) confirm.push(merged);
+      continue;
+    }
+    write.push(row);
+    confirm.push(row);
+  }
+  return { write, confirm, skipped };
 };
