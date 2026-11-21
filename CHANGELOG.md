@@ -9,6 +9,9 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.15.0] - 2026-11-21 - Listening to Your Books
+- **Listening practice:** «تمرین مکالمه و آزمون» › «شنیدن» reads aloud a sentence from your books that holds a word you are learning, and you write what you hear. The sentence then comes back word by word (right, nearly, another word, left out), with a score and whether you caught your word. Hear it again, slower, or ask for a hint (your word and its meaning). The ear learns the same words the eye met in the book.
+
 ## [7.14.0] - 2026-11-21 - Learning From the Book
 - **Another meaning, another card:** Tapping a word that has a card, «معنی در این جمله» shows what it means in this sentence next to your card's meaning. When it is another meaning («bank» of a river, when your card says the bank for money), «کارت تازه برای این معنی» makes a card of its own for it, instead of adding the sentence to the old card.
 - **A quiz from your books:** The quiz now asks the words you are learning in the sentences of your books, with a gap and four of your own words to choose from. It needs no AI and starts at once; the AI writes questions only when your books give too few. A wrong answer counts as forgetting the word, so it comes back in your review.

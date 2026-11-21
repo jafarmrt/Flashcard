@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { bookQuiz } from '../services/bookQuiz';
+import { pickDictation, type DictationItem } from '../services/dictation';
+import { ListeningPractice } from './practice/ListeningPractice';
 import { isDue } from '../services/srsService';
 import type { CardPlace } from '../services/library';
 import { Flashcard, Occurrence, SpeechAttempt } from '../types';
@@ -72,10 +74,11 @@ const StepBar: React.FC<{ label: string; value: number; total: number }> = ({ la
 
 export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences = [], aiOptions, audioOptions, speechAttempts, onSaveSpeechAttempt, places, onQuizMiss }) => {
   type PracticeState = 'idle' | 'generating' | 'active' | 'finished';
-  type Mode = 'quiz' | 'speaking' | 'progress';
+  type Mode = 'quiz' | 'speaking' | 'listening' | 'progress';
 
   const [mode, setMode] = useState<Mode>('quiz');
   const [practiceState, setPracticeState] = useState<PracticeState>('idle');
+  const [listeningItems, setListeningItems] = useState<DictationItem[]>([]);
   const [questions, setQuestions] = useState<(InstructionalQuizQuestion & { cardId?: string })[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [score, setScore] = useState(0);
@@ -123,6 +126,16 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
   const startPractice = async () => {
     setErrorMessage(null);
     if (mode === 'speaking') { startSpeaking(); return; }
+    if (mode === 'listening') {
+      const picked = pickDictation(cards, occurrences);
+      if (picked.length === 0) {
+        setErrorMessage('هنوز جمله‌ای برای شنیدن نیست: واژه‌هایی که از کتاب‌ها کارت کرده‌ای، بعد از اولین مرور این‌جا می‌آیند.');
+        return;
+      }
+      setListeningItems(picked);
+      setPracticeState('active');
+      return;
+    }
 
     // First, a quiz from the books' own sentences (no AI, every question a
     // card of yours); the AI writes one only when the books give too few.
@@ -223,7 +236,7 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
         <Shell>
             <section role="status" className={`${panel} text-center py-16`}>
                 <h2 className="text-2xl font-extrabold text-ink dark:text-white animate-pulse">در حال ساختن آزمون…</h2>
-                <p className="mt-2 text-ink-muted dark:text-slate-400">هوش مصنوعی برای واژه‌هایت جمله و گزینه می‌سازد.</p>
+                <p className="mt-2 text-ink-muted dark:text-slate-400">کتاب‌هایت جملهٔ کافی نداشتند؛ هوش مصنوعی برای واژه‌هایت جمله و گزینه می‌سازد.</p>
             </section>
         </Shell>
       );
@@ -257,11 +270,12 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
       <Shell>
           <header>
               <h1 className="text-2xl font-extrabold text-ink dark:text-white">تمرین مکالمه و آزمون</h1>
-              <p className="text-sm text-ink-muted dark:text-slate-400 mt-1">واژه‌های تازه‌ات را در جمله بیازما یا تلفظشان را تمرین کن.</p>
+              <p className="text-sm text-ink-muted dark:text-slate-400 mt-1">واژه‌هایت را در جمله‌های کتاب‌ها بیازما، بشنو و بنویس، یا تلفظشان را تمرین کن.</p>
           </header>
 
           <div role="group" aria-label="نوع تمرین" className="self-start flex flex-wrap gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
               {tab('quiz', 'آزمون چندگزینه‌ای')}
+              {tab('listening', 'شنیدن')}
               {tab('speaking', 'تمرین تلفظ')}
               {tab('progress', 'پیشرفت تلفظ')}
           </div>
@@ -273,14 +287,16 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
           ) : (
           <section className={`${panel} flex flex-col items-center text-center gap-3`}>
             <span className="w-14 h-14 rounded-2xl bg-brand-100 text-brand-600 dark:bg-brand-900/60 dark:text-brand-200 flex items-center justify-center">
-                {mode === 'quiz' ? <Icon.Chat size={26} /> : <MicIcon recording={false} size={26} />}
+                {mode === 'quiz' ? <Icon.Chat size={26} /> : mode === 'listening' ? <Icon.Speaker size={26} /> : <MicIcon recording={false} size={26} />}
             </span>
             <h2 className="text-xl font-extrabold text-ink dark:text-white">
-                {mode === 'quiz' ? 'آزمون واژه‌ها' : 'تمرین تلفظ'}
+                {mode === 'quiz' ? 'آزمون واژه‌ها' : mode === 'listening' ? 'تمرین شنیدن' : 'تمرین تلفظ'}
             </h2>
             <p className="text-ink-muted dark:text-slate-400 max-w-md leading-relaxed">
                 {mode === 'quiz'
-                    ? 'هوش مصنوعی با چند واژهٔ تازه‌ات جمله می‌سازد و جای واژه را خالی می‌گذارد؛ از میان چهار گزینه، واژهٔ درست را انتخاب کن.'
+                    ? 'جمله‌ای از کتاب‌هایت که یکی از واژه‌های در حال یادگیری‌ات در آن جا افتاده؛ از میان چهار واژهٔ خودت، درست را انتخاب کن. جواب غلط یعنی واژه یادت نبود و دوباره به مرور می‌آید.'
+                    : mode === 'listening'
+                    ? 'جمله‌ای از کتاب‌هایت با صدا خوانده می‌شود و تو همان را می‌نویسی؛ بعد واژه‌به‌واژه می‌بینی کدام را درست شنیدی. گوش همان واژه‌هایی را یاد می‌گیرد که چشم در کتاب دیده.'
                     : 'واژه‌هایت را در همان جمله‌ای که در کتاب دیدی بلند بخوان. هوش مصنوعی (Gemini یا مدل صوتی OpenRouter، از تنظیمات) کل جمله را می‌شنود و واژه‌به‌واژه نشان می‌دهد کدام درست، کدام نامفهوم و کدام اشتباه بود؛ روانی، تکیه و آهنگ جمله را هم نمره می‌دهد. هر مورد سر وقتش برای مرور برمی‌گردد.'}
             </p>
             {mode === 'speaking' && (
@@ -362,6 +378,10 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
   // Render Speaking Mode
   if (mode === 'speaking' && practiceState === 'active') {
       return <Shell><SpeakingMode items={speakingItems} attempts={speechAttempts} onSaveAttempt={onSaveSpeechAttempt} onFinish={handleSpeakingFinish} audioOptions={audioOptions} /></Shell>;
+  }
+
+  if (mode === 'listening' && practiceState === 'active') {
+      return <Shell><ListeningPractice items={listeningItems} onDone={() => setPracticeState('idle')} /></Shell>;
   }
 
   // Render Quiz Mode
