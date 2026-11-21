@@ -144,10 +144,20 @@ export function calculateSrs(card: Flashcard, rating: PerformanceRating, now: Da
   };
 }
 
+// An answer in a review. A card answered before it is due (a free review of
+// all cards, a book's weakest words) keeps its schedule when it is known:
+// "Good" or "Easy" on a card not due would stretch its stability as if it
+// had been remembered over the whole gap, so cramming made cards look
+// stronger than they are. Forgetting it ("Again", "Hard") still counts.
+export function answerCard(card: Flashcard, rating: PerformanceRating, now: Date = new Date()): Flashcard {
+  if (!isDue(card, now) && (rating === 'GOOD' || rating === 'EASY')) return card;
+  return calculateSrs(card, rating, now);
+}
+
 // Days until the card would come due for each answer, for the button labels.
 export function previewIntervals(card: Flashcard, now: Date = new Date()): Record<PerformanceRating, number> {
   const ratings: PerformanceRating[] = ['AGAIN', 'HARD', 'GOOD', 'EASY'];
-  return Object.fromEntries(ratings.map(r => [r, calculateSrs(card, r, now).interval])) as Record<PerformanceRating, number>;
+  return Object.fromEntries(ratings.map(r => [r, answerCard(card, r, now).interval])) as Record<PerformanceRating, number>;
 }
 
 export function formatInterval(days: number): string {

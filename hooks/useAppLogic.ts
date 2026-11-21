@@ -5,6 +5,7 @@ import { belongsToAnother, localOwner, OWNER_KEY } from '../services/localOwner'
 import { APP_VERSION, RELEASES } from '../services/appVersion';
 import { unseenReleases } from '../services/changelog';
 import { dayString } from '../services/calendar';
+import { dailyQueue, DEFAULT_NEW_PER_DAY } from '../services/dailyQueue';
 import { addReading } from '../services/readingTime';
 import { tokensOf } from '../services/lemma';
 import { buildSource, cardIndex, cardsInText, chaptersOf, cleanEditedText, findCard, markChunkDone, migrateTexts, newOccurrence, sectionEnds, SourceInput } from '../services/library';
@@ -47,7 +48,10 @@ export type HealthStatus = 'ok' | 'error' | 'checking';
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted' | 'createdAt' | 'updatedAt'>;
 type User = { username: string };
 
-export type StudyMode = 'flip' | 'type' | 'cloze'; // cloze: the word left out of the book's sentence
+// cloze: the word left out of the book's sentence; reverse: the Persian
+// meaning shown, the English word recalled; auto: each card by its stage
+// (flip while new, then cloze or reverse).
+export type StudyMode = 'auto' | 'flip' | 'type' | 'cloze' | 'reverse';
 export interface SessionSummary { reviews: number }
 
 // The account last signed in on this browser, so the app opens offline.
@@ -140,7 +144,7 @@ export const useAppLogic = () => {
   const [studyDeckId, setStudyDeckId] = useState<string | null>(null);
   const [studyCards, setStudyCards] = useState<Flashcard[]>([]);
   const [isStudySetupModalOpen, setIsStudySetupModalOpen] = useState(false);
-  const [studyMode, setStudyMode] = useState<StudyMode>('flip');
+  const [studyMode, setStudyMode] = useState<StudyMode>('auto');
   // The book a review was started from: its sentences come first in gaps.
   const [studySourceId, setStudySourceId] = useState<string | null>(null);
   const [studyLogs, setStudyLogs] = useState<StudyLog[]>([]);
@@ -835,7 +839,7 @@ export const useAppLogic = () => {
     }
     const fresh = await fetchData();
     if (next === 'more') {
-      startQuickReview(studyMode, 10, fresh.cards);
+      startQuickReview(studyMode, 10, fresh.cards, fresh.logs, true);
       return;
     }
     setView(sessionReturn.current);
@@ -1026,11 +1030,15 @@ export const useAppLogic = () => {
     return true;
   };
 
-  // "Start review" on the Today screen: every due card, no setup dialog.
-  const startQuickReview = (mode: StudyMode = 'flip', limit = 0, sourceCards: Flashcard[] = flashcards) => {
+  // "Start review" on the Today screen: the day's queue (services/dailyQueue:
+  // cards being learned first, then new cards up to the day's allowance),
+  // no setup dialog. "More" after a session takes cards past the allowance.
+  const startQuickReview = (mode: StudyMode = 'auto', limit = 0, sourceCards: Flashcard[] = flashcards, logs: StudyLog[] = studyLogs, pastAllowance = false) => {
     setStudyMode(mode);
-    const due = sourceCards.filter(c => !c.isDeleted && isDue(c));
-    if (due.length === 0) {
+    const newPerDay = pastAllowance ? 0 : settings.newCardsPerDay ?? DEFAULT_NEW_PER_DAY;
+    let queue = dailyQueue(sourceCards, logs, dayString(new Date()), newPerDay).cards;
+    if (limit > 0) queue = queue.slice(0, limit);
+    if (queue.length === 0) {
       showToast('امروز کارت موعددار نداری. می‌توانی مرور آزاد را انتخاب کنی.');
       setStudyDeckId(null);
       setIsStudySetupModalOpen(true);
@@ -1038,10 +1046,15 @@ export const useAppLogic = () => {
       return;
     }
     setStudyDeckId(null);
-    handleStartStudySession({ filter: 'all-due', limit }, null, sourceCards);
+    setStudySourceId(null);
+    setStudyCards(queue);
+    setStudySessionId(id => id + 1);
+    setIsStudySetupModalOpen(false);
+    sessionReturn.current = 'TODAY';
+    setView('STUDY');
   };
 
-  const openStudySetup = (mode: StudyMode = 'flip') => {
+  const openStudySetup = (mode: StudyMode = 'auto') => {
     setStudyMode(mode);
     setStudyDeckId(null);
     setIsStudySetupModalOpen(true);

@@ -12,7 +12,7 @@ import { TodayView } from './components/TodayView';
 import { MeView } from './components/MeView';
 import { chaptersOf, currentChunkOf, currentReading, placesByCard } from './services/library';
 import { knownTermSet } from './services/knownWords';
-import { isDue, isNewCard } from './services/srsService';
+import { dailyQueue, DEFAULT_NEW_PER_DAY } from './services/dailyQueue';
 import { dayString } from './services/calendar';
 import { AutoFixReportModal } from './components/AutoFixReportModal';
 
@@ -102,7 +102,10 @@ const App: React.FC = () => {
     const visibleDecks = decks.filter(d => !d.isDeleted);
     const cardSources = useMemo(() => refreshSources(settings), [settings]);
     const backdropPress = useRef(false);
-    const dueCards = visibleFlashcards.filter(c => isDue(c));
+    // The day's review: due cards, new ones up to the daily cap (services/dailyQueue).
+    const today = dayString(new Date());
+    const queue = useMemo(() => dailyQueue(visibleFlashcards, studyLogs, today, settings.newCardsPerDay ?? DEFAULT_NEW_PER_DAY),
+        [visibleFlashcards, studyLogs, today, settings.newCardsPerDay]);
     const health = [
         { label: 'DB', status: dbStatus },
         { label: 'AI', status: apiStatus },
@@ -151,8 +154,9 @@ const App: React.FC = () => {
                     studyLogs={studyLogs}
                     sources={sources}
                     chapters={chapters}
-                    dueCount={dueCards.length}
-                    newDueCount={dueCards.filter(isNewCard).length}
+                    dueCount={queue.cards.length}
+                    newDueCount={queue.fresh}
+                    heldBack={queue.heldBack}
                     onStartReview={mode => startQuickReview(mode)}
                     onOpenSetup={() => openStudySetup()}
                     onNavigate={handleNavigate}
@@ -368,14 +372,14 @@ const App: React.FC = () => {
             {!fullScreen && (
                 <Sidebar
                     view={view}
-                    dueCount={dueCards.length}
+                    dueCount={queue.cards.length}
                     userProfile={userProfile}
                     username={currentUser?.username}
                     syncStatus={syncStatus}
                     health={health}
                     hasCards={visibleFlashcards.length > 0}
                     onNavigate={handleNavigate}
-                    onStartReview={() => startQuickReview('flip')}
+                    onStartReview={() => startQuickReview('auto')}
                     onAddCard={handleAddCard}
                 />
             )}

@@ -2,10 +2,11 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { KIND_LABEL } from '../services/cardKinds';
 import { Flashcard } from '../types';
 import type { SessionSummary, StudyMode } from '../hooks/useAppLogic';
-import { calculateSrs, previewIntervals, PerformanceRating, RELEARN_STEP_MINUTES } from '../services/srsService';
+import { answerCard, isNewCard, previewIntervals, PerformanceRating, RELEARN_STEP_MINUTES } from '../services/srsService';
+import { comeBackAt } from '../services/dailyQueue';
+import { meaningMatches } from '../services/stringSimilarity';
 import { masteryStage, stageChanges, STAGE_NAMES } from '../services/masteryService';
 import { db } from '../services/localDBService';
-import { levenshtein } from '../services/stringSimilarity';
 import { fetchAudioData } from '../services/dictionaryService';
 import { isSpeechSupported, speakText } from '../services/ttsService';
 import { dayString } from '../services/calendar';
@@ -19,7 +20,8 @@ import { applyLeechHelp, LeechHelp, leechHelpFor, needsLeechHelp } from '../serv
 import { cardForTerm, indexCards, type CardIndex } from '../services/cardLookup';
 import { WORD_TOKEN } from '../services/lemma';
 
-const MODE_NAMES: Record<StudyMode, string> = { flip: 'برگرداندن', type: 'نوشتنی', cloze: 'جای خالی' };
+const MODE_NAMES: Record<StudyMode, string> = { auto: 'خودکار', flip: 'برگرداندن', reverse: 'فارسی به انگلیسی', type: 'نوشتنی', cloze: 'جای خالی' };
+const MODES: StudyMode[] = ['auto', 'flip', 'reverse', 'cloze', 'type'];
 
 const RATINGS: { rating: PerformanceRating; label: string; key: string; className: string }[] = [
   { rating: 'AGAIN', label: 'دوباره', key: '1', className: 'bg-red-100 text-red-900 hover:bg-red-200 dark:bg-red-900/50 dark:text-red-100' },
@@ -328,6 +330,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
   const startedAt = useRef(Date.now());
   const cardIndex = useMemo(() => indexCards(allCards || []), [allCards]);
   const busy = useRef(false);
+  const confirmed = useRef(new Set<string>()); // new cards already asked a second time
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -343,16 +346,21 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
   // The gap sentence for this card: where it was met in books, else its own
   // sentence. A card without one is asked as in "type" mode.
   const cloze = useMemo(() => {
-    if (mode !== 'cloze' || !card) return null;
+    if ((mode !== 'cloze' && mode !== 'auto') || !card || card.kind === 'grammar') return null;
     const met = places?.get(card.id) || [];
     const ordered = sourceId ? [...met.filter(p => p.sourceId === sourceId), ...met.filter(p => p.sourceId !== sourceId)] : met;
     return clozeFor(card, ordered.map(p => p.sentence));
   }, [mode, card, places, sourceId]);
-  const cardMode: StudyMode = mode === 'cloze' && !cloze ? 'type' : mode;
+  // "Auto" asks each card by how well it is known: a new card is only
+  // recognised (flip); once it is being learned the word itself has to come
+  // back, in the book's sentence (cloze) or from its Persian meaning.
+  const cardMode: StudyMode = !card ? 'flip'
+    : mode === 'auto' ? (card.kind === 'grammar' || masteryStage(card) <= 1 ? 'flip' : cloze ? 'cloze' : 'reverse')
+    : mode === 'cloze' && !cloze ? 'type' : mode;
   const intervals = useMemo(() => (current ? previewIntervals(current) : null), [current]);
 
   useEffect(() => {
-    if (cardMode !== 'flip' && !revealed) inputRef.current?.focus();
+    if ((cardMode === 'type' || cardMode === 'cloze') && !revealed) inputRef.current?.focus();
   }, [index, cardMode, revealed]);
 
   const summary = (): SessionSummary => ({ reviews });
@@ -384,7 +392,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
     busy.current = true;
     const snapshot: Snapshot = { queue, index, updated, reviews, firstAnswers };
 
-    const next = { ...calculateSrs(current, rating), updatedAt: new Date().toISOString() };
+    const next = { ...answerCard(current, rating), updatedAt: new Date().toISOString() };
     // Saved at once, so closing the app mid-session keeps every answer. The
     // new schedule goes over the stored card, so content filled meanwhile stays.
     // A failed save (full disk, a closed database) leaves the card where it
@@ -410,10 +418,14 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
     setReviews(v => v + 1);
     if (!firstAnswers.has(card.id)) setFirstAnswers(prev => new Map(prev).set(card.id, rating !== 'AGAIN'));
 
+    // "Again" comes back later in the session; so does a new card answered
+    // right the first time, once, to be sure it was learned and not just seen.
     let nextQueue = queue;
-    if (rating === 'AGAIN') {
+    const confirmNew = isNewCard(current) && (rating === 'GOOD' || rating === 'HARD') && !confirmed.current.has(card.id);
+    if (rating === 'AGAIN' || confirmNew) {
+      if (confirmNew) confirmed.current.add(card.id);
       nextQueue = [...queue];
-      nextQueue.splice(Math.min(index + 5, nextQueue.length), 0, next);
+      nextQueue.splice(comeBackAt(index, nextQueue.length), 0, next);
       setQueue(nextQueue);
     }
     setRevealed(false);
@@ -468,7 +480,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
       setRevealed(true);
       return;
     }
-    const ok = levenshtein(typed.toLowerCase().trim(), card.back.toLowerCase().trim()) <= 2; // small typos allowed
+    const ok = meaningMatches(typed, card.back); // any of the meanings, small typos allowed
     setAnswerState(ok ? 'correct' : 'incorrect');
     setRevealed(true);
   };
@@ -511,7 +523,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
       const typing = (e.target as HTMLElement).closest('input, textarea');
       if (e.key === 'Escape') { exitEarly(); return; }
       if (typing && !revealed) return;
-      if (!revealed && (e.code === 'Space' || e.key === 'Enter') && cardMode === 'flip') { e.preventDefault(); setRevealed(true); return; }
+      if (!revealed && (e.code === 'Space' || e.key === 'Enter') && (cardMode === 'flip' || cardMode === 'reverse')) { e.preventDefault(); setRevealed(true); return; }
       if (revealed) {
         const digit = /^(?:Digit|Numpad)([1-4])$/.exec(e.code)?.[1];
         const r = RATINGS.find(x => x.key === digit);
@@ -601,8 +613,8 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
           </div>
           <span className="text-sm text-ink-muted dark:text-slate-400 whitespace-nowrap">{fa(index + 1)} از {fa(queue.length)}</span>
         </div>
-        <div role="group" aria-label="حالت مرور" className="hidden sm:flex gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
-          {(['flip', 'type', 'cloze'] as StudyMode[]).map(m => (
+        <div role="group" aria-label="حالت مرور" className="hidden sm:flex flex-wrap gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
+          {MODES.map(m => (
             <button key={m} type="button" onClick={() => switchMode(m)} aria-pressed={mode === m}
               className={`min-h-[36px] px-3.5 rounded-lg text-sm ${mode === m ? 'bg-white dark:bg-slate-700 font-bold shadow-sm' : 'text-ink-muted dark:text-slate-400'}`}>
               {MODE_NAMES[m]}
@@ -637,7 +649,15 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
             </div>
           )}
 
-          <div dir="ltr" className={`flex flex-col items-center gap-2 text-center pt-2 ${cardMode === 'cloze' && !revealed ? 'hidden' : ''}`}>
+          {cardMode === 'reverse' && !revealed && (
+            <div className="flex flex-col items-center gap-3 text-center pt-2">
+              <p className="text-3xl md:text-4xl font-bold text-ink dark:text-white">{card.back}</p>
+              {card.partOfSpeech && <p dir="ltr" className="font-en text-ink-muted dark:text-slate-400">{card.partOfSpeech}</p>}
+              <p className="text-sm text-ink-muted dark:text-slate-400">واژهٔ انگلیسی‌اش را به یاد بیاور (بلند بگو یا در ذهن)، بعد پاسخ را ببین.</p>
+            </div>
+          )}
+
+          <div dir="ltr" className={`flex flex-col items-center gap-2 text-center pt-2 ${(cardMode === 'cloze' || cardMode === 'reverse') && !revealed ? 'hidden' : ''}`}>
             <h2 className="font-en font-bold text-4xl md:text-6xl tracking-tight text-ink dark:text-white break-words max-w-full">{card.front}</h2>
             <div className="flex items-center gap-3 text-ink-muted dark:text-slate-400">
               {(card.pronunciation || card.partOfSpeech) && <span>{[card.pronunciation, card.partOfSpeech].filter(Boolean).join(' · ')}</span>}
@@ -654,7 +674,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
                 {card.practicePrompt && <p dir="rtl" className="text-sm text-slate-600 dark:text-slate-300">{card.practicePrompt}</p>}
               </div>
             )}
-            {!revealed && cardMode !== 'cloze' && card.kind !== 'grammar' && card.sourceSentence && (
+            {!revealed && cardMode === 'flip' && card.kind !== 'grammar' && card.sourceSentence && (
               <p className="mt-1 max-w-xl text-sm italic text-ink-muted dark:text-slate-400 "><LinkedText text={card.sourceSentence} /></p>
             )}
           </div>
@@ -677,7 +697,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
                 <LeechPanel key={current.id} card={current} aiOptions={aiOptions} onDone={finishLeech} />
               )}
             </>
-          ) : card.kind === 'grammar' ? null : cardMode === 'flip' ? (
+          ) : card.kind === 'grammar' ? null : cardMode === 'flip' || cardMode === 'reverse' ? (
             <button type="button" onClick={() => setRevealed(true)}
               className="self-center inline-flex items-center gap-2 min-h-[56px] px-10 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold text-lg">
               نمایش پاسخ <Kbd className="text-white">Space</Kbd>
@@ -728,9 +748,9 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
         </aside>
       </div>
 
-      <div className="sm:hidden flex justify-center gap-4 pb-4 text-sm">
-        <div role="group" aria-label="حالت مرور" className="flex gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
-          {(['flip', 'type', 'cloze'] as StudyMode[]).map(m => (
+      <div className="sm:hidden flex flex-wrap items-center justify-center gap-3 px-3 pb-4 text-sm">
+        <div role="group" aria-label="حالت مرور" className="flex flex-wrap justify-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
+          {MODES.map(m => (
             <button key={m} type="button" onClick={() => switchMode(m)} aria-pressed={mode === m}
               className={`min-h-[36px] px-3 rounded-lg ${mode === m ? 'bg-white dark:bg-slate-700 font-bold shadow-sm text-ink dark:text-white' : 'text-ink-muted dark:text-slate-400'}`}>
               {MODE_NAMES[m]}

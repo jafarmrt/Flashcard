@@ -9,6 +9,16 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.12.0] - 2026-11-21 - A Lighter, More Active Review
+- **New cards per day:** Today's review brings the cards you are learning first, then at most 15 new cards (Settings › Study › «کارت تازه در روز»: 5 to 50, or no cap). The rest wait for the next days, and Today says how many. Forty words saved from one chapter no longer mean forty extra reviews today and a heap three days later. «ادامه» at the end of a session still takes more.
+- **Asked by how well you know it («خودکار», the default):** A new card is flipped; once you are learning it, you have to bring the word back yourself: in the book's sentence with a gap, or from its Persian meaning.
+- **Persian to English:** A new review mode shows the Persian meaning; you recall the English word, then see the answer.
+- **Asked once more:** A new card you answer right the first time comes back once later in the session, to be sure it was learned and not just seen.
+- **"Again" comes back later:** A card you forgot comes back after ten other cards (or at the end), not after four, when the answer was still in mind.
+- **Synonyms count:** In the written review, any one of the meanings on the card is right («قصد کردن» for «تصمیم گرفتن، قصد کردن»); Arabic ي/ك and the half space no longer make a right answer wrong.
+- **Cramming does not fool the schedule:** Answering «خوب» or «آسان» to a card that is not due yet (a free review of all cards, a book's weakest words) leaves its schedule as it was; forgetting it still counts.
+- **Fix:** Editing a section's text no longer ticks off "read today" on Today's plan.
+
 ## [7.11.0] - 2026-11-21 - Reading Without Friction
 - **A tap is a quick look:** Tapping a word shows the dictionary's meaning at once and no longer asks the AI each time. «معنی در این جمله» under it asks the AI for the meaning in this very sentence; when the dictionary does not know the word, the AI is asked by itself. A structure's word («توضیح برای این جمله») works the same way.
 - **Meanings kept:** The AI's meaning of a word in a sentence is kept on this device for three months: tapping it again in that sentence shows it at once, with no new request.

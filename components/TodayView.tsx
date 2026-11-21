@@ -16,7 +16,8 @@ interface TodayViewProps {
   studyLogs: StudyLog[];
   sources: Source[];
   chapters: Chapter[];
-  dueCount: number;
+  dueCount: number; // the day's queue (services/dailyQueue)
+  heldBack?: number; // new cards left for the next days by the daily cap
   newDueCount: number;
   onStartReview: (mode: StudyMode) => void;
   onOpenSetup: () => void;
@@ -78,7 +79,7 @@ const TodayPlan: React.FC<{ steps: PlanStep[]; reading: Reading; onRead: () => v
 };
 
 export const TodayView: React.FC<TodayViewProps> = ({
-  userProfile, username, cards, studyLogs, sources, chapters, dueCount, newDueCount, onStartReview, onOpenSetup, onNavigate, onOpenChunk, speechAttempts = [],
+  userProfile, username, cards, studyLogs, sources, chapters, dueCount, newDueCount, heldBack = 0, onStartReview, onOpenSetup, onNavigate, onOpenChunk, speechAttempts = [],
 }) => {
 
   const today = dayString(new Date());
@@ -104,14 +105,15 @@ export const TodayView: React.FC<TodayViewProps> = ({
     const live = liveAttempts(speechAttempts);
     return todayPlan({
       hasBook: !!reading,
-      // A section finished today moves its chapter's date to today.
-      readToday: chapters.some(c => !c.isDeleted && c.completed.length > 0 && dayString(new Date(c.updatedAt)) === today),
+      // A section finished today is in its book's reading log. (The chapter's
+      // date was used, which an edit of the text also moved to today.)
+      readToday: sources.some(s => !s.isDeleted && (s.reading?.[today]?.sections || 0) > 0),
       dueCards: dueCount,
       reviewedToday: studyLogs.filter(l => l.date === today).length,
       dueSpeech: dueSchedules(live, today).filter(x => !!x.cardId && cardIds.has(x.cardId)).length,
       speechToday: live.filter(a => dayString(new Date(a.createdAt)) === today).length,
     });
-  }, [cards, speechAttempts, reading, chapters, today, dueCount, studyLogs]);
+  }, [cards, speechAttempts, reading, sources, today, dueCount, studyLogs]);
 
   // Space starts the review from anywhere on this screen (not while typing).
   useEffect(() => {
@@ -119,7 +121,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
       const el = e.target as HTMLElement;
       if (e.code !== 'Space' || dueCount === 0 || el.closest('input, textarea, select, button, [contenteditable]')) return;
       e.preventDefault();
-      onStartReview('flip');
+      onStartReview('auto');
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -139,7 +141,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
 
       {plan.length > 0 && (
         <TodayPlan steps={plan} reading={reading} onRead={() => reading?.next && onOpenChunk(reading.next.chapter, reading.next.chunk)}
-          onReview={() => onStartReview('flip')} onSpeak={() => onNavigate('PRACTICE')} />
+          onReview={() => onStartReview('auto')} onSpeak={() => onNavigate('PRACTICE')} />
       )}
 
       <div className="grid gap-5 md:grid-cols-2">
@@ -151,13 +153,13 @@ export const TodayView: React.FC<TodayViewProps> = ({
               </h2>
               <p className="mt-1 text-sm md:text-base text-white/90">
                 {dueCount > 0
-                  ? `${fa(dueCount)} کارت موعد دارد${newDueCount > 0 ? `، ${fa(newDueCount)} تا تازه` : ''}.`
+                  ? `${fa(dueCount)} کارت برای امروز${newDueCount > 0 ? `، ${fa(newDueCount)} تا تازه` : ''}.${heldBack > 0 ? ` ${fa(heldBack)} کارت تازهٔ دیگر برای روزهای بعد کنار ماند (سقف روزانه در تنظیمات).` : ''}`
                   : 'کارت موعدداری نمانده. با مرور آزاد یا یک بخش تازه از متن ادامه بده.'}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
               {dueCount > 0 ? (
-                <button type="button" onClick={() => onStartReview('flip')}
+                <button type="button" onClick={() => onStartReview('auto')}
                   className="inline-flex items-center gap-2.5 min-h-[52px] px-6 rounded-2xl bg-white text-ink font-extrabold text-lg hover:bg-brand-50">
                   شروع مرور
                   <span className="rounded-full bg-brand-100 text-brand-700 text-sm px-2.5 py-0.5">{fa(dueCount)} کارت</span>
@@ -169,8 +171,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   مرور آزاد
                 </button>
               )}
-              <button type="button" onClick={() => onStartReview('type')} disabled={dueCount === 0}
-                className="min-h-[52px] px-4 rounded-2xl bg-white/15 hover:bg-white/25 font-bold disabled:opacity-40">نوشتنی</button>
+              <button type="button" onClick={() => onStartReview('flip')} disabled={dueCount === 0} title="فقط برگرداندن کارت‌ها"
+                className="min-h-[52px] px-4 rounded-2xl bg-white/15 hover:bg-white/25 font-bold disabled:opacity-40">برگرداندن</button>
               <button type="button" onClick={() => onStartReview('cloze')} disabled={dueCount === 0} title="واژه در جملهٔ کتاب جا افتاده؛ بنویسش"
                 className="min-h-[52px] px-4 rounded-2xl bg-white/15 hover:bg-white/25 font-bold disabled:opacity-40">جای خالی</button>
               <button type="button" onClick={() => onNavigate('PRACTICE')} disabled={totalWords === 0}

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { DEFAULT_NEW_PER_DAY } from '../services/dailyQueue';
 import { AiProviderId, AiProviderSetting, CardKind, DictionaryEntrySetting, Settings } from '../types';
 import { dictionaryKey, dictionaryList, dictionaryNote } from '../services/dictSettings';
 import { DictionaryId, DictionaryKeyId, dictionaryInfo } from '../services/dictionaryCatalog';
@@ -722,6 +723,13 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                     <select value={settings.userLevel || 'B2'} onChange={e => onUpdateSettings({ userLevel: e.target.value as Settings['userLevel'] })}
                         className="min-h-[40px] px-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm">
                         {LEVELS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+                    </select>
+                </Row>
+                <Row title="کارت تازه در روز" hint="مرور امروز اول کارت‌هایی را می‌آورد که در حال یادگیری‌اند، بعد حداکثر این تعداد کارت تازه. بقیهٔ کارت‌های تازه برای روزهای بعد می‌مانند تا مرورها انبوه نشوند.">
+                    <select value={settings.newCardsPerDay ?? DEFAULT_NEW_PER_DAY} onChange={e => onUpdateSettings({ newCardsPerDay: Number(e.target.value) })} aria-label="کارت تازه در روز"
+                        className="min-h-[40px] px-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm">
+                        {[5, 10, 15, 20, 30, 50].map(n => <option key={n} value={n}>{fa(n)}</option>)}
+                        <option value={0}>بدون سقف</option>
                     </select>
                 </Row>
                 <Row title="معنی بالای واژه‌های کارت‌دار" hint="هنگام خواندن، معنی کوتاه کارت خودت با خط ریز بالای واژه نوشته می‌شود تا لازم نباشد رویش بزنی؛ وقتی واژه را یاد گرفتی، خودش کنار می‌رود.">

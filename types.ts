@@ -165,6 +165,7 @@ export interface Settings {
     aiSpeechModel?: string; // the Gemini text-to-speech model
     orSpeechModel?: string; // the OpenRouter speech model
     orSpeechVoice?: string; // its voice; unset: the model's own default
+    newCardsPerDay?: number; // new cards started per day in the day's review (services/dailyQueue; unset: 15, 0: no cap)
     readerFontSize?: number; // the reader's type size, step 0-4 (READER_FONT_SIZES)
     pronunciationService?: 'auto' | 'gemini' | 'openrouter'; // who listens in pronunciation practice; auto: Gemini, then OpenRouter
     orAudioModel?: string; // the OpenRouter model that listens (one that takes audio)
