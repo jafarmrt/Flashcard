@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie';
-import { Flashcard, Deck, StudyLog, UserProfile, UserAchievement, TextDoc, Source, Chapter, ChapterText, Occurrence, KnownWord, SpeechAttempt, TextNote } from '../types';
+import { Flashcard, Deck, StudyLog, UserProfile, UserAchievement, TextDoc, Source, Chapter, ChapterText, Occurrence, KnownWord, SpeechAttempt, PracticeAnswer, TextNote } from '../types';
 
 // Small values this browser keeps for itself, such as how far it has synced.
 export interface MetaRow {
@@ -50,6 +50,7 @@ export class LinguaCardsDB extends Dexie {
   usage!: Table<UsageRow>;
   speechAttempts!: Table<SpeechAttempt>;
   notes!: Table<TextNote>;
+  practice!: Table<PracticeAnswer>;
 
   constructor() {
     super('LinguaCardsDB');
@@ -289,6 +290,27 @@ export class LinguaCardsDB extends Dexie {
         usage: '++id, day',
         speechAttempts: 'id, cardId, createdAt',
         notes: 'id, sourceId, chapterId, updatedAt'
+    });
+
+    // Version 17: answers of the quiz and of listening practice (synced).
+    (this as any).version(17).stores({
+        flashcards: 'id, deckId, front, back, dueDate, isDeleted, createdAt, updatedAt',
+        decks: 'id, name, isDeleted',
+        studyHistory: '++id, cardId, date',
+        userProfile: 'id, firstName, lastName, bio',
+        userAchievements: '&achievementId',
+        texts: 'id, updatedAt, isDeleted',
+        sources: 'id, updatedAt',
+        chapters: 'id, sourceId, updatedAt',
+        chapterTexts: 'id, sourceId',
+        occurrences: 'id, cardId, sourceId, chapterId',
+        meta: 'key',
+        knownWords: 'id, term, updatedAt',
+        lookups: 'term',
+        usage: '++id, day',
+        speechAttempts: 'id, cardId, createdAt',
+        notes: 'id, sourceId, chapterId, updatedAt',
+        practice: 'id, cardId, day, updatedAt'
     });
   }
 }

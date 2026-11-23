@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile, UserAchievement, ExtractedWordCard, StudyLog, Source, Chapter, ChapterText, Occurrence, KnownWord, SpeechAttempt, TextNote } from '../types';
+import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile, UserAchievement, ExtractedWordCard, StudyLog, Source, Chapter, ChapterText, Occurrence, KnownWord, PracticeAnswer, SpeechAttempt, TextNote } from '../types';
 import { clearAccountData, db } from '../services/localDBService';
 import { belongsToAnother, localOwner, OWNER_KEY } from '../services/localOwner';
 import { APP_VERSION, RELEASES } from '../services/appVersion';
@@ -173,6 +173,7 @@ export const useAppLogic = () => {
   const [occurrences, setOccurrences] = useState<Occurrence[]>([]);
   const [knownWords, setKnownWords] = useState<KnownWord[]>([]);
   const [speechAttempts, setSpeechAttempts] = useState<SpeechAttempt[]>([]);
+  const [practice, setPractice] = useState<PracticeAnswer[]>([]);
   const [notes, setNotes] = useState<TextNote[]>([]);
   // A section just finished: its cards, offered for a short review.
   const [sectionReview, setSectionReview] = useState<{ sourceId: string; chapterId: string; chunk: number; cardIds: string[] } | null>(null);
@@ -310,12 +311,14 @@ export const useAppLogic = () => {
     const allKnown = await db.knownWords.toArray();
     const allSpeech = await db.speechAttempts.toArray();
     const allNotes = await db.notes.toArray();
+    const allPractice = await db.practice.toArray();
     setSources(allSources);
     setChapters(allChapters);
     setOccurrences(allOccurrences);
     setKnownWords(allKnown);
     setSpeechAttempts(allSpeech);
     setNotes(allNotes);
+    setPractice(allPractice);
     setFlashcards(allCards);
     setDecks(allDecks);
     setEarnedAchievements(allAchievements);
@@ -333,7 +336,7 @@ export const useAppLogic = () => {
     
     return {
       cards: allCards, decks: allDecks, sources: allSources, chapters: allChapters, occurrences: allOccurrences,
-      knownWords: allKnown, speechAttempts: allSpeech, notes: allNotes, logs: allLogs, profile, achievements: allAchievements,
+      knownWords: allKnown, speechAttempts: allSpeech, notes: allNotes, practice: allPractice, logs: allLogs, profile, achievements: allAchievements,
     };
   };
   
@@ -367,7 +370,7 @@ export const useAppLogic = () => {
   const rememberSynced = (fresh: Awaited<ReturnType<typeof fetchData>>) => {
     lastSyncedFingerprint.current = syncFingerprint({
       cards: fresh.cards, decks: fresh.decks, sources: fresh.sources, chapters: fresh.chapters, occurrences: fresh.occurrences,
-      knownWords: fresh.knownWords, speechAttempts: fresh.speechAttempts, notes: fresh.notes, profile: fresh.profile, achievements: fresh.achievements, settingsUpdatedAt: readSavedSettings().updatedAt,
+      knownWords: fresh.knownWords, speechAttempts: fresh.speechAttempts, notes: fresh.notes, practice: fresh.practice, profile: fresh.profile, achievements: fresh.achievements, settingsUpdatedAt: readSavedSettings().updatedAt,
     });
   };
 
@@ -380,6 +383,7 @@ export const useAppLogic = () => {
     knownWords: await db.knownWords.toArray(),
     speechAttempts: await db.speechAttempts.toArray(),
     notes: await db.notes.toArray(),
+    practice: await db.practice.toArray(),
     logs: await db.studyHistory.toArray(),
     profile: await db.userProfile.get(1),
     achievements: await db.userAchievements.toArray(),
@@ -388,7 +392,7 @@ export const useAppLogic = () => {
 
   const SYNC_DB_TABLES: Record<SyncTable, any> = {
     decks: db.decks, cards: db.flashcards, sources: db.sources, chapters: db.chapters, occurrences: db.occurrences,
-    knownWords: db.knownWords, speechAttempts: db.speechAttempts, notes: db.notes,
+    knownWords: db.knownWords, speechAttempts: db.speechAttempts, notes: db.notes, practice: db.practice,
   };
   const stampOf = (table: SyncTable) => (table === 'decks' ? deckStamp : cardStamp) as (row: any) => string;
 
@@ -477,7 +481,7 @@ export const useAppLogic = () => {
 
             let maxBefore = 0;
             let maxAfter = 0;
-            await (db as any).transaction('rw', [db.decks, db.flashcards, db.sources, db.chapters, db.occurrences, db.knownWords, db.speechAttempts, db.notes, db.studyHistory, db.userProfile, db.userAchievements], async () => {
+            await (db as any).transaction('rw', [db.decks, db.flashcards, db.sources, db.chapters, db.occurrences, db.knownWords, db.speechAttempts, db.notes, db.practice, db.studyHistory, db.userProfile, db.userAchievements], async () => {
                 for (const table of SYNC_TABLES) {
                     const incoming = changes[table];
                     if (!Array.isArray(incoming) || incoming.length === 0) continue;
@@ -659,13 +663,13 @@ export const useAppLogic = () => {
     }
 
     const fingerprint = syncFingerprint({
-        cards: flashcards, decks, sources, chapters, occurrences, knownWords, speechAttempts, notes, profile: userProfile, achievements: earnedAchievements, settingsUpdatedAt: settings.updatedAt,
+        cards: flashcards, decks, sources, chapters, occurrences, knownWords, speechAttempts, notes, practice, profile: userProfile, achievements: earnedAchievements, settingsUpdatedAt: settings.updatedAt,
     });
     if (fingerprint === lastSyncedFingerprint.current) return;
 
     const handler = setTimeout(() => latest.current.handleSync(), 2000);
     return () => clearTimeout(handler);
-  }, [flashcards, decks, userProfile, earnedAchievements, sources, chapters, occurrences, knownWords, speechAttempts, notes, isLoggedIn, autoFixProgress, settings.updatedAt]);
+  }, [flashcards, decks, userProfile, earnedAchievements, sources, chapters, occurrences, knownWords, speechAttempts, notes, practice, isLoggedIn, autoFixProgress, settings.updatedAt]);
 
 
   const updateSettings = (changes: Partial<Settings>) => {
@@ -915,7 +919,7 @@ export const useAppLogic = () => {
     const local = await readLocal();
     return {
       decks: local.decks, cards: local.cards, sources: local.sources, chapters: local.chapters, occurrences: local.occurrences,
-      knownWords: local.knownWords, speechAttempts: local.speechAttempts, notes: local.notes || [], studyHistory: local.logs,
+      knownWords: local.knownWords, speechAttempts: local.speechAttempts, notes: local.notes || [], practice: local.practice || [], studyHistory: local.logs,
       chapterTexts: await db.chapterTexts.toArray(),
     };
   };
@@ -1414,6 +1418,18 @@ export const useAppLogic = () => {
       showToast(parts.join('؛ ') || 'چیزی برای ذخیره نبود.');
     }
     return { cardIds: places.map(p => p.cardId), added: newCards.length, attached };
+  };
+
+  // Answers of the quiz and of listening practice, kept with the account
+  // (services/practiceLog): what keeps going wrong can be practised again.
+  const handleSavePractice = async (answers: PracticeAnswer[]) => {
+    if (answers.length === 0) return;
+    try {
+      await db.practice.bulkPut(answers);
+      setPractice(await db.practice.toArray());
+    } catch (error) {
+      console.warn('Saving practice answers failed:', error);
+    }
   };
 
   // A wrong answer in the quiz: the card was not remembered, as "Again" in
@@ -1934,7 +1950,7 @@ export const useAppLogic = () => {
       overlayEdit, openCardEditor, closeCardEditor, saveOverlayEdit,
       // Handlers
       setView, showToast, handleAddCard, handleEditCard, handleDeleteCard, handleDeleteCards, handleSaveCard,
-      handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV, handleExportBackup, handleRestoreBackup, handleQuizMiss,
+      handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV, handleExportBackup, handleRestoreBackup, handleQuizMiss, practice, handleSavePractice,
       handleResetApp, handleDeleteAllCards, handleStudyDeck, handleStartStudySession, setIsStudySetupModalOpen,
       handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
       updateSettings, handleCompleteCardDetails,

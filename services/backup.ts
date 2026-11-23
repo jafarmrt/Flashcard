@@ -11,7 +11,7 @@
 // under a new id (references to it follow): a deleted row stays deleted
 // wherever it is synced, so the old id could not come back.
 
-import type { Chapter, ChapterText, Deck, Flashcard, KnownWord, Occurrence, Source, SpeechAttempt, StudyLog, TextNote } from '../types';
+import type { Chapter, ChapterText, Deck, Flashcard, KnownWord, Occurrence, PracticeAnswer, Source, SpeechAttempt, StudyLog, TextNote } from '../types';
 import { SYNC_TABLES, type SyncTable } from './syncClient';
 import { studyLogKey } from './syncState';
 
@@ -28,6 +28,7 @@ export interface BackupData {
   knownWords: KnownWord[];
   speechAttempts: SpeechAttempt[];
   notes: TextNote[];
+  practice: PracticeAnswer[];
   studyHistory: StudyLog[];
   chapterTexts: ChapterText[];
 }
@@ -59,6 +60,7 @@ export const makeBackup = (local: BackupData, version: string, now: Date = new D
       knownWords: alive(local.knownWords),
       speechAttempts: alive(local.speechAttempts),
       notes: alive(local.notes),
+      practice: alive(local.practice || []),
       studyHistory: local.studyHistory.map(({ id: _deviceId, ...log }) => log),
       chapterTexts: local.chapterTexts.map(({ uploaded: _u, ...t }) => t),
     },
@@ -85,7 +87,7 @@ export const readBackup = (text: string): Backup => {
     exportedAt: String(parsed.exportedAt || ''),
     data: {
       decks: rows(d.decks), cards: rows(d.cards), sources: rows(d.sources), chapters: rows(d.chapters),
-      occurrences: rows(d.occurrences), knownWords: rows(d.knownWords), speechAttempts: rows(d.speechAttempts), notes: rows(d.notes),
+      occurrences: rows(d.occurrences), knownWords: rows(d.knownWords), speechAttempts: rows(d.speechAttempts), notes: rows(d.notes), practice: rows(d.practice),
       studyHistory: list(d.studyHistory).filter(l => typeof l.cardId === 'string' && typeof l.date === 'string'),
       chapterTexts: rows(d.chapterTexts).filter(t => Array.isArray(t.chunks)),
     },

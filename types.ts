@@ -329,6 +329,23 @@ export interface SpeechParts {
   completeness?: number; // every word read, none added
 }
 
+// One answer in a practice outside the review (the four-choice quiz,
+// listening): which card, whether the first answer was right, and what was
+// picked instead. Kept and synced, so the words that keep going wrong, and
+// the words they are taken for, can be shown and practised again.
+export interface PracticeAnswer {
+  id: string;
+  cardId: string;
+  kind: 'quiz' | 'listening';
+  right: boolean; // the first answer
+  chose?: string; // quiz: the word picked first, when it was the wrong one
+  score?: number; // listening: 0-100
+  day: string; // YYYY-MM-DD on the device's calendar
+  createdAt: string;
+  updatedAt: string;
+  isDeleted?: boolean;
+}
+
 export interface SpeechAttempt {
   id: string;
   cardId?: string;

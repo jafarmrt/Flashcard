@@ -18,7 +18,11 @@ const MARK: Record<string, string> = {
   missed: 'text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-700 rounded px-0.5',
 };
 
-export const ListeningPractice: React.FC<{ items: DictationItem[]; onDone: () => void }> = ({ items, onDone }) => {
+// A sentence counts as heard when most of it was written right and the
+// card's own word was caught.
+const HEARD_SCORE = 80;
+
+export const ListeningPractice: React.FC<{ items: DictationItem[]; onDone: () => void; onAnswer?: (cardId: string, right: boolean, score: number) => void }> = ({ items, onDone, onAnswer }) => {
   const [at, setAt] = useState(0);
   const [typed, setTyped] = useState('');
   const [result, setResult] = useState<DictationResult | null>(null);
@@ -60,6 +64,7 @@ export const ListeningPractice: React.FC<{ items: DictationItem[]; onDone: () =>
     const r = checkDictation(item, typed);
     setResult(r);
     setScores(s => [...s, r.score]);
+    onAnswer?.(item.cardId, r.focusOk && r.score >= HEARD_SCORE, r.score);
   };
   const next = () => {
     stopSpeech();

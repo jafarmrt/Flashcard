@@ -81,7 +81,7 @@ const App: React.FC = () => {
         settings, userProfile, autoFixReport,
         // Handlers
         setView, showToast, handleAddCard, handleEditCard, handleDeleteCards, handleSaveCard,
-        handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV, handleExportBackup, handleRestoreBackup, handleQuizMiss,
+        handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV, handleExportBackup, handleRestoreBackup, handleQuizMiss, practice, handleSavePractice,
         handleResetApp, handleDeleteAllCards, handleStudyDeck, handleStartStudySession, setIsStudySetupModalOpen,
         handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,
         updateSettings, studyCards,
@@ -255,7 +255,7 @@ const App: React.FC = () => {
                     allCards={visibleFlashcards}
                 />;
             case 'PRACTICE':
-                return <PracticeView cards={visibleFlashcards} occurrences={occurrences} places={places} onQuizMiss={handleQuizMiss} speechAttempts={speechAttempts} onSaveSpeechAttempt={handleSaveSpeechAttempt} aiOptions={aiRequestOptions(settings)} audioOptions={pronunciationOptions(settings)} />;
+                return <PracticeView cards={visibleFlashcards} occurrences={occurrences} places={places} onQuizMiss={handleQuizMiss} practice={practice} onSavePractice={handleSavePractice} speechAttempts={speechAttempts} onSaveSpeechAttempt={handleSaveSpeechAttempt} aiOptions={aiRequestOptions(settings)} audioOptions={pronunciationOptions(settings)} />;
             case 'AI_EXTRACT':
                 return <AiTextExtractorView
                     decks={visibleDecks}

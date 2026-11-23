@@ -1,11 +1,14 @@
 import React, { useMemo, useState } from 'react';
 import { bookQuiz } from '../services/bookQuiz';
+import { mistakeSummary, newPracticeAnswer } from '../services/practiceLog';
+import { QuizPractice, type QuizFirstAnswer, type QuizQuestion } from './practice/QuizPractice';
+import { MistakesPanel } from './practice/MistakesPanel';
 import { pickDictation, type DictationItem } from '../services/dictation';
 import { ListeningPractice } from './practice/ListeningPractice';
 import { isDue } from '../services/srsService';
 import type { CardPlace } from '../services/library';
-import { Flashcard, Occurrence, SpeechAttempt } from '../types';
-import { AiRequestOptions, generateInstructionalQuiz, InstructionalQuizQuestion } from '../services/geminiService';
+import { Flashcard, Occurrence, PracticeAnswer, SpeechAttempt } from '../types';
+import { AiRequestOptions, generateInstructionalQuiz } from '../services/geminiService';
 import {
   dueSchedules, pickSpeechItems, practiceSentence, sessionResults, SessionItemResult, soundInfo, SpeechChoice, SpeechItem,
   SpeechKind, speechSchedules, WEAK_SCORE, weakSounds,
@@ -22,6 +25,8 @@ interface PracticeViewProps {
   onSaveSpeechAttempt: (attempt: SpeechAttempt) => Promise<void> | void;
   places?: Map<string, CardPlace[]>; // where each card was met in books
   onQuizMiss?: (cardId: string) => void; // a wrong answer counts as forgetting the card
+  practice?: PracticeAnswer[]; // earlier answers of the quiz and of listening
+  onSavePractice?: (answers: PracticeAnswer[]) => void;
 }
 
 // What one pronunciation session did for each item, and when it comes back.
@@ -62,28 +67,18 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => (
     <div dir="rtl" className="font-fa max-w-3xl mx-auto w-full flex flex-col gap-5">{children}</div>
 );
 
-// "Question 2 of 5" with a bar that fills from the right.
-const StepBar: React.FC<{ label: string; value: number; total: number }> = ({ label, value, total }) => (
-    <div className="flex items-center gap-3">
-        <div className="flex-1 h-2.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-            <div className="h-full bg-brand-500 rounded-full transition-all duration-300" style={{ width: `${total > 0 ? (value / total) * 100 : 0}%` }} />
-        </div>
-        <span className="text-sm text-ink-muted dark:text-slate-400 whitespace-nowrap">{label} {fa(value)} از {fa(total)}</span>
-    </div>
-);
+const NO_PRACTICE: PracticeAnswer[] = [];
 
-export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences = [], aiOptions, audioOptions, speechAttempts, onSaveSpeechAttempt, places, onQuizMiss }) => {
+export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences = [], aiOptions, audioOptions, speechAttempts, onSaveSpeechAttempt, places, onQuizMiss, practice = NO_PRACTICE, onSavePractice }) => {
   type PracticeState = 'idle' | 'generating' | 'active' | 'finished';
-  type Mode = 'quiz' | 'speaking' | 'listening' | 'progress';
+  type Mode = 'quiz' | 'speaking' | 'listening' | 'mistakes' | 'progress';
 
   const [mode, setMode] = useState<Mode>('quiz');
   const [practiceState, setPracticeState] = useState<PracticeState>('idle');
   const [listeningItems, setListeningItems] = useState<DictationItem[]>([]);
-  const [questions, setQuestions] = useState<(InstructionalQuizQuestion & { cardId?: string })[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [questions, setQuestions] = useState<QuizQuestion[]>([]);
+  const [quizRun, setQuizRun] = useState(0); // a new quiz starts the quiz screen afresh
   const [score, setScore] = useState(0);
-  const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
-  const [isAnswered, setIsAnswered] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   // Words are practised in their sentence unless asked otherwise.
   const [speakKind, setSpeakKind] = useState<SpeechKind>('sentence');
@@ -139,16 +134,8 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
 
     // First, a quiz from the books' own sentences (no AI, every question a
     // card of yours); the AI writes one only when the books give too few.
-    const fromBooks = places ? bookQuiz(cards, places, 5) : [];
-    if (fromBooks.length >= 3) {
-      setQuestions(fromBooks);
-      setCurrentIndex(0);
-      setScore(0);
-      setSelectedAnswer(null);
-      setIsAnswered(false);
-      setPracticeState('active');
-      return;
-    }
+    const fromBooks = places ? bookQuiz(cards, places, { count: 5 }) : [];
+    if (fromBooks.length >= 3) { beginQuiz(fromBooks); return; }
 
     // Tier 1: Prefer new cards
     let practicePool = cards.filter(c => c.repetition === 0);
@@ -176,40 +163,46 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
     const generatedQuestions = await generateInstructionalQuiz(practiceCards, aiOptions);
 
     if (generatedQuestions && generatedQuestions.length > 0) {
-        const byFront = new Map(practiceCards.map(c => [c.front.trim().toLowerCase(), c.id]));
-        setQuestions(generatedQuestions.map(q => ({ ...q, cardId: byFront.get(q.correctAnswer.trim().toLowerCase()) })));
-        setCurrentIndex(0);
-        setScore(0);
-        setSelectedAnswer(null);
-        setIsAnswered(false);
-        setPracticeState('active');
+        // The AI's questions get what the cards know: whose card each is, and
+        // the meaning of every choice that is a word of yours.
+        const byFront = new Map<string, Flashcard>(cards.filter(c => !c.isDeleted).map(c => [c.front.trim().toLowerCase(), c] as [string, Flashcard]));
+        beginQuiz(generatedQuestions.map(q => {
+          const card = byFront.get(q.correctAnswer.trim().toLowerCase());
+          return {
+            ...q, ask: 'gap' as const, cardId: card?.id, hint: card?.back,
+            meanings: Object.fromEntries(q.options.map(o => [o, byFront.get(o.trim().toLowerCase())?.back || '']).filter(([, back]) => back)),
+          };
+        }));
     } else {
         setErrorMessage('آزمون ساخته نشد؛ شاید سرویس هوش مصنوعی فعلاً در دسترس نیست. کمی بعد دوباره امتحان کن.');
         setPracticeState('idle');
     }
   };
 
-  const handleAnswer = (answer: string) => {
-    if (isAnswered) return;
-    setSelectedAnswer(answer);
-    setIsAnswered(true);
-    const q = questions[currentIndex];
-    if (answer === q.correctAnswer) {
-      setScore(prev => prev + 1);
-    } else if (q.cardId) {
-      onQuizMiss?.(q.cardId);
-    }
+  const beginQuiz = (list: QuizQuestion[]) => {
+    setQuestions(list);
+    setQuizRun(n => n + 1);
+    setMode('quiz');
+    setPracticeState('active');
   };
-
-  const handleNext = () => {
-    if (currentIndex < questions.length - 1) {
-      setCurrentIndex(prev => prev + 1);
-      setSelectedAnswer(null);
-      setIsAnswered(false);
-    } else {
-      setPracticeState('finished');
+  // A quiz of chosen cards: the ones just answered wrong, or «اشتباه‌های من».
+  const quizFrom = (cardIds: string[]) => {
+    setErrorMessage(null);
+    const list = places ? bookQuiz(cards, places, { only: new Set(cardIds), count: Math.min(8, cardIds.length) }) : [];
+    if (list.length === 0) {
+      setErrorMessage('برای آزمون از این واژه‌ها دست‌کم چهار واژهٔ کارت‌دار لازم است.');
+      setPracticeState('idle');
+      return;
     }
+    beginQuiz(list);
   };
+  // The first answer to a question: kept with the account, and a wrong one
+  // counts as forgetting the card.
+  const quizAnswered = (answer: QuizFirstAnswer) => {
+    onSavePractice?.([newPracticeAnswer({ cardId: answer.cardId, kind: 'quiz', right: answer.right, chose: answer.chose })]);
+    if (!answer.right) onQuizMiss?.(answer.cardId);
+  };
+  const mistakes = useMemo(() => mistakeSummary(practice, cards), [practice, cards]);
 
   const handleSpeakingFinish = ({ average: avgScore, tried }: { average: number; tried: SpeechAttempt[] }) => {
       setSessionTries(tried);
@@ -217,8 +210,6 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
       setScore(avgScore); // Reuse score state for avg
       setPracticeState('finished');
   };
-
-  const currentQuestion = questions[currentIndex];
 
   if (cards.length === 0) {
       return (
@@ -277,10 +268,16 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
               {tab('quiz', 'آزمون چندگزینه‌ای')}
               {tab('listening', 'شنیدن')}
               {tab('speaking', 'تمرین تلفظ')}
+              {tab('mistakes', `اشتباه‌های من${mistakes.words.length ? ` (${fa(mistakes.words.length)})` : ''}`)}
               {tab('progress', 'پیشرفت تلفظ')}
           </div>
 
-          {mode === 'progress' ? (
+          {mode === 'mistakes' ? (
+              <>
+                <MistakesPanel summary={mistakes} onQuiz={quizFrom} />
+                {errorMessage && <p role="alert" className="px-4 py-3 rounded-2xl bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 text-sm">{errorMessage}</p>}
+              </>
+          ) : mode === 'progress' ? (
               <SpeechProgress attempts={speechAttempts} weakCount={counts.weak} dueCount={counts.due}
                 onDeleteAttempt={a => onSaveSpeechAttempt({ ...a, isDeleted: true, updatedAt: new Date().toISOString() })}
                 onPracticeWeak={() => startSpeaking(speakKind, 'weak')} onPracticeDue={() => startSpeaking(speakKind, 'plan')} />
@@ -294,7 +291,7 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
             </h2>
             <p className="text-ink-muted dark:text-slate-400 max-w-md leading-relaxed">
                 {mode === 'quiz'
-                    ? 'جمله‌ای از کتاب‌هایت که یکی از واژه‌های در حال یادگیری‌ات در آن جا افتاده؛ از میان چهار واژهٔ خودت، درست را انتخاب کن. جواب غلط یعنی واژه یادت نبود و دوباره به مرور می‌آید.'
+                    ? 'جمله‌ای از کتاب‌هایت که یکی از واژه‌های در حال یادگیری‌ات در آن جا افتاده؛ از میان چهار واژهٔ خودت، درست را انتخاب کن. اگر غلط زدی، معنی هر دو واژه را می‌بینی، با یک راهنما دوباره انتخاب می‌کنی و آن پرسش آخر آزمون برمی‌گردد. جواب غلط یعنی واژه یادت نبود: به مرور می‌آید و در «اشتباه‌های من» می‌ماند.'
                     : mode === 'listening'
                     ? 'جمله‌ای از کتاب‌هایت با صدا خوانده می‌شود و تو همان را می‌نویسی؛ بعد واژه‌به‌واژه می‌بینی کدام را درست شنیدی. گوش همان واژه‌هایی را یاد می‌گیرد که چشم در کتاب دیده.'
                     : 'واژه‌هایت را در همان جمله‌ای که در کتاب دیدی بلند بخوان. هوش مصنوعی (Gemini یا مدل صوتی OpenRouter، از تنظیمات) کل جمله را می‌شنود و واژه‌به‌واژه نشان می‌دهد کدام درست، کدام نامفهوم و کدام اشتباه بود؛ روانی، تکیه و آهنگ جمله را هم نمره می‌دهد. هر مورد سر وقتش برای مرور برمی‌گردد.'}
@@ -338,9 +335,9 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
                 <h2 className="text-2xl font-extrabold text-ink dark:text-white">آفرین، تمرین تمام شد!</h2>
                 <p className="mt-4">
                     <span className="text-6xl font-extrabold text-brand-500 dark:text-brand-300">{fa(score)}</span>
-                    <span className="text-xl text-ink-muted dark:text-slate-400 ms-2">از {fa(mode === 'quiz' ? questions.length : 100)}</span>
+                    <span className="text-xl text-ink-muted dark:text-slate-400 ms-2">از {fa(100)}</span>
                 </p>
-                <p className="text-ink-muted dark:text-slate-400 mb-4">{mode === 'quiz' ? 'جواب درست' : 'میانگین نمرهٔ تلفظ'}</p>
+                <p className="text-ink-muted dark:text-slate-400 mb-4">میانگین نمرهٔ تلفظ</p>
                 {sessionSounds.length > 0 && (
                     <div className="w-full max-w-md text-right mb-4">
                         <p className="text-sm font-bold text-ink dark:text-white mb-2">در این تمرین بیشتر روی این‌ها کار کن:</p>
@@ -381,67 +378,19 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
   }
 
   if (mode === 'listening' && practiceState === 'active') {
-      return <Shell><ListeningPractice items={listeningItems} onDone={() => setPracticeState('idle')} /></Shell>;
+      return (
+        <Shell>
+          <ListeningPractice items={listeningItems} onDone={() => setPracticeState('idle')}
+            onAnswer={(cardId, right, score) => onSavePractice?.([newPracticeAnswer({ cardId, kind: 'listening', right, score })])} />
+        </Shell>
+      );
   }
 
-  // Render Quiz Mode
-  if (!currentQuestion) return null;
-
-  const answeredRight = isAnswered && selectedAnswer === currentQuestion.correctAnswer;
-
+  // The quiz
+  if (questions.length === 0) return null;
   return (
     <Shell>
-      <section className={`${panel} flex flex-col gap-5`}>
-        <StepBar label="پرسش" value={currentIndex + 1} total={questions.length} />
-
-        <div className="text-center flex flex-col gap-2">
-          <p className="text-sm text-ink-muted dark:text-slate-400">جای خالی را با واژهٔ درست پر کن</p>
-          <h2 dir="ltr" className="font-en text-xl md:text-2xl font-bold leading-relaxed text-ink dark:text-white break-words">{currentQuestion.questionText}</h2>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {currentQuestion.options.map(option => {
-            const isCorrect = option === currentQuestion.correctAnswer;
-            const isSelected = option === selectedAnswer;
-            let buttonClass = 'min-h-[56px] p-4 rounded-2xl text-lg font-medium transition-colors border-2 text-center break-words font-en ';
-            if (isAnswered) {
-               if(isCorrect) {
-                   buttonClass += 'bg-emerald-50 dark:bg-emerald-900/40 border-emerald-500 text-emerald-900 dark:text-emerald-200';
-               } else if (isSelected) {
-                   buttonClass += 'bg-red-50 dark:bg-red-900/40 border-red-500 text-red-900 dark:text-red-200';
-               } else {
-                   buttonClass += 'bg-slate-50 dark:bg-slate-700 border-transparent text-ink dark:text-slate-200 opacity-60';
-               }
-            } else {
-                buttonClass += 'bg-white dark:bg-slate-700/50 border-slate-200 dark:border-slate-600 text-ink dark:text-white hover:border-brand-300 hover:bg-brand-50 dark:hover:bg-brand-900/30';
-            }
-
-            return (
-              <button key={option} type="button" dir="ltr" onClick={() => handleAnswer(option)} disabled={isAnswered} className={buttonClass}>
-                {option}
-              </button>
-            )
-          })}
-        </div>
-        {isAnswered && (
-          <>
-              <p role="status" className={`text-center font-bold ${answeredRight ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
-                  {answeredRight
-                      ? 'درست بود!'
-                      : <>جواب درست: <bdi dir="ltr" className="font-en">{currentQuestion.correctAnswer}</bdi></>}
-              </p>
-              <div className="bg-slate-50 dark:bg-slate-700/50 p-4 rounded-2xl animate-flip-in">
-                  <p className="text-sm text-ink-muted dark:text-slate-400 font-bold mb-1">جملهٔ کامل</p>
-                  <p dir="ltr" className="font-en italic text-ink dark:text-slate-200 leading-relaxed break-words">“{currentQuestion.sourceSentence}”</p>
-              </div>
-              <div className="text-center">
-                  <button type="button" onClick={handleNext} className={primaryButton}>
-                      {currentIndex < questions.length - 1 ? 'پرسش بعدی' : 'پایان'}
-                  </button>
-              </div>
-          </>
-        )}
-      </section>
+      <QuizPractice key={quizRun} questions={questions} aiOptions={aiOptions} onAnswer={quizAnswered} onRetry={quizFrom} onDone={() => setPracticeState('idle')} />
     </Shell>
   );
 };

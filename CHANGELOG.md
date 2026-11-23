@@ -9,6 +9,15 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.20.0] - 2026-11-23 - A Quiz That Teaches When You Are Wrong
+- **A hint and a second try:** A wrong choice in the four-choice quiz no longer gives the answer away. The word you picked shows what it means, a hint comes (the Persian meaning of the right word), and you choose once more. The card still counts as not remembered.
+- **Both words, side by side:** After a wrong answer the right word and the one you picked stand together with their meanings, from your own cards, and every choice shows its meaning. «چرا؟» asks the AI, only when you want it, to say in a line or two why one fits this sentence and the other does not.
+- **Mistakes come back:** A question you got wrong is asked once more at the end of the same quiz. The quiz ends with the list of what went wrong (the word, its meaning, what you picked instead) and «دوباره همین‌ها», a new quiz of just those words.
+- **Your answers are kept:** Every first answer in the quiz and in listening practice is now saved with your account and synced: the word, right or wrong, and what you picked instead. They are in the full backup too.
+- **«اشتباه‌های من»:** A new tab in practice lists the words you keep getting wrong, what you take them for, and the pairs you mix up, with a quiz made of them. A word leaves the list after two right answers in a row. A word with no usable book sentence is asked from its meaning there.
+- **Better choices:** A word that already stands in the sentence is never offered as a choice, and two words with the same meaning are not offered against each other.
+- **Closer at hand:** Today's review box has «آزمون چهارگزینه‌ای».
+
 ## [7.19.0] - 2026-11-21 - Back to the Book
 - **The book starts in Telegram:** The morning message now opens with your book: «کجا بودیم» (the last lines you read), the first lines of the next section and how few minutes it takes, with «ادامه در برنامه», which opens the app on that very page. The day's words follow as before. In the bot, /read sends it any time.
 - **An evening reminder, only when needed:** On a day when you finished no section, one short message comes around 7 in the evening with the first lines of the next section. On a day you read, nothing comes. Both can be turned off in Settings › Telegram; /stop stops every automatic message.

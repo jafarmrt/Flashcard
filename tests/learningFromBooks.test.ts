@@ -9,7 +9,7 @@ import type { Flashcard, StudyLog } from '../types';
 const NOW = new Date('2026-11-21T10:00:00');
 const DAY = 86_400_000;
 const card = (id: string, front: string, extra: Partial<Flashcard> = {}): Flashcard => ({
-  id, deckId: 'd', front, back: 'م', createdAt: NOW.toISOString(), repetition: 0, easinessFactor: 2.5, interval: 0, dueDate: NOW.toISOString(), ...extra,
+  id, deckId: 'd', front, back: `م ${front}`, createdAt: NOW.toISOString(), repetition: 0, easinessFactor: 2.5, interval: 0, dueDate: NOW.toISOString(), ...extra,
 });
 const learning = (id: string, front: string) => calculateSrs(card(id, front), 'GOOD', new Date(NOW.getTime() - 5 * DAY));
 const place = (sentence: string): CardPlace => ({ sourceId: 's', sourceTitle: 'Book', sentence });
@@ -17,7 +17,7 @@ const place = (sentence: string): CardPlace => ({ sourceId: 's', sourceTitle: 'B
 test('the quiz asks words being learned in their book sentences, with three of your other words as choices', () => {
   const cards = [learning('a', 'harbor'), learning('b', 'pier'), learning('c', 'stripe'), learning('d', 'boat'), card('n', 'gull')];
   const places = new Map([['a', [place('He walked slowly to the harbor every morning.')]], ['n', [place('A gull cried above the water today.')]]]);
-  const quiz = bookQuiz(cards, places, 5, () => 0.3);
+  const quiz = bookQuiz(cards, places, { count: 5, random: () => 0.3 });
   assert.equal(quiz.length, 1, 'only cards met in a book, and not new ones');
   const q = quiz[0];
   assert.equal(q.cardId, 'a');

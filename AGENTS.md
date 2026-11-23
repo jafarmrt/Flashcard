@@ -57,11 +57,13 @@ imports this file, MCP in `.mcp.json`). Keep both MCP lists alike.
 - Comments explain *why*, in plain English, in the style of the existing code.
 - Pure logic goes in `services/*.ts` with tests in `tests/*.test.ts`.
 - Synced tables: decks, cards, sources, chapters, occurrences, knownWords,
-  speechAttempts, notes (services/syncClient.ts SYNC_TABLES and
+  speechAttempts, notes, practice (services/syncClient.ts SYNC_TABLES and
   server/syncStore.ts ROW_TABLES must list the same). A new synced table also
   needs: types.ts, a Dexie version in services/localDBService.ts, readLocal /
   SYNC_DB_TABLES / the sync transaction / fingerprint in hooks/useAppLogic.ts,
-  and syncState.ts.
+  and syncState.ts; also `BackupData` in services/backup.ts and the fakes
+  in tests/backup.test.ts and tests/library.test.ts (7.20.0 `practice` is
+  the latest example).
 - Chapter text lives apart from the sync (`chapter-put`/`chapter-get`);
   edits carry `editedAt`, and `Chapter.textEditedAt` makes other devices
   fetch the new text.
@@ -166,6 +168,17 @@ Do not bring these back without the user asking.
 
 ## What is done (latest first)
 
+- 7.20.0 (the user likes the four-choice quiz and found its feedback and
+  record-keeping weak): components/practice/QuizPractice.tsx (hint and a
+  second try, both words with their meanings, «چرا؟» through
+  services/quizExplain, missed questions asked again, an end list with
+  «دوباره همین‌ها»); services/bookQuiz.ts now takes `{ count, random, only }`,
+  gives each choice its meaning, never offers a word of the sentence, and
+  asks from the meaning when `only` cards have no book sentence; synced
+  table `practice` (PracticeAnswer: first answers of the quiz and of
+  listening, services/practiceLog `mistakeSummary`);
+  components/practice/MistakesPanel.tsx is the «اشتباه‌های من» tab.
+
 - 7.19.0 (the user's trouble is coming back to reading): the book's next
   lines in the Telegram morning message and an evening reminder (see
   Telegram above); Today starts with «فقط همین یک بخش» (TodayView hero from
@@ -260,6 +273,10 @@ the server's own GEMINI_API_KEY per account, a separate secret for the key
 vault, and moving the sync loop out of hooks/useAppLogic.ts.
 
 ## Open ideas (ask the user before starting)
+
+0. Offered and not yet built: more question types mixed into the quiz
+   (Persian meaning → word, word → meaning, hearing the word → choice), on
+   top of the `practice` log; a quiz of the review's "still hard" words.
 
 1. Ask how 7.11–7.17 feel in daily use: the daily cap (15), the «خودکار»
    review, a tap without AI, listening, subtitles.
