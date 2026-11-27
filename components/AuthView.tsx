@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Icon } from './common/ui';
 
 interface AuthViewProps {
   onLogin: (username: string, password: string) => void;
@@ -21,73 +22,86 @@ export const AuthView: React.FC<AuthViewProps> = ({ onLogin, onRegister, isLoadi
     }
   };
 
-  const title = isLoginView ? 'Welcome Back!' : 'Create Your Account';
-  const subTitle = isLoginView ? 'Log in to access your flashcards.' : 'Sign up to start learning.';
-  const buttonText = isLoginView ? 'Login' : 'Create Account';
-  const switchLinkText = isLoginView ? "Don't have an account? Register" : 'Already have an account? Login';
-  
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900 px-4">
-      <div className="max-w-md w-full bg-white dark:bg-slate-800 p-8 rounded-xl shadow-lg space-y-6">
-        <div className="text-center">
-            <div className="flex justify-center items-center gap-3 mb-4">
-                 <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" className="text-indigo-500">
-                    <rect width="32" height="32" rx="6" fill="currentColor"/>
-                    <path d="M12 10C12 8.89543 12.8954 8 14 8H20C21.1046 8 22 8.89543 22 10V14C22 15.1046 21.1046 16 20 16H18" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-                    <path d="M10 16C10 14.8954 10.8954 14 12 14H18C19.1046 14 20 14.8954 20 16V20C20 21.1046 19.1046 22 18 22H12C10.8954 22 10 21.1046 10 20V16Z" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-                 </svg>
-                 <h1 className="text-3xl font-bold text-slate-800 dark:text-white">Lingua Cards</h1>
-            </div>
-            <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100">{title}</h2>
-            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">{subTitle}</p>
-        </div>
-        <form className="space-y-6" onSubmit={handleSubmit}>
-          <div>
-            <label htmlFor="username" className="sr-only">Username</label>
+    <div
+      dir="rtl"
+      className="min-h-screen font-fa flex items-center justify-center bg-[#F7F5F0] dark:bg-[#0D1311] text-ink dark:text-slate-100 px-4 py-10"
+    >
+      <div className="max-w-md w-full bg-white dark:bg-slate-900 border border-stone-200/80 dark:border-slate-800 p-7 sm:p-9 rounded-3xl flex flex-col gap-6">
+        <header className="flex flex-col items-center text-center gap-2">
+          <div className="w-12 h-12 rounded-2xl bg-brand-500 text-white flex items-center justify-center mb-1">
+            <Icon.Book size={24} />
+          </div>
+          <h1 className="text-3xl font-extrabold tracking-tight text-ink dark:text-white">
+            واژه‌خوان
+          </h1>
+          <p className="text-sm text-ink-muted dark:text-slate-400 leading-relaxed max-w-xs">
+            {isLoginView
+              ? 'ورود به کتابخانهٔ شخصی و واژه‌های ذخیره‌شده'
+              : 'ساخت حساب تازه برای خواندن کتاب و یادگیری ماندگار واژه‌ها'}
+          </p>
+        </header>
+
+        <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="username" className="text-sm font-bold text-ink dark:text-slate-200">
+              نام کاربری
+            </label>
             <input
               id="username"
               name="username"
               type="text"
+              dir="ltr"
               autoComplete="username"
               required
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="appearance-none rounded-md relative block w-full px-3 py-3 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 placeholder-slate-500 dark:placeholder-slate-400 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
-              placeholder="Username"
+              onChange={e => setUsername(e.target.value)}
+              className="min-h-[48px] rounded-xl block w-full px-4 border border-stone-300 dark:border-slate-700 bg-[#FBF9F5] dark:bg-slate-800 placeholder-slate-400 text-ink dark:text-slate-100 font-en text-left focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 text-sm"
+              placeholder="username"
             />
           </div>
-          <div>
-            <label htmlFor="password" className="sr-only">Password</label>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="password" className="text-sm font-bold text-ink dark:text-slate-200">
+              گذرواژه
+            </label>
             <input
               id="password"
               name="password"
               type="password"
-              autoComplete="current-password"
+              dir="ltr"
+              autoComplete={isLoginView ? 'current-password' : 'new-password'}
               required
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="appearance-none rounded-md relative block w-full px-3 py-3 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 placeholder-slate-500 dark:placeholder-slate-400 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
-              placeholder="Password"
+              onChange={e => setPassword(e.target.value)}
+              className="min-h-[48px] rounded-xl block w-full px-4 border border-stone-300 dark:border-slate-700 bg-[#FBF9F5] dark:bg-slate-800 placeholder-slate-400 text-ink dark:text-slate-100 font-en text-left focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 text-sm"
+              placeholder="••••••••"
             />
           </div>
 
-          <div>
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-indigo-400 disabled:cursor-wait"
-            >
-              {isLoading ? 'Processing...' : buttonText}
-            </button>
-          </div>
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="mt-1 w-full min-h-[50px] flex items-center justify-center px-5 text-base font-extrabold rounded-xl text-white bg-brand-500 hover:bg-brand-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-500 disabled:opacity-60 disabled:cursor-wait transition-colors"
+          >
+            {isLoading
+              ? 'در حال بررسی…'
+              : isLoginView
+                ? 'ورود به حساب'
+                : 'ساخت حساب'}
+          </button>
         </form>
-        <div className="text-center">
-            <button 
-                onClick={() => setIsLoginView(!isLoginView)}
-                className="text-sm font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
-            >
-                {switchLinkText}
-            </button>
+
+        <div className="text-center pt-2 border-t border-stone-200/70 dark:border-slate-800">
+          <button
+            type="button"
+            onClick={() => setIsLoginView(!isLoginView)}
+            className="min-h-[44px] px-3 text-sm font-bold text-brand-600 hover:text-brand-700 dark:text-brand-300 dark:hover:text-brand-200"
+          >
+            {isLoginView
+              ? 'حساب نداری؟ ساخت حساب تازه'
+              : 'از قبل حساب داری؟ ورود به حساب'}
+          </button>
         </div>
       </div>
     </div>

@@ -32,6 +32,8 @@ export const Icon = {
   List: ({ size = 22, className }: IconProps) => stroke(size, className, <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />),
   Upload: ({ size = 22, className }: IconProps) => stroke(size, className, <path d="M12 16V4M6 10l6-6 6 6M4 20h16" />),
   Log: ({ size = 22, className }: IconProps) => stroke(size, className, <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6M8 13h8M8 17h8" /></>),
+  Headphones: ({ size = 22, className }: IconProps) => stroke(size, className, <><path d="M3 18v-6a9 9 0 0 1 18 0v6" /><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" /></>),
+  Bookmark: ({ size = 22, className }: IconProps) => stroke(size, className, <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />),
   Bolt: ({ size = 16, className }: IconProps) => (
     <svg width={size} height={size} viewBox="0 0 24 24" className={className} aria-hidden="true"><path fill="currentColor" d="M13 2L4 14h7l-1 8 9-12h-7z" /></svg>
   ),

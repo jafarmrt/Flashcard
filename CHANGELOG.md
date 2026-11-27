@@ -9,6 +9,12 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.22.0] - 2026-11-26 - Driving Mode, Thematic Bundles, and Vazheh-Khwan Identity
+- **«حالت رانندگی»:** Hands-free continuous book listening across section and chapter boundaries plus eyes-free audio vocabulary review (English word and sentence, silent thinking pause, Persian or fallback meaning, and repeat) without altering FSRS schedules, paired with steering-wheel `MediaSession` controls and screen Wake Lock.
+- **One-tap driving bookmarks (`نشان‌های رانندگی`):** A giant one-tap button bookmarks the current book sentence or flags the current card without stopping playback; after driving, Today and Driving Mode show a review tray where any word in a bookmarked sentence can be looked up and turned into a card.
+- **«بسته‌های موضوعی» (thematic word bundles):** Group flashcards into multi-dimensional thematic scenes (such as forest, animals, history, or emotion) without moving them out of their book decks, with human-approved AI batch sorting, scene-role grouping, cohesive micro-story cloze passages (`داستانک هم‌بافت`), and close-word nuance drills (`تفکیک واژه‌های نزدیک`).
+- **Editorial «واژه‌خوان» identity:** Warm archival paper (`#F7F5F0`), library forest green (`#1F6E58`), deep night mode, `Literata` book typography for English headwords and sentences, full Persian sign-in and unified Persian terminology (`واژه‌خوان`, `واژه‌های دیرگیر`, `تمرین و آزمون`), and clean unboxed card metadata.
+
 ## [7.21.0] - 2026-11-26 - Mixed Quizzes, Diagnostics, and Safer Sync
 - **Mixed four-choice quizzes:** The four-choice quiz now mixes sentence gaps from your books with Persian-to-English, English-to-Persian, and audio-to-meaning questions (or stays on book sentences alone when chosen), while still recording every answer by its English word in «اشتباه‌های من».
 - **Quiz the words that stayed hard:** When a review finishes with «هنوز سخت» words, «آزمون چهارگزینه‌ای از همین واژه‌ها» opens a quiz of just those cards right away.

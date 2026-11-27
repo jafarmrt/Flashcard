@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Chapter, ChapterText, Flashcard, KnownWord, Source, SpeechAttempt, StudyLog, UserProfile } from '../types';
+import { Chapter, ChapterText, ExtractedWordCard, Flashcard, KnownWord, Source, SpeechAttempt, StudyLog, TextNote, UserProfile } from '../types';
 import { dueSchedules, liveAttempts } from '../services/speechPractice';
 import { minutesLeft, todayPlan, type PlanStep } from '../services/todayPlan';
 import { lastDays, readingByDay } from '../services/readingTime';
@@ -10,9 +10,12 @@ import { currentReading } from '../services/library';
 import { weekSummary } from '../services/weekSummary';
 import { nextReading, readingInvite, readOn, type ReadingInvite } from '../services/readingInvite';
 import { backupDue, daysSinceBackup } from '../services/backup';
+import { DriveBookmarksTray } from './driving/DriveBookmarksTray';
 import { fa, Icon, Kbd, STAGE_COLORS } from './common/ui';
 
 const NO_KNOWN: KnownWord[] = [];
+const NO_NOTES: TextNote[] = [];
+const NO_FLAGS: string[] = [];
 
 interface TodayViewProps {
   userProfile: UserProfile | null;
@@ -24,6 +27,8 @@ interface TodayViewProps {
   dueCount: number; // the day's queue (services/dailyQueue)
   heldBack?: number; // new cards left for the next days by the daily cap
   knownWords?: KnownWord[];
+  notes?: TextNote[];
+  flaggedCardIds?: string[];
   onMoreNew?: () => void; // start ten of the new cards kept for later
   loadText?: (chapterId: string) => Promise<ChapterText>; // for the first lines of the next section
   newDueCount: number;
@@ -31,6 +36,12 @@ interface TodayViewProps {
   onOpenSetup: () => void;
   onNavigate: (view: View) => void;
   onOpenChunk: (chapter: Chapter, index: number) => void;
+  onOpenBookChunk?: (sourceId: string, chapterId: string, chunk: number) => void;
+  onDismissDriveNote?: (noteId: string) => void;
+  onSaveDriveCard?: (sourceId: string, chapterId: string, chunk: number, card: ExtractedWordCard) => Promise<number>;
+  onStudyCustomCards?: (cards: Flashcard[], title: string) => void;
+  onUnflagDriveCard?: (cardId: string) => void;
+  onClearDriveFlags?: () => void;
   speechAttempts?: SpeechAttempt[];
 }
 
@@ -87,7 +98,9 @@ const TodayPlan: React.FC<{ steps: PlanStep[]; reading: Reading; onRead: () => v
 };
 
 export const TodayView: React.FC<TodayViewProps> = ({
-  userProfile, username, cards, studyLogs, sources, chapters, dueCount, newDueCount, heldBack = 0, knownWords = NO_KNOWN, onMoreNew, loadText, onStartReview, onOpenSetup, onNavigate, onOpenChunk, speechAttempts = [],
+  userProfile, username, cards, studyLogs, sources, chapters, dueCount, newDueCount, heldBack = 0, knownWords = NO_KNOWN,
+  notes = NO_NOTES, flaggedCardIds = NO_FLAGS, onMoreNew, loadText, onStartReview, onOpenSetup, onNavigate, onOpenChunk,
+  onOpenBookChunk, onDismissDriveNote, onSaveDriveCard, onStudyCustomCards, onUnflagDriveCard, onClearDriveFlags, speechAttempts = [],
 }) => {
 
   const today = dayString(new Date());
@@ -172,7 +185,34 @@ export const TodayView: React.FC<TodayViewProps> = ({
           <p className="text-sm text-ink-muted dark:text-slate-400">{dateLabel}</p>
           <h1 className="text-2xl md:text-3xl font-extrabold text-ink dark:text-white">سلام{greeting ? ` ${greeting}` : ''}</h1>
         </div>
+        {(sources.some(s => !s.isDeleted) || cards.length > 0) && (
+          <button
+            type="button"
+            onClick={() => onNavigate('DRIVING')}
+            className="inline-flex items-center gap-2 min-h-[44px] px-4 rounded-2xl bg-white dark:bg-slate-800 border border-stone-200/80 dark:border-slate-700 text-sm font-bold text-ink dark:text-slate-100 hover:border-brand-400 transition-colors whitespace-nowrap"
+          >
+            <Icon.Headphones size={18} className="text-brand-600 dark:text-brand-300" />
+            <span>حالت رانندگی</span>
+          </button>
+        )}
       </header>
+
+      {onDismissDriveNote && onSaveDriveCard && onOpenBookChunk && onStudyCustomCards && onUnflagDriveCard && onClearDriveFlags && (
+        <DriveBookmarksTray
+          notes={notes}
+          sources={sources}
+          chapters={chapters}
+          cards={cards}
+          knownWords={knownWords}
+          flaggedCardIds={flaggedCardIds}
+          onDismissNote={onDismissDriveNote}
+          onOpenChunk={onOpenBookChunk}
+          onSaveReaderCard={onSaveDriveCard}
+          onStudyFlaggedCards={list => onStudyCustomCards(list, 'واژه‌های نشان‌گذاری‌شده در رانندگی')}
+          onUnflagCard={onUnflagDriveCard}
+          onClearFlaggedCards={onClearDriveFlags}
+        />
+      )}
 
       {reading?.next && (
         <section aria-label="ادامهٔ کتاب" className="bg-white dark:bg-slate-800 rounded-3xl p-5 md:p-6 flex flex-col gap-3">
@@ -181,8 +221,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
             {invite && <span className="text-sm text-ink-muted dark:text-slate-400 whitespace-nowrap">حدود {fa(invite.minutes)} دقیقه</span>}
           </div>
           <p className="text-sm text-ink-muted dark:text-slate-400">
-            <bdi dir="auto" className="font-en font-bold text-ink dark:text-white">{reading.source.title}</bdi>
-            {reading.list.length > 1 && reading.next.chapter.title !== reading.source.title && <> · <bdi dir="auto" className="font-en">{reading.next.chapter.title}</bdi></>}
+            <bdi dir="auto" className="font-read font-bold text-ink dark:text-white">{reading.source.title}</bdi>
+            {reading.list.length > 1 && reading.next.chapter.title !== reading.source.title && <> · <bdi dir="auto" className="font-read">{reading.next.chapter.title}</bdi></>}
             {' · '}بخش {fa(reading.next.chunk + 1)} از {fa(reading.next.chapter.chunkCount)}
           </p>
           {invite?.before && (
@@ -192,10 +232,16 @@ export const TodayView: React.FC<TodayViewProps> = ({
             </div>
           )}
           {invite && <p dir="ltr" lang="en" className="font-read text-[17px] leading-8 text-slate-800 dark:text-slate-100 text-left">{invite.teaser}</p>}
-          <button type="button" onClick={() => onOpenChunk(reading.next!.chapter, reading.next!.chunk)}
-            className="self-start inline-flex items-center gap-2 min-h-[52px] px-7 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-lg">
-            <Icon.Book size={20} />{invite ? 'ادامه بده' : 'بخوان'}
-          </button>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button type="button" onClick={() => onOpenChunk(reading.next!.chapter, reading.next!.chunk)}
+              className="inline-flex items-center gap-2 min-h-[52px] px-7 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold text-lg">
+              <Icon.Book size={20} />{invite ? 'ادامه بده' : 'بخوان'}
+            </button>
+            <button type="button" onClick={() => onNavigate('DRIVING')}
+              className="inline-flex items-center gap-2 min-h-[52px] px-5 rounded-2xl bg-stone-100 hover:bg-stone-200/80 dark:bg-slate-700 dark:hover:bg-slate-600 text-ink dark:text-slate-100 font-bold text-sm">
+              <Icon.Headphones size={18} />پیوسته‌خوانی صوتی
+            </button>
+          </div>
         </section>
       )}
 

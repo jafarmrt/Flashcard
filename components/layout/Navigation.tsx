@@ -5,7 +5,7 @@ import { UserProfile } from '../../types';
 import { Icon, fa } from '../common/ui';
 
 const DECK_VIEWS: View[] = ['DECKS', 'LIST', 'FORM', 'BULK_ADD'];
-const ME_VIEWS: View[] = ['ME', 'SETTINGS', 'USAGE', 'CHANGELOG', 'PROFILE', 'STATS', 'PRACTICE', 'DIAGNOSTICS'];
+const ME_VIEWS: View[] = ['ME', 'SETTINGS', 'USAGE', 'CHANGELOG', 'PROFILE', 'STATS', 'PRACTICE', 'DRIVING', 'DIAGNOSTICS'];
 const TEXT_VIEWS: View[] = ['TEXTS', 'READER', 'AI_EXTRACT'];
 
 export const SYNC_LABEL: Record<SyncStatus, string> = {
@@ -37,25 +37,26 @@ const NavLink: React.FC<{ active: boolean; onClick: () => void; icon: React.Reac
   <button type="button" onClick={onClick} disabled={disabled} aria-current={active ? 'page' : undefined}
     className={`w-full flex items-center gap-3 min-h-[44px] px-3 rounded-xl text-right transition-colors disabled:opacity-40 ${active
       ? 'bg-brand-100 text-brand-700 font-bold dark:bg-brand-900/60 dark:text-brand-200'
-      : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'}`}>
+      : 'text-slate-700 hover:bg-stone-100/80 dark:text-slate-300 dark:hover:bg-slate-800'}`}>
     {icon}
-    <span className="flex-1">{label}</span>
-    {badge ? <span className="rounded-full bg-flame-500 text-white text-xs font-bold px-2 py-0.5">{fa(badge)}</span> : null}
+    <span className="flex-1 whitespace-nowrap truncate">{label}</span>
+    {badge ? <span className="rounded-full bg-flame-500 text-white text-xs font-bold px-2 py-0.5 tabular-nums">{fa(badge)}</span> : null}
   </button>
 );
 
 // Desktop side menu: every section of the app in one place.
 export const Sidebar: React.FC<SidebarProps> = ({ view, dueCount, userProfile, username, syncStatus, health, hasCards, onNavigate, onStartReview, onAddCard }) => {
   return (
-    <aside className="hidden md:flex flex-col gap-1 w-64 shrink-0 h-screen sticky top-0 bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 px-3 py-5">
+    <aside className="hidden md:flex flex-col gap-1 w-64 shrink-0 h-screen sticky top-0 bg-white dark:bg-slate-900 border-l border-stone-200/80 dark:border-slate-800 px-3 py-5">
       <button type="button" onClick={() => onNavigate('TODAY')} className="flex items-center gap-2.5 px-2 pb-5">
-        <span className="w-9 h-9 rounded-xl bg-brand-500 text-white flex items-center justify-center"><Icon.Cards size={20} /></span>
-        <span dir="ltr" className="font-en font-bold text-xl text-ink dark:text-white">Lingua Cards</span>
+        <span className="w-9 h-9 rounded-xl bg-brand-500 text-white flex items-center justify-center"><Icon.Book size={20} /></span>
+        <span className="font-fa font-extrabold text-xl text-ink dark:text-white whitespace-nowrap">واژه‌خوان</span>
       </button>
 
       <NavLink active={view === 'TODAY'} onClick={() => onNavigate('TODAY')} icon={<Icon.Home size={20} />} label="امروز" />
       <NavLink active={view === 'STUDY'} onClick={onStartReview} icon={<Icon.Cards size={20} />} label="مرور" badge={dueCount} disabled={!hasCards} />
-      <NavLink active={view === 'PRACTICE'} onClick={() => onNavigate('PRACTICE')} icon={<Icon.Chat size={20} />} label="تمرین مکالمه و آزمون" disabled={!hasCards} />
+      <NavLink active={view === 'DRIVING'} onClick={() => onNavigate('DRIVING')} icon={<Icon.Headphones size={20} />} label="حالت رانندگی" />
+      <NavLink active={view === 'PRACTICE'} onClick={() => onNavigate('PRACTICE')} icon={<Icon.Chat size={20} />} label="تمرین و آزمون" disabled={!hasCards} />
       <NavLink active={TEXT_VIEWS.includes(view)} onClick={() => onNavigate('TEXTS')} icon={<Icon.Book size={20} />} label="کتابخانه" />
       <NavLink active={DECK_VIEWS.includes(view)} onClick={() => onNavigate('DECKS')} icon={<Icon.Layers size={20} />} label="واژه‌ها و دسته‌ها" />
       <NavLink active={view === 'STATS'} onClick={() => onNavigate('STATS')} icon={<Icon.Chart size={20} />} label="پیشرفت" />

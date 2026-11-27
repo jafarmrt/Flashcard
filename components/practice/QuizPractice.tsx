@@ -245,14 +245,14 @@ export const QuizPractice: React.FC<QuizPracticeProps> = ({ questions, aiOptions
               </button>
             </div>
             {solved && (
-              <p dir="ltr" className="font-en text-2xl font-bold text-ink dark:text-white pt-1">{englishWord}</p>
+              <p dir="ltr" className="font-read text-2xl font-bold text-ink dark:text-white pt-1">{englishWord}</p>
             )}
           </div>
         ) : q.ask === 'meaning' ? (
           <h2 className="text-2xl md:text-3xl font-bold text-ink dark:text-white">{q.questionText}</h2>
         ) : (
           <div className="flex items-center justify-center gap-2 max-w-full">
-            <h2 dir="ltr" className={`font-en font-bold leading-relaxed text-ink dark:text-white break-words ${q.ask === 'word-to-meaning' ? 'text-2xl md:text-3xl' : 'text-xl md:text-2xl'}`}>
+            <h2 dir="ltr" className={`font-read font-bold leading-relaxed text-ink dark:text-white break-words ${q.ask === 'word-to-meaning' ? 'text-2xl md:text-3xl' : 'text-xl md:text-2xl'}`}>
               {q.questionText}
             </h2>
             {q.ask === 'word-to-meaning' && (

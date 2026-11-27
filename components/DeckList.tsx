@@ -1,17 +1,38 @@
-import React, { useState } from 'react';
-import { Deck, Flashcard } from '../types';
+import React, { useMemo, useState } from 'react';
+import { Deck, Flashcard, PracticeAnswer } from '../types';
+import type { CardPlace } from '../services/library';
+import type { AiRequestOptions } from '../services/geminiService';
+import type { RefreshSource } from '../services/cardRefresh';
 import { isDue } from '../services/srsService';
+import { displayDeckName } from '../services/drivingMode';
+import { themeSummaries } from '../services/wordThemes';
+import { ThemesShelf } from './themes/ThemesShelf';
 import { fa, Icon } from './common/ui';
 
 interface DeckListProps {
     decks: Deck[];
     cards: Flashcard[];
+    savedThemes?: string[];
+    places?: Map<string, CardPlace[]>;
+    practice?: PracticeAnswer[];
+    aiOptions?: AiRequestOptions;
+    aiSources?: RefreshSource[];
+    userLevel?: string;
     onStudyDeck: (deckId: string) => void;
     onRenameDeck: (deckId: string, newName: string) => Promise<void>;
     onDeleteDeck: (deckId: string) => Promise<void>;
     onViewAllCards: () => void;
     onBulkAdd: () => void;
     onAiExtract?: () => void;
+    onCreateTheme?: (name: string, memberIds: Set<string>) => Promise<void>;
+    onRenameTheme?: (from: string, to: string) => Promise<void>;
+    onDeleteTheme?: (theme: string) => Promise<void>;
+    onUpdateThemeMembers?: (theme: string, memberIds: Set<string>) => Promise<void>;
+    onApplyBatchThemes?: (assignments: Map<string, string[]>, mode: 'merge' | 'replace') => Promise<void>;
+    onStudyThemeCards?: (cards: Flashcard[]) => void;
+    onQuizCards?: (cardIds: string[]) => void;
+    onEditCard?: (card: Flashcard) => void;
+    onPracticeAnswer?: (cardId: string, right: boolean, chose?: string) => void;
 }
 
 const RenameIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>;
@@ -26,26 +47,22 @@ const DeckCard: React.FC<{
     onRename: (newName: string) => Promise<void>;
     onDelete: () => Promise<void>;
 }> = ({ deck, cardCount, dueCount, onStudy, onRename, onDelete }) => {
+    const shownName = displayDeckName(deck.name);
     const [isRenaming, setIsRenaming] = useState(false);
-    const [newName, setNewName] = useState(deck.name);
+    const [confirmingDelete, setConfirmingDelete] = useState(false);
+    const [newName, setNewName] = useState(shownName);
 
     const handleRename = async () => {
-        if (newName.trim() && newName.trim() !== deck.name) {
+        if (newName.trim() && newName.trim() !== deck.name && newName.trim() !== shownName) {
             await onRename(newName.trim());
         }
         setIsRenaming(false);
     };
 
-    const handleDelete = () => {
-        if (confirm(`دستهٔ «${deck.name}» حذف شود؟ ${fa(cardCount)} کارت داخل آن هم حذف می‌شود و برنمی‌گردد.`)) {
-            onDelete();
-        }
-    };
-
     const dueProgress = cardCount > 0 ? (dueCount / cardCount) * 100 : 0;
 
     return (
-        <div className="bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-4 min-w-0 transition-all hover:shadow-md hover:-translate-y-0.5">
+        <div className="bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col justify-between gap-4 min-w-0 transition-transform hover:-translate-y-0.5">
             <div className="min-w-0">
                 {isRenaming ? (
                     <div className="flex gap-2">
@@ -58,61 +75,96 @@ const DeckCard: React.FC<{
                             onKeyDown={(e) => e.key === 'Enter' && handleRename()}
                             autoFocus
                             aria-label="نام تازهٔ دسته"
-                            className="flex-1 min-w-0 min-h-[40px] px-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-ink dark:text-white font-en focus:border-brand-500 focus:outline-none"
+                            className="flex-1 min-w-0 min-h-[40px] px-3 rounded-xl border border-stone-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-ink dark:text-white focus:border-brand-500 focus:outline-none"
                         />
-                        <button onClick={handleRename} className="min-h-[40px] px-4 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600">ذخیره</button>
+                        <button type="button" onClick={handleRename} className="min-h-[40px] px-4 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600">ذخیره</button>
                     </div>
                 ) : (
-                    <h3 dir="auto" className="font-en text-xl font-bold text-ink dark:text-white truncate text-right" title={deck.name}>{deck.name}</h3>
+                    <h3 dir="auto" className="font-read text-xl font-bold text-ink dark:text-white truncate text-right" title={shownName}>{shownName}</h3>
                 )}
-                <p className="mt-1 text-sm text-ink-muted dark:text-slate-400">{fa(cardCount)} کارت</p>
+                <p className="mt-1 text-sm text-ink-muted dark:text-slate-400 tabular-nums">{fa(cardCount)} کارت</p>
             </div>
 
-            <div>
-                <div className="flex justify-between items-center mb-1.5 text-xs font-bold">
-                    <span className="text-brand-600 dark:text-brand-300">موعد مرور</span>
-                    <span className="text-ink-muted dark:text-slate-300">{fa(dueCount)} از {fa(cardCount)}</span>
+            <div className="flex flex-col gap-3">
+                <div>
+                    <div className="flex justify-between items-center mb-1.5 text-xs font-bold tabular-nums">
+                        <span className="text-brand-600 dark:text-brand-300">موعد مرور</span>
+                        <span className="text-ink-muted dark:text-slate-300">{fa(dueCount)} از {fa(cardCount)}</span>
+                    </div>
+                    <div className="w-full h-2 rounded-full bg-stone-200 dark:bg-slate-700 overflow-hidden">
+                        <div className="h-full rounded-full bg-brand-500" title={`${fa(dueCount)} کارت موعد مرور دارد`} style={{ width: `${dueProgress}%` }} />
+                    </div>
                 </div>
-                <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-                    <div className="h-full rounded-full bg-brand-500" title={`${fa(dueCount)} کارت موعد مرور دارد`} style={{ width: `${dueProgress}%` }} />
-                </div>
-            </div>
 
-            <div className="flex gap-2">
-                <button
-                    onClick={onStudy}
-                    disabled={cardCount === 0}
-                    className="flex-1 flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    <Icon.Cards size={18} /> مرور
-                </button>
-                <button onClick={() => setIsRenaming(true)} aria-label={`تغییر نام ${deck.name}`} title="تغییر نام"
-                    className="flex items-center justify-center gap-1.5 min-h-[44px] px-3 rounded-xl text-sm font-bold text-ink dark:text-slate-200 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700">
-                    <RenameIcon /> <span className="sm:hidden">تغییر نام</span>
-                </button>
-                <button onClick={handleDelete} aria-label={`حذف ${deck.name}`} title="حذف دسته"
-                    className="flex items-center justify-center gap-1.5 min-h-[44px] px-3 rounded-xl text-sm font-bold text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-900/50">
-                    <DeleteIcon /> <span className="sm:hidden">حذف</span>
-                </button>
+                {confirmingDelete ? (
+                    <div className="flex flex-col gap-2 rounded-2xl bg-red-50 dark:bg-red-950/40 p-3">
+                        <p className="text-xs font-bold text-red-900 dark:text-red-200">
+                            دستهٔ «{shownName}» با {fa(cardCount)} کارت حذف شود؟
+                        </p>
+                        <div className="flex gap-2 justify-end">
+                            <button type="button" onClick={() => setConfirmingDelete(false)} className="min-h-[38px] px-3 rounded-xl text-xs font-bold text-ink dark:text-slate-200 border border-stone-200 dark:border-slate-600 bg-white dark:bg-slate-800">انصراف</button>
+                            <button type="button" onClick={() => { setConfirmingDelete(false); onDelete(); }} className="min-h-[38px] px-3.5 rounded-xl text-xs font-bold text-white bg-red-600 hover:bg-red-700">حذف قطعی</button>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="flex gap-2">
+                        <button
+                            type="button"
+                            onClick={onStudy}
+                            disabled={cardCount === 0}
+                            className="flex-1 flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                        >
+                            <Icon.Cards size={18} /> مرور
+                        </button>
+                        <button type="button" onClick={() => { setNewName(shownName); setIsRenaming(true); }} aria-label={`تغییر نام ${shownName}`} title="تغییر نام"
+                            className="flex items-center justify-center gap-1.5 min-h-[44px] min-w-[44px] px-3 rounded-xl text-sm font-bold text-ink dark:text-slate-200 border border-stone-200 dark:border-slate-600 hover:bg-stone-50 dark:hover:bg-slate-700">
+                            <RenameIcon /> <span className="sm:hidden">تغییر نام</span>
+                        </button>
+                        <button type="button" onClick={() => setConfirmingDelete(true)} aria-label={`حذف ${shownName}`} title="حذف دسته"
+                            className="flex items-center justify-center gap-1.5 min-h-[44px] min-w-[44px] px-3 rounded-xl text-sm font-bold text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-900/50">
+                            <DeleteIcon /> <span className="sm:hidden">حذف</span>
+                        </button>
+                    </div>
+                )}
             </div>
         </div>
     );
 };
 
 
-const DeckList: React.FC<DeckListProps> = ({ decks, cards, onStudyDeck, onRenameDeck, onDeleteDeck, onViewAllCards, onBulkAdd, onAiExtract }) => {
+const DeckList: React.FC<DeckListProps> = ({
+    decks,
+    cards,
+    savedThemes = [],
+    places,
+    practice,
+    aiOptions,
+    aiSources,
+    userLevel,
+    onStudyDeck,
+    onRenameDeck,
+    onDeleteDeck,
+    onViewAllCards,
+    onBulkAdd,
+    onAiExtract,
+    onCreateTheme,
+    onRenameTheme,
+    onDeleteTheme,
+    onUpdateThemeMembers,
+    onApplyBatchThemes,
+    onStudyThemeCards,
+    onQuizCards,
+    onEditCard,
+    onPracticeAnswer,
+}) => {
+    const [tab, setTab] = useState<'decks' | 'themes'>('decks');
 
-    if (decks.length === 0) {
-        return (
-            <div dir="rtl" className="font-fa max-w-5xl mx-auto w-full text-center py-16 px-5 bg-white dark:bg-slate-800 rounded-3xl">
-                <span className="mx-auto mb-4 w-14 h-14 rounded-2xl bg-brand-100 text-brand-500 dark:bg-brand-900/60 dark:text-brand-200 flex items-center justify-center"><Icon.Layers size={28} /></span>
-                <h1 className="text-2xl font-extrabold text-ink dark:text-white">هنوز دسته‌ای نداری</h1>
-                <p className="mt-2 text-ink-muted dark:text-slate-400">اولین کارت را که بسازی، دسته‌اش هم خودکار ساخته می‌شود. کارت‌ها را از تنظیمات هم می‌شود از فایل CSV وارد کرد.</p>
-            </div>
-        );
-    }
+    const bundleCount = useMemo(
+        () => themeSummaries(cards, savedThemes).length,
+        [cards, savedThemes],
+    );
 
-    const deckData = decks.map(deck => {
+    const deckData = useMemo(() => decks.map(deck => {
         const cardsInDeck = cards.filter(card => card.deckId === deck.id);
         const dueCardsInDeck = cardsInDeck.filter(card => isDue(card));
         return {
@@ -120,48 +172,112 @@ const DeckList: React.FC<DeckListProps> = ({ decks, cards, onStudyDeck, onRename
             cardCount: cardsInDeck.length,
             dueCount: dueCardsInDeck.length,
         };
-    }).sort((a,b) => a.name.localeCompare(b.name));
+    }).sort((a, b) => displayDeckName(a.name).localeCompare(displayDeckName(b.name), 'fa')), [decks, cards]);
 
     const totalCards = cards.length;
+    const themesEnabled = Boolean(
+        onCreateTheme && onRenameTheme && onDeleteTheme && onUpdateThemeMembers && onApplyBatchThemes && onStudyThemeCards && onQuizCards && onEditCard && onPracticeAnswer,
+    );
 
     return (
         <div dir="rtl" className="font-fa max-w-5xl mx-auto w-full flex flex-col gap-5">
 
             <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
                 <div>
-                    <h1 className="text-2xl md:text-3xl font-extrabold text-ink dark:text-white">دسته‌ها</h1>
-                    <p className="text-sm text-ink-muted dark:text-slate-400">{fa(decks.length)} دسته، {fa(totalCards)} کارت</p>
+                    <h1 className="text-2xl md:text-3xl font-extrabold text-ink dark:text-white">واژه‌ها و دسته‌ها</h1>
+                    <p className="text-sm text-ink-muted dark:text-slate-400 tabular-nums">
+                        {fa(decks.length)} دسته · {fa(bundleCount)} بستهٔ موضوعی · {fa(totalCards)} کارت
+                    </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                    <button onClick={onViewAllCards} className="inline-flex items-center gap-1.5 min-h-[44px] px-4 rounded-xl text-sm font-bold text-ink dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
+                    <button type="button" onClick={onViewAllCards} className="inline-flex items-center gap-1.5 min-h-[44px] px-4 rounded-xl text-sm font-bold text-ink dark:text-slate-200 bg-white dark:bg-slate-800 border border-stone-200 dark:border-slate-700 hover:bg-stone-50 dark:hover:bg-slate-700 transition-colors whitespace-nowrap">
                         <Icon.List size={16} />همهٔ {fa(totalCards)} کارت
                     </button>
                     {onAiExtract && (
-                      <button onClick={onAiExtract} className="inline-flex items-center gap-1.5 min-h-[44px] px-4 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 transition-colors">
+                      <button type="button" onClick={onAiExtract} className="inline-flex items-center gap-1.5 min-h-[44px] px-4 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 transition-colors whitespace-nowrap">
                         <SparkIcon />
                         <span>استخراج واژه از متن</span>
                       </button>
                     )}
-                    <button onClick={onBulkAdd} className="inline-flex items-center gap-1.5 min-h-[44px] px-4 rounded-xl text-sm font-bold text-brand-700 dark:text-brand-200 bg-brand-50 dark:bg-brand-900/40 hover:bg-brand-100 dark:hover:bg-brand-900/60 transition-colors">
+                    <button type="button" onClick={onBulkAdd} className="inline-flex items-center gap-1.5 min-h-[44px] px-4 rounded-xl text-sm font-bold text-brand-700 dark:text-brand-200 bg-brand-50 dark:bg-brand-900/40 hover:bg-brand-100 dark:hover:bg-brand-900/60 transition-colors whitespace-nowrap">
                         <Icon.Layers size={16} />
                         <span>افزودن گروهی</span>
                     </button>
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {deckData.map(deck => (
-                    <DeckCard
-                        key={deck.id}
-                        deck={deck}
-                        cardCount={deck.cardCount}
-                        dueCount={deck.dueCount}
-                        onStudy={() => onStudyDeck(deck.id)}
-                        onRename={(newName) => onRenameDeck(deck.id, newName)}
-                        onDelete={() => onDeleteDeck(deck.id)}
-                    />
-                ))}
-            </div>
+            {themesEnabled && (
+                <div role="tablist" aria-label="نمای سازمان‌دهی واژه‌ها" className="self-start flex items-center gap-1 p-1 rounded-2xl bg-stone-200/70 dark:bg-slate-800">
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={tab === 'decks'}
+                        onClick={() => setTab('decks')}
+                        className={`min-h-[42px] px-4 rounded-xl text-sm font-bold transition-colors whitespace-nowrap ${
+                            tab === 'decks'
+                                ? 'bg-white dark:bg-slate-900 text-ink dark:text-white shadow-sm'
+                                : 'text-ink-muted dark:text-slate-400 hover:text-ink dark:hover:text-white'
+                        }`}
+                    >
+                        دسته‌های کارت ({fa(decks.length)})
+                    </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={tab === 'themes'}
+                        onClick={() => setTab('themes')}
+                        className={`min-h-[42px] px-4 rounded-xl text-sm font-bold transition-colors whitespace-nowrap ${
+                            tab === 'themes'
+                                ? 'bg-white dark:bg-slate-900 text-ink dark:text-white shadow-sm'
+                                : 'text-ink-muted dark:text-slate-400 hover:text-ink dark:hover:text-white'
+                        }`}
+                    >
+                        بسته‌های موضوعی ({fa(bundleCount)})
+                    </button>
+                </div>
+            )}
+
+            {tab === 'themes' && themesEnabled ? (
+                <ThemesShelf
+                    cards={cards}
+                    decks={decks}
+                    savedThemes={savedThemes}
+                    places={places}
+                    practice={practice}
+                    aiOptions={aiOptions}
+                    aiSources={aiSources}
+                    userLevel={userLevel}
+                    onCreateTheme={onCreateTheme!}
+                    onRenameTheme={onRenameTheme!}
+                    onDeleteTheme={onDeleteTheme!}
+                    onUpdateMembers={onUpdateThemeMembers!}
+                    onApplyBatchThemes={onApplyBatchThemes!}
+                    onStudyCards={onStudyThemeCards!}
+                    onQuizCards={onQuizCards!}
+                    onEditCard={onEditCard!}
+                    onPracticeAnswer={onPracticeAnswer!}
+                />
+            ) : decks.length === 0 ? (
+                <div className="text-center py-16 px-5 bg-white dark:bg-slate-800 rounded-3xl">
+                    <span className="mx-auto mb-4 w-14 h-14 rounded-2xl bg-brand-100 text-brand-500 dark:bg-brand-900/60 dark:text-brand-200 flex items-center justify-center"><Icon.Layers size={28} /></span>
+                    <h2 className="text-2xl font-extrabold text-ink dark:text-white">هنوز دسته‌ای نداری</h2>
+                    <p className="mt-2 text-ink-muted dark:text-slate-400">اولین کارت را که بسازی، دسته‌اش هم خودکار ساخته می‌شود. کارت‌ها را از تنظیمات هم می‌شود از فایل CSV وارد کرد.</p>
+                </div>
+            ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {deckData.map(deck => (
+                        <DeckCard
+                            key={deck.id}
+                            deck={deck}
+                            cardCount={deck.cardCount}
+                            dueCount={deck.dueCount}
+                            onStudy={() => onStudyDeck(deck.id)}
+                            onRename={(newName) => onRenameDeck(deck.id, newName)}
+                            onDelete={() => onDeleteDeck(deck.id)}
+                        />
+                    ))}
+                </div>
+            )}
         </div>
     );
 };

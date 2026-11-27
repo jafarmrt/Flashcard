@@ -7,9 +7,20 @@ export default {
   theme: {
     extend: {
       colors: {
-        brand: { 50: '#F3F2FE', 100: '#ECEAFD', 200: '#DCD8FB', 300: '#B9B1F6', 400: '#7D70E6', 500: '#4B3FD1', 600: '#3F34B8', 700: '#352B9E', 800: '#2E2591', 900: '#1E1866' },
-        ink: { DEFAULT: '#171A33', soft: '#242849', muted: '#5A5F7A' },
-        flame: { 500: '#E8590C' }, // the count of cards due
+        brand: {
+          50: '#F2F8F5',
+          100: '#E1F0E9',
+          200: '#C3E1D4',
+          300: '#94C9B4',
+          400: '#57A689',
+          500: '#1F6E58',
+          600: '#185846',
+          700: '#144739',
+          800: '#113A2F',
+          900: '#0C2921',
+        },
+        ink: { DEFAULT: '#18221E', soft: '#26332E', muted: '#57635E' },
+        flame: { 500: '#D95A1B' }, // the count of cards due
       },
       fontFamily: {
         fa: ['"Vazirmatn Variable"', 'Vazirmatn', 'system-ui', 'sans-serif'],

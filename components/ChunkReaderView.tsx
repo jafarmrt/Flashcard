@@ -59,6 +59,7 @@ interface ChunkReaderViewProps {
   onMarkKnown: (term: string) => void;
   onUnmarkKnown: (term: string) => void;
   onUpdateSettings: (changes: Partial<Settings>) => void;
+  onStartDriving?: () => void;
   showToast: (message: string) => void;
 }
 
@@ -140,7 +141,7 @@ const GRAMMAR_MARK = 'border-b-2 border-dotted border-rose-400 dark:border-rose-
 // cards, then finish the section.
 export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   source: book, chapter, chunks, index, chapterCount, settings, cards, knownTerms, onSaveCards, onComplete, onBack, onOpenChunk,
-  onMarkKnown, onUnmarkKnown, onUpdateSettings, showToast, entry = { kind: 'resume' } as ReaderEntry, onReviewChapter, nextChapter, loadChapter,
+  onMarkKnown, onUnmarkKnown, onUpdateSettings, onStartDriving, showToast, entry = { kind: 'resume' } as ReaderEntry, onReviewChapter, nextChapter, loadChapter,
   onEditText, notes = [], onSaveNote,
 }) => {
   const chunk = chunks[index] || '';
@@ -1380,7 +1381,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
       <header className="flex items-center gap-1.5">
         <button type="button" onClick={onBack} aria-label="برگشت به مسیر" className="w-10 h-10 shrink-0 rounded-xl flex items-center justify-center hover:bg-white dark:hover:bg-slate-800"><Icon.Back /></button>
         <div className="flex-1 min-w-0">
-          <h1 dir="auto" className="font-en font-bold text-[15px] text-ink dark:text-white truncate text-right">{book.title}</h1>
+          <h1 dir="auto" className="font-read font-bold text-[15px] text-ink dark:text-white truncate text-right">{book.title}</h1>
           <p className="text-[11px] text-ink-muted dark:text-slate-400 truncate">
             {chapterCount > 1 && <><bdi dir="auto">{chapter.title}</bdi>، </>}بخش {fa(index + 1)} از {fa(chunks.length)}
           </p>
@@ -1450,6 +1451,16 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
             </div>
             {readAloud.status !== 'idle' && readAloud.voice !== voice && <span className="w-full text-xs text-amber-800 dark:text-amber-200">فعلاً با صدای دستگاه</span>}
           </div>
+          {onStartDriving && (
+            <button
+              type="button"
+              onClick={() => { setMenuOpen(false); readAloud.stop(); onStartDriving(); }}
+              className="min-h-[42px] px-3.5 rounded-xl bg-brand-50 dark:bg-slate-700/80 hover:bg-brand-100 dark:hover:bg-slate-700 text-brand-700 dark:text-emerald-300 font-bold flex items-center justify-center gap-2 transition-colors"
+            >
+              <Icon.Headphones size={18} />
+              <span>حالت رانندگی (پیوسته‌خوانی بی‌نیاز از نگاه)</span>
+            </button>
+          )}
           {!done && !sectionEmpty && (
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="font-bold text-ink dark:text-white">واژه‌های سخت این بخش، پیش از خواندن</span>

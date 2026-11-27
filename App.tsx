@@ -14,6 +14,8 @@ import { chaptersOf, currentChunkOf, currentReading, placesByCard } from './serv
 import { knownTermSet } from './services/knownWords';
 import { dailyQueue, DEFAULT_NEW_PER_DAY } from './services/dailyQueue';
 import { dayString } from './services/calendar';
+import { newPracticeAnswer } from './services/practiceLog';
+import { themeSummaries } from './services/wordThemes';
 import { AutoFixReportModal } from './components/AutoFixReportModal';
 
 // Every screen but Today loads on first use, so the app starts faster. The
@@ -34,6 +36,7 @@ const SCREENS = {
     profile: () => import('./components/ProfileView'),
     aiExtract: () => import('./components/AiTextExtractorView'),
     reader: () => import('./components/ChunkReaderView'),
+    driving: () => import('./components/driving/DrivingView'),
     usage: () => import('./components/UsageView'),
     diagnostics: () => import('./components/DiagnosticsView'),
 };
@@ -46,6 +49,7 @@ const AiTextExtractorView = lazy(() => SCREENS.aiExtract().then(m => ({ default:
 const UsageView = lazy(() => SCREENS.usage().then(m => ({ default: m.UsageView })));
 const DiagnosticsView = lazy(() => SCREENS.diagnostics().then(m => ({ default: m.DiagnosticsView })));
 const ReaderScreen = lazy(() => SCREENS.reader().then(m => ({ default: m.ReaderScreen })));
+const DrivingView = lazy(SCREENS.driving);
 const StudyView = lazy(() => SCREENS.study().then(m => ({ default: m.StudyView })));
 const LibraryView = lazy(() => SCREENS.library().then(m => ({ default: m.LibraryView })));
 const SettingsView = lazy(SCREENS.settings);
@@ -99,6 +103,8 @@ const App: React.FC = () => {
         handleStartSourceReview, handleReviewCards, handlePrestudyChapter,
         overlayEdit, openCardEditor, closeCardEditor, saveOverlayEdit,
         handleFillExtras, handleStopFillExtras, extrasProgress, handleSaveCardContent, handleApplyImprovements,
+        handleDeleteNote, handleSaveDriveCard, handleOpenBookChunkById, handleStartCustomStudy,
+        handleCreateTheme, handleRenameTheme, handleDeleteTheme, handleUpdateThemeMembers, handleApplyBatchThemes,
     } = useAppLogic();
 
     const visibleFlashcards = useMemo(() => flashcards.filter(c => !c.isDeleted), [flashcards]);
@@ -119,6 +125,10 @@ const App: React.FC = () => {
     const activeSource = sources.find(s => s.id === activeSourceId && !s.isDeleted);
     const activeChapter = chapters.find(c => c.id === activeChapterId && !c.isDeleted);
     const existingFronts = useMemo(() => visibleFlashcards.map(c => c.front), [visibleFlashcards]);
+    const existingThemes = useMemo(
+        () => themeSummaries(visibleFlashcards, settings.savedThemes || []).map(s => s.name),
+        [visibleFlashcards, settings.savedThemes],
+    );
     // Where each card was met while reading, shown on the card.
     const places = useMemo(() => placesByCard(occurrences, sources, chapters), [occurrences, sources, chapters]);
 
@@ -167,12 +177,20 @@ const App: React.FC = () => {
                     newDueCount={queue.fresh}
                     heldBack={queue.heldBack}
                     knownWords={knownWords}
+                    notes={notes}
+                    flaggedCardIds={settings.driveFlaggedCardIds || []}
                     onMoreNew={() => startQuickReview('auto', 10, undefined, undefined, true)}
                     loadText={loadChapterText}
                     onStartReview={mode => startQuickReview(mode)}
                     onOpenSetup={() => openStudySetup()}
                     onNavigate={handleNavigate}
                     onOpenChunk={handleOpenChunk}
+                    onOpenBookChunk={handleOpenBookChunkById}
+                    onDismissDriveNote={id => { void handleDeleteNote(id); }}
+                    onSaveDriveCard={handleSaveDriveCard}
+                    onStudyCustomCards={list => handleStartCustomStudy(list)}
+                    onUnflagDriveCard={id => updateSettings({ driveFlaggedCardIds: (settings.driveFlaggedCardIds || []).filter(x => x !== id) })}
+                    onClearDriveFlags={() => updateSettings({ driveFlaggedCardIds: [] })}
                     speechAttempts={speechAttempts}
                 />;
             case 'ME':
@@ -242,9 +260,32 @@ const App: React.FC = () => {
                     onOpenChunk={i => handleOpenChunk(activeChapter, i)}
                     onReviewChapter={() => handleStartSourceReview(activeSource.id, bookChapters.length > 1 ? activeChapter.id : undefined)}
                     nextChapter={following ? { id: following.id, title: following.title, open: () => handleOpenChunk(following, currentChunkOf(following)) } : undefined}
+                    onStartDriving={() => handleNavigate('DRIVING')}
                     showToast={showToast}
                 />;
                 }
+            case 'DRIVING':
+                return <DrivingView
+                    sources={sources}
+                    chapters={chapters}
+                    decks={visibleDecks}
+                    cards={visibleFlashcards}
+                    todayQueue={queue.cards}
+                    occurrences={occurrences}
+                    notes={notes}
+                    knownWords={knownWords}
+                    settings={settings}
+                    currentReadingSourceId={activeSource?.id || currentReading(sources, chapters)?.source.id}
+                    onUpdateSettings={updateSettings}
+                    loadChapterText={loadChapterText}
+                    onCompleteChunk={(chapterId, chunk, then, ms) => handleCompleteChunk(chapterId, chunk, then || 'stay', ms || 0)}
+                    onSaveNote={handleSaveNote}
+                    onDeleteNote={handleDeleteNote}
+                    onSaveReaderCard={handleSaveDriveCard}
+                    onOpenBookChunk={handleOpenBookChunkById}
+                    onStudyCards={list => handleStartCustomStudy(list)}
+                    onExit={() => setView(previousViewRef.current && previousViewRef.current !== 'DRIVING' ? previousViewRef.current : 'TODAY')}
+                />;
             case 'STUDY':
                 return <StudyView
                     key={studySessionId}
@@ -317,24 +358,44 @@ const App: React.FC = () => {
                 return <DeckList
                     decks={visibleDecks}
                     cards={visibleFlashcards}
+                    savedThemes={settings.savedThemes}
+                    places={places}
+                    practice={practice}
+                    aiOptions={aiRequestOptions(settings)}
+                    aiSources={cardSources.filter(s => s.kind === 'ai')}
+                    userLevel={settings.userLevel}
                     onStudyDeck={handleStudyDeck}
                     onRenameDeck={handleRenameDeck}
                     onDeleteDeck={handleDeleteDeck}
                     onViewAllCards={() => setView('LIST')}
                     onBulkAdd={() => setView('BULK_ADD')}
                     onAiExtract={() => setView('AI_EXTRACT')}
+                    onCreateTheme={handleCreateTheme}
+                    onRenameTheme={handleRenameTheme}
+                    onDeleteTheme={handleDeleteTheme}
+                    onUpdateThemeMembers={handleUpdateThemeMembers}
+                    onApplyBatchThemes={handleApplyBatchThemes}
+                    onStudyThemeCards={handleStartCustomStudy}
+                    onQuizCards={ids => { void handleStartHardQuiz(ids); }}
+                    onEditCard={card => { void openCardEditor(card); }}
+                    onPracticeAnswer={(cardId, right, chose) => {
+                        void handleSavePractice([newPracticeAnswer({ cardId, kind: 'quiz', right, ...(chose ? { chose } : {}) })]);
+                        if (!right) void handleQuizMiss(cardId);
+                    }}
                 />;
             case 'FORM':
                 const editingCardDeckName = visibleDecks.find(d => d.id === editingCard?.deckId)?.name || '';
                 return <FlashcardForm
                     card={editingCard}
                     decks={visibleDecks}
+                    existingThemes={existingThemes}
                     onSave={handleSaveCard}
                     onCancel={() => setView(previousViewRef.current)}
                     onDelete={editingCard ? async () => { await handleDeleteCards([editingCard.id]); setView(previousViewRef.current); } : undefined}
                     initialDeckName={editingCardDeckName}
                     showToast={showToast}
                     sources={cardSources}
+                    aiOptions={aiRequestOptions(settings)}
                     audioOptions={pronunciationOptions(settings)}
                 />;
             case 'STATS':
@@ -365,6 +426,7 @@ const App: React.FC = () => {
                 return <FlashcardList 
                     cards={visibleFlashcards} 
                     decks={visibleDecks} 
+                    savedThemes={settings.savedThemes}
                     onEdit={handleEditCard} 
                     onDelete={handleDeleteCards}
                     onBackToDecks={() => setView('DECKS')} 
@@ -384,8 +446,8 @@ const App: React.FC = () => {
 
     if (appLoading) {
         return (
-            <div className="flex items-center justify-center min-h-screen bg-slate-50 dark:bg-slate-900">
-                <div className="text-xl font-medium text-slate-600 dark:text-slate-300">Loading Lingua Cards...</div>
+            <div dir="rtl" className="flex items-center justify-center min-h-screen bg-[#F7F5F0] dark:bg-[#0D1311] font-fa">
+                <div className="text-lg font-medium text-ink-muted dark:text-slate-300">در حال آماده‌سازی واژه‌خوان…</div>
             </div>
         );
     }
@@ -401,12 +463,13 @@ const App: React.FC = () => {
         );
     }
 
-    const PERSIAN_VIEWS = ['TODAY', 'ME', 'TEXTS', 'READER', 'STUDY', 'SETTINGS', 'USAGE', 'DIAGNOSTICS', 'DECKS', 'LIST', 'FORM', 'BULK_ADD', 'STATS', 'PROFILE', 'PRACTICE', 'AI_EXTRACT', 'CHANGELOG'];
+    const PERSIAN_VIEWS = ['TODAY', 'ME', 'TEXTS', 'READER', 'DRIVING', 'STUDY', 'SETTINGS', 'USAGE', 'DIAGNOSTICS', 'DECKS', 'LIST', 'FORM', 'BULK_ADD', 'STATS', 'PROFILE', 'PRACTICE', 'AI_EXTRACT', 'CHANGELOG'];
     const isStudy = view === 'STUDY';
-    const fullScreen = isStudy;
+    const isDriving = view === 'DRIVING';
+    const fullScreen = isStudy || isDriving;
 
     return (
-        <div dir="rtl" className="min-h-screen flex bg-[#F5F6FA] dark:bg-slate-950 font-fa">
+        <div dir="rtl" className="min-h-screen flex bg-[#F7F5F0] dark:bg-[#0D1311] font-fa">
             {!fullScreen && (
                 <Sidebar
                     view={view}
@@ -421,7 +484,7 @@ const App: React.FC = () => {
                     onAddCard={handleAddCard}
                 />
             )}
-            <main className={`flex-1 min-w-0 w-full ${isStudy ? 'px-3 md:px-0' : 'px-4 md:px-8 py-6 md:py-8 pb-28 md:pb-10'}`}>
+            <main className={`flex-1 min-w-0 w-full ${isDriving ? 'p-0' : isStudy ? 'px-3 md:px-0' : 'px-4 md:px-8 py-6 md:py-8 pb-28 md:pb-10'}`}>
                 <ScreenBoundary view={view}>
                     <Suspense fallback={<div className="py-24 text-center text-ink-muted dark:text-slate-400" role="status">…</div>}>
                         {PERSIAN_VIEWS.includes(view)
@@ -455,6 +518,7 @@ const App: React.FC = () => {
                     <FlashcardForm
                         card={overlayEdit.card}
                         decks={visibleDecks}
+                        existingThemes={existingThemes}
                         onSave={saveOverlayEdit}
                         onCancel={closeCardEditor}
                         // Not from a review: the session holds its own copy of
@@ -463,6 +527,7 @@ const App: React.FC = () => {
                         initialDeckName={visibleDecks.find(d => d.id === overlayEdit.card.deckId)?.name || ''}
                         showToast={showToast}
                         sources={cardSources}
+                        aiOptions={aiRequestOptions(settings)}
                         audioOptions={pronunciationOptions(settings)}
                     />
                     </Suspense>

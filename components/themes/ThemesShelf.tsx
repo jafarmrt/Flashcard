@@ -86,6 +86,14 @@ export const ThemesShelf: React.FC<ThemesShelfProps> = ({
     }
   }, [summaries, activeTheme]);
 
+  const filteredCreateCards = useMemo(() => {
+    const q = cardQuery.trim().toLowerCase();
+    const list = q
+      ? liveVocab.filter(c => c.front.toLowerCase().includes(q) || c.back.toLowerCase().includes(q))
+      : liveVocab;
+    return list.slice(0, 40);
+  }, [liveVocab, cardQuery]);
+
   if (activeTheme) {
     return (
       <ThemeWorkspace
@@ -117,14 +125,6 @@ export const ThemesShelf: React.FC<ThemesShelfProps> = ({
   const unusedStarters = STARTER_THEMES.filter(
     starter => !summaries.some(s => sameTheme(s.name, starter)),
   );
-
-  const filteredCreateCards = useMemo(() => {
-    const q = cardQuery.trim().toLowerCase();
-    const list = q
-      ? liveVocab.filter(c => c.front.toLowerCase().includes(q) || c.back.toLowerCase().includes(q))
-      : liveVocab;
-    return list.slice(0, 40);
-  }, [liveVocab, cardQuery]);
 
   const toggleCreateCard = (id: string) => {
     setPickedIds(prev => {
@@ -259,7 +259,7 @@ export const ThemesShelf: React.FC<ThemesShelfProps> = ({
                       onChange={() => toggleCreateCard(c.id)}
                       className="w-4 h-4 accent-brand-500 shrink-0"
                     />
-                    <bdi dir="ltr" className="font-en font-bold text-ink dark:text-white truncate">{c.front}</bdi>
+                    <bdi dir="ltr" className="font-read font-bold text-ink dark:text-white truncate">{c.front}</bdi>
                     <span className="text-xs text-ink-muted dark:text-slate-400 truncate">{c.back}</span>
                   </label>
                 ))}
@@ -338,7 +338,7 @@ export const ThemesShelf: React.FC<ThemesShelfProps> = ({
                     )}
                   </p>
                   {summary.previewWords.length > 0 && (
-                    <p dir="ltr" className="font-en text-xs text-ink-muted dark:text-slate-400 truncate text-right pt-0.5">
+                    <p dir="ltr" className="font-read text-xs text-ink-muted dark:text-slate-400 truncate text-right pt-0.5">
                       {summary.previewWords.join(' · ')}
                     </p>
                   )}

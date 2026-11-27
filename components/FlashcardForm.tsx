@@ -22,6 +22,8 @@ import {
 import { originText } from '../services/library';
 import { familyText, parseFamilyText, parseSynonymsText, synonymsText } from '../services/cardExtras';
 import { CEFR } from '../services/wordLevel';
+import { displayDeckName } from '../services/drivingMode';
+import { normalizeThemeName, normalizeThemes, sameTheme, STARTER_THEMES, suggestThemesForCard } from '../services/wordThemes';
 import { ConfirmDeleteCards } from './common/ConfirmDeleteCards';
 
 
@@ -31,11 +33,13 @@ type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' 
 interface FlashcardFormProps {
   card: Flashcard | null;
   decks: Deck[];
+  existingThemes?: string[];
   onSave: (card: FlashcardFormData, deckName: string) => void | Promise<void>;
   onCancel: () => void;
   initialDeckName?: string;
   showToast: (message: string) => void;
   sources: RefreshSource[]; // the AI services and dictionaries a card can be filled from
+  aiOptions?: AiRequestOptions;
   audioOptions?: AiRequestOptions;
   onDelete?: () => Promise<void>; // only for a saved card; asks first
 }
@@ -132,7 +136,7 @@ const ProposalPanel: React.FC<{
   );
 };
 
-const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCancel, initialDeckName, showToast, sources, audioOptions, onDelete }) => {
+const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, existingThemes = [], onSave, onCancel, initialDeckName, showToast, sources, aiOptions, audioOptions, onDelete }) => {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [formData, setFormData] = useState<FlashcardFormData>(EMPTY);
   // Lists are edited as text, one item per line, and read back on save.
@@ -141,7 +145,9 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
   const [collocationsText, setCollocationsText] = useState('');
   const [synonymsBox, setSynonymsBox] = useState('');
   const [familyBox, setFamilyBox] = useState('');
-  const [deckName, setDeckName] = useState('Default Deck');
+  const [deckName, setDeckName] = useState('کارت‌های دستی');
+  const [themeDraft, setThemeDraft] = useState('');
+  const [suggestingThemes, setSuggestingThemes] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Another source's answer for this card
@@ -176,19 +182,22 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
         // Older cards kept one string where there is now a list.
         definition: asList(content.definition),
         exampleSentenceTarget: asList(content.exampleSentenceTarget),
+        themes: normalizeThemes(content.themes),
       };
       setFormData(data);
       showLists(data);
       // A card whose deck is gone asks for one rather than moving to the default.
-      setDeckName(initialDeckName || '');
+      setDeckName(initialDeckName ? displayDeckName(initialDeckName) : '');
     } else {
       setFormData(EMPTY);
       showLists(EMPTY);
-      setDeckName('Default Deck');
+      const hasLegacyDefault = decks.some(d => d.name === 'Default Deck');
+      setDeckName(hasLegacyDefault ? 'کارت‌های دستی' : 'کارت‌های دستی');
     }
+    setThemeDraft('');
     setProposal(null);
     setAskError('');
-  }, [card, initialDeckName]);
+  }, [card, initialDeckName, decks]);
 
   useEffect(() => {
     if (!sources.some(s => s.id === sourceId)) setSourceId(sources[0]?.id || '');
@@ -205,22 +214,37 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
   };
 
   // The form as it stands, with the lists read from their text boxes.
-  const current = (): FlashcardFormData => ({
-    ...formData,
-    definition: lines(definitionText),
-    exampleSentenceTarget: lines(examplesText),
-    collocations: parseCollocations(collocationsText),
-    synonyms: parseSynonymsText(synonymsBox),
-    wordFamily: parseFamilyText(familyBox),
-    level: formData.level || undefined,
-  });
+  const current = (): FlashcardFormData => {
+    const cleanThemes = normalizeThemes(formData.themes);
+    return {
+      ...formData,
+      definition: lines(definitionText),
+      exampleSentenceTarget: lines(examplesText),
+      collocations: parseCollocations(collocationsText),
+      synonyms: parseSynonymsText(synonymsBox),
+      wordFamily: parseFamilyText(familyBox),
+      themes: cleanThemes.length > 0 ? cleanThemes : undefined,
+      level: formData.level || undefined,
+    };
+  };
+
+  const resolveActualDeckName = (inputName: string): string => {
+    const trimmed = inputName.trim();
+    if (trimmed === 'کارت‌های دستی' && decks.some(d => d.name === 'Default Deck') && !decks.some(d => d.name === 'کارت‌های دستی')) {
+      return 'Default Deck';
+    }
+    if (trimmed === 'واردشده' && decks.some(d => d.name === 'Imported Deck') && !decks.some(d => d.name === 'واردشده')) {
+      return 'Imported Deck';
+    }
+    return trimmed;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.front.trim() || !formData.back.trim() || !deckName.trim() || saving) return;
     setSaving(true);
     try {
-      await onSave(current(), deckName);
+      await onSave(current(), resolveActualDeckName(deckName));
     } finally {
       setSaving(false);
     }
@@ -260,9 +284,59 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
     }
     setSaving(true);
     try {
-      await onSave(next, deckName);
+      await onSave(next, resolveActualDeckName(deckName));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const toggleThemeTag = (tag: string) => {
+    const clean = normalizeThemeName(tag);
+    if (!clean) return;
+    setFormData(prev => {
+      const list = normalizeThemes(prev.themes);
+      const exists = list.some(t => sameTheme(t, clean));
+      const next = exists ? list.filter(t => !sameTheme(t, clean)) : [...list, clean];
+      return { ...prev, themes: next };
+    });
+  };
+
+  const addDraftTheme = () => {
+    const clean = normalizeThemeName(themeDraft);
+    if (!clean) return;
+    setFormData(prev => ({
+      ...prev,
+      themes: normalizeThemes([...(prev.themes || []), clean]),
+    }));
+    setThemeDraft('');
+  };
+
+  const handleSuggestThemes = async () => {
+    if (!formData.front.trim() || suggestingThemes) return;
+    setSuggestingThemes(true);
+    try {
+      const suggested = await suggestThemesForCard(
+        {
+          front: formData.front,
+          back: formData.back || formData.front,
+          partOfSpeech: formData.partOfSpeech,
+          sourceSentence: formData.sourceSentence,
+        },
+        existingThemes,
+        aiOptions,
+      );
+      if (suggested.length === 0) {
+        showToast('پیشنهادی برای بستهٔ موضوعی نیامد.');
+      } else {
+        setFormData(prev => ({
+          ...prev,
+          themes: normalizeThemes([...(prev.themes || []), ...suggested]),
+        }));
+      }
+    } catch {
+      showToast('پیشنهاد هوش مصنوعی در دسترس نبود.');
+    } finally {
+      setSuggestingThemes(false);
     }
   };
 
@@ -301,7 +375,7 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
         setIsRecording(true);
       } catch (error) {
         console.error("Error accessing microphone:", error);
-        alert("برای این کار باید اجازهٔ میکروفون را در تنظیمات مرورگر بدهی.");
+        showToast("برای ضبط تلفظ، اجازهٔ میکروفون را در مرورگر فعال کن.");
       }
     }
   };
@@ -345,7 +419,7 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
                     onChange={handleTextChange}
                     required
                     autoComplete="off"
-                    className={`${field} font-en text-base pl-3 pr-12`}
+                    className={`${field} font-read text-base pl-3 pr-12`}
                     placeholder="hello"
                 />
                 <button type="button" onClick={handleToggleRecording} disabled={!formData.front || isCheckingPronunciation}
@@ -411,7 +485,7 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
                     className={`${field} mt-1 px-3 font-en`}
                 />
                 <datalist id="deck-options">
-                    {decks.map(d => <option key={d.id} value={d.name} />)}
+                    {decks.map(d => <option key={d.id} value={displayDeckName(d.name)} />)}
                 </datalist>
             </div>
             {/* Back of Card */}
@@ -431,6 +505,74 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
             />
           </div>
         </div>
+
+        {!grammar && (
+          <div className="rounded-2xl border border-stone-200 dark:border-slate-700 p-4 flex flex-col gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <label htmlFor="theme-draft" className={label}>بسته‌های موضوعی (اختیاری)</label>
+                <p className={hint}>واژه را بدون تغییر دسته‌اش، در صحنه‌های موضوعی مثل «جنگل و طبیعت» یا «تاریخی» بگذار.</p>
+              </div>
+              <button
+                type="button"
+                disabled={!formData.front.trim() || suggestingThemes}
+                onClick={handleSuggestThemes}
+                className="min-h-[40px] px-3.5 rounded-xl text-xs font-bold text-brand-700 dark:text-brand-200 bg-brand-50 dark:bg-brand-900/40 hover:bg-brand-100 disabled:opacity-40 whitespace-nowrap"
+              >
+                {suggestingThemes ? 'در حال پیشنهاد…' : 'پیشنهاد هوشمند بسته'}
+              </button>
+            </div>
+
+            {normalizeThemes([...existingThemes, ...STARTER_THEMES]).length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {normalizeThemes([...(formData.themes || []), ...existingThemes, ...STARTER_THEMES]).slice(0, 12).map(tag => {
+                  const active = (formData.themes || []).some(t => sameTheme(t, tag));
+                  return (
+                    <button
+                      key={tag}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => toggleThemeTag(tag)}
+                      className={`min-h-[38px] px-3 rounded-xl text-xs font-bold border transition-colors whitespace-nowrap ${
+                        active
+                          ? 'bg-brand-500 text-white border-brand-500'
+                          : 'bg-white dark:bg-slate-900 text-ink dark:text-slate-200 border-stone-200 dark:border-slate-600 hover:border-brand-400'
+                      }`}
+                    >
+                      {active ? `✓ ${tag}` : tag}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <input
+                id="theme-draft"
+                type="text"
+                dir="rtl"
+                value={themeDraft}
+                onChange={e => setThemeDraft(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addDraftTheme();
+                  }
+                }}
+                placeholder="نام بستهٔ دلخواه را بنویس…"
+                className={`${field} flex-1 px-3`}
+              />
+              <button
+                type="button"
+                disabled={!normalizeThemeName(themeDraft)}
+                onClick={addDraftTheme}
+                className="min-h-[44px] px-4 rounded-xl text-sm font-bold border border-stone-200 dark:border-slate-600 text-ink dark:text-slate-200 hover:bg-stone-50 dark:hover:bg-slate-700 disabled:opacity-40 whitespace-nowrap"
+              >
+                افزودن بسته
+              </button>
+            </div>
+          </div>
+        )}
 
         {grammar && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
@@ -498,19 +640,19 @@ const FlashcardForm: React.FC<FlashcardFormProps> = ({ card, decks, onSave, onCa
         <div>
           <label htmlFor="sourceSentence" className={label}>جملهٔ متن</label>
           <p id="sentence-hint" className={hint}>جمله‌ای که این {grammar ? 'ساختار' : 'واژه'} در آن دیده شد. هوش مصنوعی معنی را در همین جمله می‌دهد.</p>
-          <textarea id="sourceSentence" name="sourceSentence" dir="ltr" rows={2} aria-describedby="sentence-hint" value={formData.sourceSentence || ''} onChange={handleTextChange} className={`${field} mt-1 px-3 py-2 font-en`} />
+          <textarea id="sourceSentence" name="sourceSentence" dir="ltr" rows={2} aria-describedby="sentence-hint" value={formData.sourceSentence || ''} onChange={handleTextChange} className={`${field} mt-1 px-3 py-2 font-read`} />
         </div>
 
         <div>
           <label htmlFor="definition" className={label}>تعریف انگلیسی</label>
           <p id="definition-hint" className={hint}>هر تعریف در یک خط.</p>
-          <textarea id="definition" name="definition" dir="ltr" rows={3} aria-describedby="definition-hint" value={definitionText} onChange={e => setDefinitionText(e.target.value)} className={`${field} mt-1 px-3 py-2 font-en`} />
+          <textarea id="definition" name="definition" dir="ltr" rows={3} aria-describedby="definition-hint" value={definitionText} onChange={e => setDefinitionText(e.target.value)} className={`${field} mt-1 px-3 py-2 font-read`} />
         </div>
 
         <div>
            <label htmlFor="exampleSentenceTarget" className={label}>جملهٔ مثال</label>
            <p id="example-hint" className={hint}>هر مثال در یک خط.</p>
-          <textarea id="exampleSentenceTarget" name="exampleSentenceTarget" dir="ltr" rows={3} aria-describedby="example-hint" value={examplesText} onChange={e => setExamplesText(e.target.value)} className={`${field} mt-1 px-3 py-2 font-en`} />
+          <textarea id="exampleSentenceTarget" name="exampleSentenceTarget" dir="ltr" rows={3} aria-describedby="example-hint" value={examplesText} onChange={e => setExamplesText(e.target.value)} className={`${field} mt-1 px-3 py-2 font-read`} />
         </div>
 
         {!grammar && (

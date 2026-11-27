@@ -271,10 +271,10 @@ const LeechPanel: React.FC<{ card: Flashcard; aiOptions?: AiRequestOptions; onDo
   };
   const button = 'min-h-[44px] px-4 rounded-xl text-sm font-bold';
   return (
-    <section dir="rtl" aria-label="کارت سمج" className="rounded-2xl border-2 border-rose-200 dark:border-rose-800 bg-rose-50/70 dark:bg-rose-950/30 p-4 flex flex-col gap-3">
+    <section dir="rtl" aria-label="واژهٔ دیرگیر" className="rounded-2xl border-2 border-rose-200 dark:border-rose-800 bg-rose-50/70 dark:bg-rose-950/30 p-4 flex flex-col gap-3">
       <p className="text-sm text-ink dark:text-slate-100">
-        <span className="font-bold">کارت سمج: </span>
-        این کارت را {fa(card.lapses || 0)} بار فراموش کرده‌ای. شاید یادیار فعلی به کارت نمی‌آید.
+        <span className="font-bold">واژهٔ دیرگیر: </span>
+        این واژه را {fa(card.lapses || 0)} بار فراموش کرده‌ای. شاید یادیار فعلی برایش کافی نیست.
       </p>
       {state === 'shown' || (state === 'saving' && help) ? (
         <div className="flex flex-col gap-2 rounded-xl bg-white dark:bg-slate-800 p-3 text-sm leading-7">
@@ -573,7 +573,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
             <h3 className="font-bold text-ink dark:text-white">بهتر یادت مانده</h3>
             {grown.slice(0, 6).map(g => (
               <div key={g.card.id} className="flex justify-between items-center gap-3 text-sm">
-                <span dir="ltr" className="font-en font-medium text-ink dark:text-white truncate">{g.card.front}</span>
+                <span dir="ltr" className="font-read font-medium text-ink dark:text-white truncate">{g.card.front}</span>
                 <span className="text-emerald-800 dark:text-emerald-200 whitespace-nowrap">{STAGE_NAMES[g.to]}</span>
               </div>
             ))}
@@ -587,8 +587,8 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
               const p = placeOf(c);
               return (
                 <div key={c.id} className="flex flex-col gap-0.5 text-sm">
-                  <span className="flex justify-between gap-3"><span dir="ltr" className="font-en font-medium text-ink dark:text-white truncate">{c.front}</span><span className="text-ink-muted dark:text-slate-300 truncate">{c.back}</span></span>
-                  {p && <span dir="auto" className="text-xs text-ink-muted dark:text-slate-400 truncate">{p.sourceTitle}{p.chapterTitle ? ` · ${p.chapterTitle}` : ''}</span>}
+                  <span className="flex justify-between gap-3"><span dir="ltr" className="font-read font-medium text-ink dark:text-white truncate">{c.front}</span><span className="text-ink-muted dark:text-slate-300 truncate">{c.back}</span></span>
+                  {p && <span dir="auto" className="font-read text-xs text-ink-muted dark:text-slate-400 truncate">{p.sourceTitle}{p.chapterTitle ? ` · ${p.chapterTitle}` : ''}</span>}
                 </div>
               );
             })}
@@ -680,7 +680,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
           )}
 
           <div dir="ltr" className={`flex flex-col items-center gap-2 text-center pt-2 ${(cardMode === 'cloze' || cardMode === 'reverse') && !revealed ? 'hidden' : ''}`}>
-            <h2 className="font-en font-bold text-4xl md:text-6xl tracking-tight text-ink dark:text-white break-words max-w-full">{card.front}</h2>
+            <h2 className="font-read font-bold text-4xl md:text-6xl tracking-tight text-ink dark:text-white break-words max-w-full">{card.front}</h2>
             <div className="flex items-center gap-3 text-ink-muted dark:text-slate-400">
               {(card.pronunciation || card.partOfSpeech) && <span>{[card.pronunciation, card.partOfSpeech].filter(Boolean).join(' · ')}</span>}
               {card.kind !== 'grammar' && (card.audioSrc || isSpeechSupported()) && (
@@ -697,7 +697,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
               </div>
             )}
             {!revealed && cardMode === 'flip' && card.kind !== 'grammar' && card.sourceSentence && (
-              <p className="mt-1 max-w-xl text-sm italic text-ink-muted dark:text-slate-400 "><LinkedText text={card.sourceSentence} /></p>
+              <p className="mt-1 max-w-xl font-read text-sm italic text-ink-muted dark:text-slate-400"><LinkedText text={card.sourceSentence} /></p>
             )}
           </div>
 

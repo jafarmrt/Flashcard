@@ -42,9 +42,18 @@ import { EXTRA_FIELDS, EXTRAS_BATCH, extrasForCards, hasExtras, lacksExtras, par
 import { isPermanentAiError } from '../services/aiClient';
 import { applyProposal, fillEmptyFields, withEditedContent } from '../services/cardRefresh';
 import type { ImprovementPick } from '../components/ImproveCardsPanel';
+import {
+  normalizeThemeName,
+  normalizeThemes,
+  removeThemeFromCards,
+  renameThemeInCards,
+  sameTheme,
+  setThemeMembership,
+  withCardThemes,
+} from '../services/wordThemes';
 
 // Types used within the hook and exported for the App component
-export type View = 'TODAY' | 'ME' | 'TEXTS' | 'READER' | 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'PROFILE' | 'AI_EXTRACT' | 'USAGE' | 'DIAGNOSTICS';
+export type View = 'TODAY' | 'ME' | 'TEXTS' | 'READER' | 'DRIVING' | 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'PROFILE' | 'AI_EXTRACT' | 'USAGE' | 'DIAGNOSTICS';
 export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'offline' | 'error';
 export type HealthStatus = 'ok' | 'error' | 'checking';
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted' | 'createdAt' | 'updatedAt'>;
@@ -96,6 +105,7 @@ const cardFromExtracted = (cardData: ExtractedWordCard, deckId: string, now: Dat
     definition: cardData.definition || [],
     exampleSentenceTarget: cardData.exampleSentenceTarget || [],
     notes: cardData.notes || '',
+    ...(cardData.themes?.length ? { themes: normalizeThemes(cardData.themes) } : {}),
     kind: cardData.kind,
     sourceSentence: cardData.sourceSentence,
     collocations: cardData.collocations || [],
@@ -1006,6 +1016,7 @@ export const useAppLogic = () => {
                 definition: splitList(row.definition),
                 exampleSentenceTarget: splitList(row.exampleSentenceTarget),
                 notes: row.notes || '',
+                ...(row.themes?.trim() ? { themes: normalizeThemes(splitList(row.themes)) } : {}),
                 kind: parseKind(row.kind),
                 sourceSentence: row.sourceSentence || undefined,
                 collocations: parseCollocations(row.collocations),
@@ -1453,6 +1464,113 @@ export const useAppLogic = () => {
     setNotes(prev => [...prev.filter(n => n.id !== row.id), row]);
   };
 
+  const handleDeleteNote = async (noteId: string) => {
+    const existing = notes.find(n => n.id === noteId) || await db.notes.get(noteId);
+    if (!existing || existing.isDeleted) return;
+    await handleSaveNote({ ...existing, isDeleted: true });
+  };
+
+  const handleSaveDriveCard = async (_sourceId: string, chapterId: string, chunk: number, card: ExtractedWordCard): Promise<number> => {
+    const result = await handleSaveReaderCards([card], chapterId, chunk);
+    return result.added + result.attached;
+  };
+
+  const handleOpenBookChunkById = (sourceId: string, chapterId: string, chunk: number) => {
+    const chapter = chapters.find(c => c.id === chapterId && !c.isDeleted);
+    if (chapter) {
+      void handleOpenChunk(chapter, chunk);
+      return;
+    }
+    handleOpenSource(sourceId);
+  };
+
+  const handleStartCustomStudy = (cardsToStudy: Flashcard[]) => {
+    const live = cardsToStudy.filter(c => !c.isDeleted);
+    if (live.length === 0) {
+      showToast('کارتی برای مرور پیدا نشد.');
+      return;
+    }
+    const returnTo = view === 'STUDY' ? 'TODAY' : view;
+    setStudyMode('auto');
+    setStudyDeckId(null);
+    handleStartStudySession({ filter: 'all-cards', limit: 0 }, null, live, returnTo);
+  };
+
+  const persistModifiedCards = async (changed: Flashcard[]) => {
+    if (changed.length === 0) return;
+    await db.flashcards.bulkPut(changed);
+    const byId = new Map(changed.map(c => [c.id, c] as [string, Flashcard]));
+    setFlashcards(prev => prev.map(c => byId.get(c.id) || c));
+  };
+
+  const handleCreateTheme = async (name: string, memberIds: Set<string>) => {
+    const clean = normalizeThemeName(name);
+    if (!clean) return;
+    const saved = normalizeThemes([...(settings.savedThemes || []), clean]);
+    updateSettings({ savedThemes: saved });
+    const nowIso = new Date().toISOString();
+    const stored = await db.flashcards.toArray();
+    const changed = setThemeMembership(stored, clean, memberIds, nowIso);
+    await persistModifiedCards(changed);
+    showToast(`بستهٔ موضوعی «${clean}» ساخته شد.`);
+  };
+
+  const handleRenameTheme = async (from: string, to: string) => {
+    const cleanTo = normalizeThemeName(to);
+    if (!cleanTo || sameTheme(from, cleanTo)) return;
+    const saved = normalizeThemes((settings.savedThemes || []).map(t => (sameTheme(t, from) ? cleanTo : t)));
+    updateSettings({ savedThemes: saved });
+    const nowIso = new Date().toISOString();
+    const stored = await db.flashcards.toArray();
+    const changed = renameThemeInCards(stored, from, cleanTo, nowIso);
+    await persistModifiedCards(changed);
+    showToast(`نام بسته به «${cleanTo}» تغییر کرد.`);
+  };
+
+  const handleDeleteTheme = async (theme: string) => {
+    const saved = (settings.savedThemes || []).filter(t => !sameTheme(t, theme));
+    updateSettings({ savedThemes: saved });
+    const nowIso = new Date().toISOString();
+    const stored = await db.flashcards.toArray();
+    const changed = removeThemeFromCards(stored, theme, nowIso);
+    await persistModifiedCards(changed);
+    showToast(`بستهٔ «${theme}» برداشته شد (خودِ کارت‌ها سر جایشان ماندند).`);
+  };
+
+  const handleUpdateThemeMembers = async (theme: string, memberIds: Set<string>) => {
+    const clean = normalizeThemeName(theme);
+    if (!clean) return;
+    if (!(settings.savedThemes || []).some(t => sameTheme(t, clean))) {
+      updateSettings({ savedThemes: normalizeThemes([...(settings.savedThemes || []), clean]) });
+    }
+    const nowIso = new Date().toISOString();
+    const stored = await db.flashcards.toArray();
+    const changed = setThemeMembership(stored, clean, memberIds, nowIso);
+    await persistModifiedCards(changed);
+    showToast(`واژه‌های بستهٔ «${clean}» به‌روز شد.`);
+  };
+
+  const handleApplyBatchThemes = async (assignments: Map<string, string[]>, mode: 'merge' | 'replace') => {
+    if (assignments.size === 0) return;
+    const nowIso = new Date().toISOString();
+    const stored = await db.flashcards.toArray();
+    const changed: Flashcard[] = [];
+    const discoveredThemes: string[] = [];
+    for (const card of stored) {
+      if (card.isDeleted) continue;
+      const incoming = assignments.get(card.id);
+      if (!incoming || incoming.length === 0) continue;
+      discoveredThemes.push(...incoming);
+      const nextList = mode === 'replace' ? incoming : [...(card.themes || []), ...incoming];
+      changed.push(withCardThemes(card, nextList, nowIso));
+    }
+    if (discoveredThemes.length > 0) {
+      updateSettings({ savedThemes: normalizeThemes([...(settings.savedThemes || []), ...discoveredThemes]) });
+    }
+    await persistModifiedCards(changed);
+    showToast(`${fa(changed.length)} کارت در بسته‌های موضوعی چیده شد.`);
+  };
+
   const handleUnmarkKnown = async (term: string) => {
     const gone = forgetRows(await db.knownWords.where('term').equals(normalizeTerm(term)).toArray(), term);
     if (gone.length === 0) return;
@@ -1552,6 +1670,9 @@ export const useAppLogic = () => {
     } else if (newView === 'DIAGNOSTICS') {
         if (view !== 'DIAGNOSTICS') previousViewRef.current = view;
         setView('DIAGNOSTICS');
+    } else if (newView === 'DRIVING') {
+        if (view !== 'DRIVING') previousViewRef.current = view;
+        setView('DRIVING');
     } else {
         setView(newView);
     }
@@ -1937,5 +2058,7 @@ export const useAppLogic = () => {
       handleMarkKnown, handleUnmarkKnown, handleStartSectionReview, dismissSectionReview: () => setSectionReview(null),
       handleCheckCards, handleStartSourceReview, handleReviewCards, handlePrestudyChapter,
       handleFillExtras, handleStopFillExtras, handleSaveCardContent, handleApplyImprovements,
+      handleDeleteNote, handleSaveDriveCard, handleOpenBookChunkById, handleStartCustomStudy,
+      handleCreateTheme, handleRenameTheme, handleDeleteTheme, handleUpdateThemeMembers, handleApplyBatchThemes,
   };
 };

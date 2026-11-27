@@ -848,12 +848,13 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                         <button type="button" onClick={onNavigateToDiagnostics} className={button}>بررسی وضعیت</button>
                     </Row>
                 )}
-                <Row title="پروفایل" hint="نام، معرفی و پیشرفت.">
-                    <button type="button" onClick={onNavigateToProfile} className={button}>پروفایل</button>
+                <Row title="نمایه" hint="نام، معرفی و پیشرفت.">
+                    <button type="button" onClick={onNavigateToProfile} className={button}>نمایه</button>
                 </Row>
                 <Row title="نسخهٔ برنامه" hint="تغییرات هر نسخه.">
                     <div className="flex items-center gap-2">
-                        <span dir="ltr" className="font-en text-sm rounded-full bg-slate-100 dark:bg-slate-700 px-3 py-1">{APP_VERSION}</span>
+                        <span dir="ltr" className="font-en text-sm text-ink-muted dark:text-slate-300 tabular-nums">{APP_VERSION}</span>
+                        <span aria-hidden="true" className="text-slate-400">·</span>
                         <button type="button" onClick={onNavigateToChangelog} className="text-sm text-brand-600 dark:text-brand-300 hover:underline">تغییرات</button>
                     </div>
                 </Row>

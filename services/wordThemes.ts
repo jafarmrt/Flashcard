@@ -48,7 +48,7 @@ export const SCENE_ROLE_SHORT: Record<SceneRole, string> = {
 const themeKey = (name: string): string => name.trim().replace(/\s+/g, ' ').toLowerCase();
 
 export const normalizeThemeName = (raw: string): string =>
-  raw.replace(/^#+/, '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_THEME_LEN);
+  raw.trim().replace(/^#+\s*/, '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_THEME_LEN);
 
 export const normalizeThemes = (list: readonly string[] | undefined): string[] => {
   if (!list || list.length === 0) return [];
@@ -260,7 +260,7 @@ export const suggestThemesBatch = async (
   if (cards.length === 0) return [];
   const prompt = buildBatchThemePrompt(cards, existingThemes, guideThemes);
   const reply = await aiGenerate(options, { contents: prompt }, 'details');
-  const parsed = parseJsonFromAiResponse<unknown>(reply.text);
+  const parsed = parseJsonFromAiResponse(reply.text);
   return parseBatchThemeReply(parsed, cards);
 };
 
@@ -275,7 +275,7 @@ Term: ${JSON.stringify(card.front)}${card.partOfSpeech ? ` (${card.partOfSpeech}
 Meaning: ${JSON.stringify(card.back)}${card.sourceSentence ? `\nSentence: ${JSON.stringify(card.sourceSentence)}` : ''}${known.length ? `\nReuse from existing bundles when fitting: ${known.map(t => JSON.stringify(t)).join(', ')}` : ''}
 Return ONLY JSON: {"themes": ["..."]}`;
   const reply = await aiGenerate(options, { contents: prompt }, 'details');
-  const parsed = parseJsonFromAiResponse<{ themes?: string[] }>(reply.text);
+  const parsed = parseJsonFromAiResponse(reply.text) as { themes?: string[] } | null;
   return normalizeThemes(parsed?.themes).slice(0, 3);
 };
 
@@ -515,7 +515,7 @@ export const generateMicroStory = async (
   try {
     const prompt = buildMicroStoryPrompt(themeName, cards, userLevel || 'B1-B2');
     const reply = await aiGenerate(options, { contents: prompt }, 'practice');
-    const parsed = parseJsonFromAiResponse<{ titleFa?: string; story?: string; translationFa?: string }>(reply.text);
+    const parsed = parseJsonFromAiResponse(reply.text) as { titleFa?: string; story?: string; translationFa?: string } | null;
     const built = parseMicroStory(parsed, themeName, cards);
     if (built && built.blanks.length >= Math.min(2, cards.length)) return built;
   } catch {
@@ -689,7 +689,7 @@ export const generateContrastUnits = async (
   if (pairs.length === 0) return [];
   try {
     const reply = await aiGenerate(options, { contents: buildContrastPrompt(themeName, pairs) }, 'practice');
-    const parsed = parseJsonFromAiResponse<{ items?: any[] }>(reply.text);
+    const parsed = parseJsonFromAiResponse(reply.text) as { items?: any[] } | null;
     const list = Array.isArray(parsed?.items) ? parsed!.items : [];
     if (list.length > 0) {
       return pairs.map(([a, b], i) => {

@@ -26,6 +26,14 @@ export const getAvailableVoices = (): SpeechSynthesisVoice[] => {
   return englishVoices.length > 0 ? englishVoices : allVoices;
 };
 
+export const getPersianVoice = (): SpeechSynthesisVoice | undefined => {
+  if (!isSpeechSupported()) return undefined;
+  const allVoices = window.speechSynthesis.getVoices();
+  return allVoices.find(v => /^fa(?:\b|[-_])/i.test(v.lang));
+};
+
+export const hasPersianDeviceVoice = (): boolean => Boolean(getPersianVoice());
+
 export const speakText = (text: string, options: SpeechOptions = {}): void => {
   if (!isSpeechSupported() || !text.trim()) return;
 
@@ -41,6 +49,12 @@ export const speakText = (text: string, options: SpeechOptions = {}): void => {
     const selectedVoice = voices.find(v => v.voiceURI === options.voiceURI);
     if (selectedVoice) {
       utterance.voice = selectedVoice;
+    }
+  } else if (/^fa(?:\b|[-_])/i.test(utterance.lang)) {
+    const faVoice = getPersianVoice();
+    if (faVoice) {
+      utterance.voice = faVoice;
+      utterance.lang = faVoice.lang;
     }
   }
 

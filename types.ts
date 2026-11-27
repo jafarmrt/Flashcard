@@ -173,6 +173,10 @@ export interface Settings {
     readerGloss?: 'off' | 'new' | 'learning'; // a word's meaning from its card above it in the text, while the card is new (default) or still being learned
     openBookOnStart?: boolean; // the app opens on the page of the book being read
     savedThemes?: string[]; // custom thematic bundle names kept even when empty (services/wordThemes)
+    driveVoice?: 'device' | 'ai'; // voice used in hands-free driving mode
+    driveRate?: number; // speech speed in driving mode (0.85, 1, 1.15)
+    drivePauseSeconds?: number; // silent thinking pause in audio flashcard loop (3, 5, 7)
+    driveFlaggedCardIds?: string[]; // cards flagged during driving for post-drive review
     updatedAt?: string; // when settings last changed; the newest wins across devices
 }
 
