@@ -1,13 +1,13 @@
 // File: /services/bookQuiz.ts
-// A quiz from the books' own sentences: a sentence where a word you are
-// learning was met, the word left out, and four of your words to choose
-// from. It needs no AI (the AI quiz wrote new sentences that had nothing to
-// do with what was read) and every question belongs to a card, so a wrong
-// answer can count as forgetting it.
+// A four-choice quiz built from your own cards and books (no AI needed):
+//   - 'gap': a book sentence where a word you are learning was met, blanked out;
+//   - 'meaning': Persian meaning shown, pick the English word;
+//   - 'word-to-meaning': English word shown, pick its Persian meaning;
+//   - 'audio': hear the English word, pick its Persian meaning.
 //
-// Every choice carries the meaning from its own card: after an answer the
-// right word and the one picked are shown side by side with what they mean,
-// which is the feedback a wrong answer needs and costs nothing.
+// Every choice carries its counterpart from its own card, and `optionWords`
+// maps every option label back to its English headword so mistake tracking
+// works the same across English and Persian option buttons.
 
 import type { Flashcard } from '../types';
 import type { CardPlace } from './library';
@@ -15,17 +15,21 @@ import { clozeFor } from './cloze.js';
 import { phraseRanges, readerSection } from './readerText.js';
 import { isNewCard } from './srsService.js';
 
+export type QuizAsk = 'gap' | 'meaning' | 'word-to-meaning' | 'audio';
+
 export interface BookQuizQuestion {
   cardId: string;
   targetWord: string;
   sourceSentence: string; // '' for a question without a sentence
-  questionText: string; // the sentence with a gap, or the Persian meaning to find the word for
-  ask: 'gap' | 'meaning';
+  questionText: string; // sentence with gap, Persian meaning, or English word
+  ask: QuizAsk;
   options: string[];
   correctAnswer: string;
-  hint: string; // the right word's Persian meaning
-  meanings: Record<string, string>; // each choice's Persian meaning, from its card
+  hint: string; // Persian meaning for gap/meaning, or blanked sentence context for reverse/audio
+  meanings: Record<string, string>; // each choice's counterpart (Persian meaning or English word)
   optionCards: Record<string, string>; // each choice's card id
+  optionWords: Record<string, string>; // each choice's English headword (for mistake tracking)
+  audioSrc?: string;
 }
 
 const GAP = '_____';
@@ -51,48 +55,83 @@ const standsIn = (sentence: string, term: string): boolean => {
   }
 };
 
-// Three other words of yours as the wrong choices: the same kind and, first,
-// the same part of speech, so the choice is between like words.
+// Three other words of yours as the wrong choices: distinct front and back,
+// the same kind and, first, the same part of speech.
 const wrongChoices = (card: Flashcard, words: Flashcard[], sentence: string, random: () => number): Flashcard[] => {
   const others = shuffle(words.filter(c => c.id !== card.id && !same(c.front, card.front) && !same(c.back, card.back)
     && (c.kind || 'word') === (card.kind || 'word') && !(sentence && standsIn(sentence, c.front))), random)
     .sort((a, b) => Number((b.partOfSpeech || '') === (card.partOfSpeech || '')) - Number((a.partOfSpeech || '') === (card.partOfSpeech || '')));
   const out: Flashcard[] = [];
   for (const c of others) {
-    if (!out.some(o => same(o.front, c.front))) out.push(c);
+    if (!out.some(o => same(o.front, c.front) || same(o.back, c.back))) out.push(c);
     if (out.length === 3) break;
   }
   return out;
 };
 
-const question = (card: Flashcard, wrong: Flashcard[], random: () => number, gap?: { sentence: string; before: string; after: string }): BookQuizQuestion => {
+const buildQuestion = (
+  card: Flashcard,
+  wrong: Flashcard[],
+  ask: QuizAsk,
+  random: () => number,
+  gap?: { sentence: string; before: string; after: string },
+): BookQuizQuestion => {
   const all = [card, ...wrong];
+  const targetWord = card.front.trim();
+  const targetMeaning = card.back.trim();
+  const blankedSentence = gap ? `${gap.before}${GAP}${gap.after}` : '';
+
+  if (ask === 'word-to-meaning' || ask === 'audio') {
+    return {
+      cardId: card.id,
+      targetWord,
+      sourceSentence: gap?.sentence || '',
+      questionText: targetWord,
+      ask,
+      options: shuffle(all.map(c => c.back.trim()), random),
+      correctAnswer: targetMeaning,
+      hint: blankedSentence,
+      meanings: Object.fromEntries(all.map(c => [c.back.trim(), c.front.trim()])),
+      optionCards: Object.fromEntries(all.map(c => [c.back.trim(), c.id])),
+      optionWords: Object.fromEntries(all.map(c => [c.back.trim(), c.front.trim()])),
+      ...(card.audioSrc ? { audioSrc: card.audioSrc } : {}),
+    };
+  }
+
   return {
     cardId: card.id,
-    targetWord: card.front.trim(),
+    targetWord,
     sourceSentence: gap?.sentence || '',
-    questionText: gap ? `${gap.before}${GAP}${gap.after}` : card.back,
-    ask: gap ? 'gap' : 'meaning',
+    questionText: ask === 'gap' && blankedSentence ? blankedSentence : targetMeaning,
+    ask: ask === 'gap' && blankedSentence ? 'gap' : 'meaning',
     options: shuffle(all.map(c => c.front.trim()), random),
-    correctAnswer: card.front.trim(),
-    hint: card.back,
-    meanings: Object.fromEntries(all.map(c => [c.front.trim(), c.back])),
+    correctAnswer: targetWord,
+    hint: targetMeaning,
+    meanings: Object.fromEntries(all.map(c => [c.front.trim(), c.back.trim()])),
     optionCards: Object.fromEntries(all.map(c => [c.front.trim(), c.id])),
+    optionWords: Object.fromEntries(all.map(c => [c.front.trim(), c.front.trim()])),
+    ...(card.audioSrc ? { audioSrc: card.audioSrc } : {}),
   };
 };
 
 export interface QuizOptions {
   count?: number;
   random?: () => number;
-  // Only these cards (the words that went wrong before), new ones too; a
-  // card with no usable book sentence is then asked from its meaning.
+  // Only these cards (the words that went wrong before, or "still hard" at the
+  // end of a review), new ones too; a card with no usable book sentence is
+  // asked from its meaning.
   only?: Set<string>;
+  // Mix sentence gaps with meaning, reverse meaning, and audio questions.
+  mix?: boolean;
+  // Whether the browser can speak words without saved audioSrc.
+  canSpeak?: boolean;
 }
 
-// Words being learned (not new ones: the quiz is recall, not a first look),
-// the least stable first, each in a sentence from a book.
+// Words being learned (not new ones unless `only` is given), the least stable
+// first. By default (`mix` false) only book-sentence gaps are used unless
+// `only` is set; with `mix: true`, question types rotate across available modes.
 export const bookQuiz = (cards: Flashcard[], places: Map<string, CardPlace[]>, options: QuizOptions = {}): BookQuizQuestion[] => {
-  const { count = 5, random = Math.random, only } = options;
+  const { count = 5, random = Math.random, only, mix = false, canSpeak = false } = options;
   const words = cards.filter(c => !c.isDeleted && c.kind !== 'grammar' && c.front.trim() && c.back.trim());
   const candidates = only
     ? words.filter(c => only.has(c.id))
@@ -102,10 +141,20 @@ export const bookQuiz = (cards: Flashcard[], places: Map<string, CardPlace[]>, o
     if (questions.length >= count) break;
     const sentences = (places.get(card.id) || []).map(p => p.sentence).filter((s): s is string => !!s);
     const cloze = sentences.length ? clozeFor({ ...card, exampleSentenceTarget: [], sourceSentence: undefined }, sentences) : null;
-    if (!cloze && !only) continue; // only the books' sentences here
+    if (!cloze && !only && !mix) continue;
     const wrong = wrongChoices(card, words, cloze?.sentence || '', random);
     if (wrong.length < 3) continue;
-    questions.push(question(card, wrong, random, cloze || undefined));
+
+    let ask: QuizAsk = cloze ? 'gap' : 'meaning';
+    if (mix) {
+      const hasAudio = canSpeak || !!card.audioSrc;
+      const modes: QuizAsk[] = cloze
+        ? ['gap', 'word-to-meaning', ...(hasAudio ? ['audio' as const] : []), 'meaning']
+        : ['meaning', 'word-to-meaning', ...(hasAudio ? ['audio' as const] : [])];
+      ask = modes[questions.length % modes.length];
+    }
+
+    questions.push(buildQuestion(card, wrong, ask, random, cloze || undefined));
   }
   return questions;
 };

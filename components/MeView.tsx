@@ -21,6 +21,7 @@ export const MeView: React.FC<MeViewProps> = ({ userProfile, username, syncStatu
     { view: 'STATS', label: 'پیشرفت', hint: 'خواندن، واژه‌ها و کارنامهٔ سال', icon: <Icon.Chart /> },
     { view: 'PROFILE', label: 'پروفایل', hint: 'نام و معرفی', icon: <Icon.User /> },
     { view: 'SETTINGS', label: 'تنظیمات', hint: 'هوش مصنوعی، تلگرام، CSV، همگام‌سازی', icon: <Icon.Gear /> },
+    { view: 'DIAGNOSTICS', label: 'وضعیت و عیب‌یابی', hint: 'صف آفلاین، همگام‌سازی، کش و نصب برنامه', icon: <Icon.Check /> },
     { view: 'CHANGELOG', label: 'تغییرات نسخه‌ها', hint: '', icon: <Icon.Log /> },
   ];
 

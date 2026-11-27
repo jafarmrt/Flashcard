@@ -6,7 +6,7 @@ import { APP_VERSION, RELEASES } from '../services/appVersion';
 import { unseenReleases } from '../services/changelog';
 import { dayString } from '../services/calendar';
 import { dailyQueue, DEFAULT_NEW_PER_DAY } from '../services/dailyQueue';
-import { BackupData, BackupError, makeBackup, markBackupMade, planRestore, readBackup, RestorePlan } from '../services/backup';
+import { BackupData, BackupError, chapterNeedsRemoteText, makeBackup, markBackupMade, planRestore, readBackup, RestorePlan } from '../services/backup';
 import { addReading } from '../services/readingTime';
 import { tokensOf } from '../services/lemma';
 import { buildSource, cardIndex, cardsInText, chaptersOf, cleanEditedText, findCard, markChunkDone, migrateTexts, newOccurrence, sectionEnds, SourceInput } from '../services/library';
@@ -16,12 +16,15 @@ import { forgetRows, newKnownWord } from '../services/knownWords';
 import { compactAttempts } from '../services/speechPractice';
 import { aiRequestOptions } from '../services/aiSettings';
 import { AUTH_REQUIRED_EVENT, callProxy } from '../services/apiService';
-import { cardStamp, deckStamp, newStudyLogs, profileStamp, stampMap, syncFingerprint } from '../services/syncState';
+import { newStudyLogs, profileStamp, syncFingerprint } from '../services/syncState';
 import {
-  confirmReceived, confirmSent, freshSyncState, hasUnsentChanges, isEmptyOutgoing, LocalData, markAllSynced, nextLogCursor, nextOutgoing,
-  SyncState, SYNC_TABLES, SyncTable, usableSyncState, withLocalAudio,
+  confirmReceived, hasUnsentChanges, LocalData,
+  SyncState, SYNC_TABLES, SyncTable, withLocalAudio,
   takeIncoming,
 } from '../services/syncClient';
+import {
+  isNetworkError, prefetchChapterTexts as runPrefetchChapters, runAccountSync, type SyncRoundApplyArgs,
+} from '../services/syncRunner';
 import { answerCard, isDue, isNewCard } from '../services/srsService';
 import { applyIncomingSettings, toSyncedSettings } from '../services/settingsSync';
 import { applyServerKeys, localKeyEntries, markKeyChanges, withoutKeys } from '../services/keySync';
@@ -41,11 +44,8 @@ import { applyProposal, fillEmptyFields, withEditedContent } from '../services/c
 import type { ImprovementPick } from '../components/ImproveCardsPanel';
 
 // Types used within the hook and exported for the App component
-export type View = 'TODAY' | 'ME' | 'TEXTS' | 'READER' | 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'PROFILE' | 'AI_EXTRACT' | 'USAGE';
+export type View = 'TODAY' | 'ME' | 'TEXTS' | 'READER' | 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'PROFILE' | 'AI_EXTRACT' | 'USAGE' | 'DIAGNOSTICS';
 export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'offline' | 'error';
-
-// A fetch that never reached the server (no connection, filtered network).
-const isNetworkError = (error: unknown) => error instanceof TypeError || (typeof navigator !== 'undefined' && navigator.onLine === false);
 export type HealthStatus = 'ok' | 'error' | 'checking';
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted' | 'createdAt' | 'updatedAt'>;
 type User = { username: string };
@@ -157,6 +157,9 @@ export const useAppLogic = () => {
 
   // Sync State
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
+  const [lastSyncTimestamp, setLastSyncTimestamp] = useState<number | null>(null);
+  const [lastSyncErrorText, setLastSyncErrorText] = useState<string>('');
+  const [pendingQuizCardIds, setPendingQuizCardIds] = useState<string[] | null>(null);
 
   // Study State
   const [studyDeckId, setStudyDeckId] = useState<string | null>(null);
@@ -394,60 +397,26 @@ export const useAppLogic = () => {
     decks: db.decks, cards: db.flashcards, sources: db.sources, chapters: db.chapters, occurrences: db.occurrences,
     knownWords: db.knownWords, speechAttempts: db.speechAttempts, notes: db.notes, practice: db.practice,
   };
-  const stampOf = (table: SyncTable) => (table === 'decks' ? deckStamp : cardStamp) as (row: any) => string;
 
-  // Chapter texts are uploaded once, apart from the sync, a few per sync.
-  // A chapter the server refuses stays here and is tried again next time.
-  const uploadChapterTexts = async () => {
-    const pending = (await db.chapterTexts.toArray()).filter(t => !t.uploaded);
-    if (pending.length === 0) return;
-    const live = new Set((await db.chapters.toArray()).filter(c => !c.isDeleted).map(c => c.id));
-    for (const text of pending.filter(t => live.has(t.id)).slice(0, 20)) {
-      try {
-        await callProxy('chapter-put', { id: text.id, sourceId: text.sourceId, chunks: text.chunks, ...(text.editedAt ? { editedAt: text.editedAt } : {}) });
-        await db.chapterTexts.update(text.id, { uploaded: true });
-      } catch (error) {
-        if (isNetworkError(error)) throw error;
-        console.warn(`Uploading chapter ${text.id} failed:`, error);
-      }
-    }
-  };
-
-  // After a sync, the texts of chapters this device has never opened are
-  // fetched in the background, a few at a time, so a book added on another
-  // device can be read here offline. A chapter's text was fetched only when
-  // it was opened.
-  const PREFETCH_PER_SYNC = 8;
+  // After a sync, missing or remotely-edited chapter texts are prefetched in
+  // the background so books added or edited on another device open offline.
   const prefetching = useRef(false);
-  // Chapters whose text the server did not give (never uploaded): not asked
-  // again until the app is opened again, or every sync would ask for them.
   const noTextOnServer = useRef(new Set<string>());
   const prefetchChapterTexts = async () => {
     if (prefetching.current || (typeof navigator !== 'undefined' && navigator.onLine === false)) return;
     prefetching.current = true;
     try {
-      const have = new Set((await db.chapterTexts.toCollection().primaryKeys()) as string[]);
-      const missing = (await db.chapters.toArray()).filter(c => !c.isDeleted && !have.has(c.id) && !noTextOnServer.current.has(c.id)).slice(0, PREFETCH_PER_SYNC);
-      for (const chapter of missing) {
-        try {
-          await loadChapterText(chapter.id);
-        } catch (error) {
-          if (isNetworkError(error)) break;
-          noTextOnServer.current.add(chapter.id);
-          console.warn(`Fetching the text of chapter ${chapter.id} failed:`, error);
-        }
-      }
+      await runPrefetchChapters({
+        readChapters: () => db.chapters.toArray(),
+        readChapterTexts: () => db.chapterTexts.toArray(),
+        loadChapterText,
+      }, noTextOnServer.current);
     } finally {
       prefetching.current = false;
     }
   };
 
-  // Send what changed here since the last sync and take what changed on
-  // other devices, in rounds: each request carries a few hundred rows at
-  // most, and a first download comes in pages. Rows edited here while a
-  // request was out keep their local version and go with the next round.
-  // `pullOnly` (a device signing in for the first time) takes the account as
-  // it is.
+  // Multi-round account sync (services/syncRunner.ts).
   const mergeWithCloud = async (options: { pullOnly?: boolean } = {}) => {
     const user = signedInUser.current;
     if (!user) return;
@@ -455,96 +424,94 @@ export const useAppLogic = () => {
     syncInFlight.current = true;
     setSyncStatus('syncing');
     try {
-        let state: SyncState = usableSyncState((await db.meta.get('sync'))?.value, user);
-        if (options.pullOnly) state = markAllSynced(freshSyncState(user), await readLocal());
-        // A key sync that fails does not hold up the cards; it is tried
-        // again with the next sync.
-        try {
-            await syncKeys();
-        } catch (error) {
-            if (isNetworkError(error)) throw error;
-            console.warn('Syncing the keys failed:', error);
-        }
-        await uploadChapterTexts();
-
-        let needPull = true;
-        for (let round = 0; round < 40; round++) {
-            const local = await readLocal();
-            const out = nextOutgoing(local, state);
-            if (isEmptyOutgoing(out) && !needPull) break;
-            const before = Object.fromEntries(SYNC_TABLES.map(t => [t, stampMap(local[t] as any[], stampOf(t))])) as Record<SyncTable, Map<string, string>>;
-            const profileBefore = profileStamp(local.profile);
-
-            const response = await callProxy('sync', { since: state.rev, storeId: state.storeId, changes: out.changes });
-            const changes = response.changes || {};
-            state = response.reset ? { ...freshSyncState(user), storeId: response.storeId } : confirmSent(state, out);
-
-            let maxBefore = 0;
-            let maxAfter = 0;
-            await (db as any).transaction('rw', [db.decks, db.flashcards, db.sources, db.chapters, db.occurrences, db.knownWords, db.speechAttempts, db.notes, db.practice, db.studyHistory, db.userProfile, db.userAchievements], async () => {
-                for (const table of SYNC_TABLES) {
-                    const incoming = changes[table];
-                    if (!Array.isArray(incoming) || incoming.length === 0) continue;
-                    const current = await SYNC_DB_TABLES[table].toArray();
-                    const taken = takeIncoming<any>(table, incoming, current, before[table], state.stamps[table] || {});
-                    let rows = taken.write;
-                    if (table === 'cards') {
-                        const byId = new Map<string, Flashcard>(current.map((c: Flashcard) => [c.id, c]));
-                        rows = rows.map((c: Flashcard) => withLocalAudio(c, byId.get(c.id)));
-                    }
-                    if (rows.length) await SYNC_DB_TABLES[table].bulkPut(rows);
-                    state = confirmReceived(state, table, taken.confirm);
-                }
-                const logs = await db.studyHistory.toArray();
-                maxBefore = logs.reduce((m, l) => Math.max(m, l.id || 0), 0);
-                const newLogs = newStudyLogs(logs, changes.studyHistory);
-                if (newLogs.length) await db.studyHistory.bulkAdd(newLogs);
-                maxAfter = newLogs.length ? (await db.studyHistory.toArray()).reduce((m, l) => Math.max(m, l.id || 0), 0) : maxBefore;
-                if (changes.userProfile && profileStamp(await db.userProfile.get(1)) === profileBefore) {
-                    await db.userProfile.put(changes.userProfile);
-                    state = { ...state, profile: profileStamp(changes.userProfile) };
-                }
-                if (Array.isArray(changes.userAchievements) && changes.userAchievements.length) await db.userAchievements.bulkPut(changes.userAchievements);
-            });
-            if (changes.settings) {
-                adoptCloudSettings(changes.settings);
-                if (readSavedSettings().updatedAt === changes.settings.updatedAt) state = { ...state, settings: changes.settings.updatedAt };
+      await runAccountSync({
+        readMetaSync: async () => (await db.meta.get('sync'))?.value,
+        writeMetaSync: async state => { await db.meta.put({ key: 'sync', value: state }); },
+        readLocal,
+        readChapters: () => db.chapters.toArray(),
+        readChapterTexts: () => db.chapterTexts.toArray(),
+        markChapterUploaded: async id => { await db.chapterTexts.update(id, { uploaded: true }); },
+        loadChapterText,
+        syncKeys,
+        callSync: payload => callProxy('sync', payload),
+        callChapterPut: payload => callProxy('chapter-put', payload),
+        applyRound: async ({ changes, before, profileBefore, state: roundState }: SyncRoundApplyArgs) => {
+          let nextState = roundState;
+          let maxBefore = 0;
+          let maxAfter = 0;
+          await (db as any).transaction('rw', [db.decks, db.flashcards, db.sources, db.chapters, db.occurrences, db.knownWords, db.speechAttempts, db.notes, db.practice, db.studyHistory, db.userProfile, db.userAchievements], async () => {
+            for (const table of SYNC_TABLES) {
+              const incoming = changes[table];
+              if (!Array.isArray(incoming) || incoming.length === 0) continue;
+              const current = await SYNC_DB_TABLES[table].toArray();
+              const taken = takeIncoming<any>(table, incoming, current, before[table], nextState.stamps[table] || {});
+              let rows = taken.write;
+              if (table === 'cards') {
+                const byId = new Map<string, Flashcard>(current.map((c: Flashcard) => [c.id, c]));
+                rows = rows.map((c: Flashcard) => withLocalAudio(c, byId.get(c.id)));
+              }
+              if (rows.length) await SYNC_DB_TABLES[table].bulkPut(rows);
+              nextState = confirmReceived(nextState, table, taken.confirm);
             }
-            state = {
-                ...state,
-                rev: response.rev,
-                storeId: response.storeId,
-                logCursor: response.reset ? 0 : nextLogCursor(state, out, maxBefore, maxAfter),
-            };
-            await db.meta.put({ key: 'sync', value: state });
-            needPull = !!response.more || !!response.reset;
-        }
-        rememberSynced(await fetchData());
-        lastSyncAt.current = Date.now();
-        lastSyncError.current = '';
-        setSyncStatus('synced');
-        void prefetchChapterTexts();
+            const logs = await db.studyHistory.toArray();
+            maxBefore = logs.reduce((m, l) => Math.max(m, l.id || 0), 0);
+            const newLogs = newStudyLogs(logs, changes.studyHistory);
+            if (newLogs.length) await db.studyHistory.bulkAdd(newLogs);
+            maxAfter = newLogs.length ? (await db.studyHistory.toArray()).reduce((m, l) => Math.max(m, l.id || 0), 0) : maxBefore;
+            if (changes.userProfile && profileStamp(await db.userProfile.get(1)) === profileBefore) {
+              await db.userProfile.put(changes.userProfile);
+              nextState = { ...nextState, profile: profileStamp(changes.userProfile) };
+            }
+            if (Array.isArray(changes.userAchievements) && changes.userAchievements.length) await db.userAchievements.bulkPut(changes.userAchievements);
+          });
+          return { state: nextState, maxBefore, maxAfter };
+        },
+        adoptSettings: incoming => {
+          adoptCloudSettings(incoming);
+          return readSavedSettings().updatedAt;
+        },
+      }, user, options);
+
+      rememberSynced(await fetchData());
+      const nowMs = Date.now();
+      lastSyncAt.current = nowMs;
+      setLastSyncTimestamp(nowMs);
+      lastSyncError.current = '';
+      setLastSyncErrorText('');
+      setSyncStatus('synced');
+      void prefetchChapterTexts();
     } catch (error) {
-        console.error('Sync failed:', error);
-        const offline = isNetworkError(error);
-        setSyncStatus(offline ? 'offline' : 'error');
-        // Say why, once per distinct reason, so a failure is never silent.
-        const reason = describeError(error);
-        if (!offline && reason !== lastSyncError.current) showToast(`همگام‌سازی ناموفق: ${reason}`);
-        lastSyncError.current = offline ? '' : reason;
+      console.error('Sync failed:', error);
+      const offline = isNetworkError(error);
+      setSyncStatus(offline ? 'offline' : 'error');
+      // Say why, once per distinct reason, so a failure is never silent.
+      const reason = describeError(error);
+      setLastSyncErrorText(reason);
+      if (!offline && reason !== lastSyncError.current) showToast(`همگام‌سازی ناموفق: ${reason}`);
+      lastSyncError.current = offline ? '' : reason;
     } finally {
-        syncInFlight.current = false;
-        if (syncAgain.current) {
-            syncAgain.current = false;
-            setTimeout(() => handleSync(), 0);
-        }
+      syncInFlight.current = false;
+      if (syncAgain.current) {
+        syncAgain.current = false;
+        setTimeout(() => handleSync(), 0);
+      }
     }
   };
 
+  const recheckHealth = async () => {
+    setApiStatus('checking');
+    setFreeDictApiStatus('checking');
+    setMwDictApiStatus('checking');
+    setDbStatus('checking');
+    await Promise.all([
+      callProxy('ping', {}).then(() => setApiStatus('ok')).catch(() => setApiStatus('error')),
+      callProxy('ping-free-dict', {}).then(() => setFreeDictApiStatus('ok')).catch(() => setFreeDictApiStatus('error')),
+      callProxy('ping-mw', {}).then(() => setMwDictApiStatus('ok')).catch(() => setMwDictApiStatus('error')),
+      (db as any).open().then(() => setDbStatus('ok')).catch(() => setDbStatus('error')),
+    ]);
+  };
+
   // The newest versions of the functions the long-lived effects below call.
-  // Those effects run once (start-up, listeners) or on data changes, and must
-  // not be set up again each render; through this ref they never call a
-  // function left over from an older render, whatever state it read.
   const latest = useRef({ handleSync, fetchData, showToast });
   latest.current = { handleSync, fetchData, showToast };
 
@@ -881,21 +848,22 @@ export const useAppLogic = () => {
     setView('DECKS');
   };
 
-  const handleSessionEnd = async (updatedCardsFromSession: Flashcard[], _summary: SessionSummary = { reviews: 0 }, next: 'home' | 'more' = 'home') => {
-    if (updatedCardsFromSession.length > 0) {
-      const now = new Date().toISOString();
-      // The session's schedule over what the database holds now: content
-      // filled while the session ran (extras, an edit) stays.
-      const stored = (await db.flashcards.bulkGet(updatedCardsFromSession.map(c => c.id))) as (Flashcard | undefined)[];
-      const cardsToUpdate = updatedCardsFromSession.map((c, i) => ({ ...(stored[i] ? withEditedContent(c, stored[i]!) : c), updatedAt: now }));
-      await db.flashcards.bulkPut(cardsToUpdate);
-    }
+  // Each answer and undo in StudyView already saves atomically to IndexedDB;
+  // session exit simply refreshes React state without re-stamping updatedAt.
+  const handleSessionEnd = async (_updatedCardsFromSession: Flashcard[], _summary: SessionSummary = { reviews: 0 }, next: 'home' | 'more' = 'home') => {
     const fresh = await fetchData();
     if (next === 'more') {
       startQuickReview(studyMode, 10, fresh.cards, fresh.logs, true);
       return;
     }
     setView(sessionReturn.current);
+  };
+
+  const handleStartHardQuiz = async (cardIds: string[]) => {
+    if (cardIds.length === 0) return;
+    await fetchData();
+    setPendingQuizCardIds(cardIds);
+    setView('PRACTICE');
   };
 
   const handleExportCSV = () => {
@@ -926,14 +894,18 @@ export const useAppLogic = () => {
 
   const handleExportBackup = async () => {
     try {
-      // Chapters never opened on this device have their text only on the
-      // server: it is fetched for the file. One that cannot be fetched
-      // (offline) is left out, and the message says so.
+      // Chapters never opened here, or edited more recently on another device,
+      // have their latest text fetched from the server before writing the file.
       const live = (await db.chapters.toArray()).filter(c => !c.isDeleted);
-      const have = new Set((await db.chapterTexts.toArray()).map(t => t.id));
+      const textById = new Map((await db.chapterTexts.toArray()).map(t => [t.id, t]));
       let missing = 0;
-      for (const chapter of live.filter(c => !have.has(c.id))) {
-        try { await loadChapterText(chapter.id); } catch { missing++; }
+      for (const chapter of live.filter(c => chapterNeedsRemoteText(c, textById.get(c.id)))) {
+        try {
+          const loaded = await loadChapterText(chapter.id);
+          if (chapter.textEditedAt && (loaded.editedAt || '') < chapter.textEditedAt) missing++;
+        } catch {
+          missing++;
+        }
       }
       const backup = makeBackup(await readBackupData(), APP_VERSION);
       const url = URL.createObjectURL(new Blob([JSON.stringify(backup)], { type: 'application/json' }));
@@ -945,7 +917,7 @@ export const useAppLogic = () => {
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
       markBackupMade();
-      showToast(`پشتیبان کامل ذخیره شد: ${fa(backup.data.cards.length)} کارت، ${fa(backup.data.sources.length)} کتاب و متن.${missing ? ` متن ${fa(missing)} فصل از سرور نرسید و در فایل نیست.` : ''}`);
+      showToast(`پشتیبان کامل ذخیره شد: ${fa(backup.data.cards.length)} کارت، ${fa(backup.data.sources.length)} کتاب و متن.${missing ? ` متن ${fa(missing)} فصل از سرور نرسید یا نسخهٔ قدیمی‌اش ذخیره شد.` : ''}`);
     } catch (error) {
       console.error('Backup failed:', error);
       showToast('ساختن فایل پشتیبان ناموفق بود.');
@@ -1577,6 +1549,9 @@ export const useAppLogic = () => {
         setActiveSourceId(null);
         setActiveChapterId(null);
         setView('TEXTS');
+    } else if (newView === 'DIAGNOSTICS') {
+        if (view !== 'DIAGNOSTICS') previousViewRef.current = view;
+        setView('DIAGNOSTICS');
     } else {
         setView(newView);
     }
@@ -1943,13 +1918,15 @@ export const useAppLogic = () => {
   return {
       // State
       flashcards, decks, view, editingCard, toastMessage, isLoggedIn, currentUser, authLoading, appLoading,
-      syncStatus, studyDeckId, studyCards, studySessionId, isStudySetupModalOpen, studyMode, studySourceId, studyLogs, dbStatus, apiStatus,
+      syncStatus, lastSyncTimestamp, lastSyncErrorText, pendingQuizCardIds,
+      studyDeckId, studyCards, studySessionId, isStudySetupModalOpen, studyMode, studySourceId, studyLogs, dbStatus, apiStatus,
       sources, chapters, occurrences, activeSourceId, activeChapterId, activeChunk, knownWords, speechAttempts, handleSaveSpeechAttempt, notes, handleSaveNote, sectionReview,
       freeDictApiStatus, mwDictApiStatus, settings, userProfile,
       previousViewRef, autoFixProgress, autoFixReport, extrasProgress,
       overlayEdit, openCardEditor, closeCardEditor, saveOverlayEdit,
       // Handlers
-      setView, showToast, handleAddCard, handleEditCard, handleDeleteCard, handleDeleteCards, handleSaveCard,
+      setView, showToast, handleSync, recheckHealth, handleStartHardQuiz, clearPendingQuiz: () => setPendingQuizCardIds(null),
+      handleAddCard, handleEditCard, handleDeleteCard, handleDeleteCards, handleSaveCard,
       handleSaveProfile, handleBulkSaveCards, handleSessionEnd, handleExportCSV, handleImportCSV, handleExportBackup, handleRestoreBackup, handleQuizMiss, practice, handleSavePractice,
       handleResetApp, handleDeleteAllCards, handleStudyDeck, handleStartStudySession, setIsStudySetupModalOpen,
       handleNavigate, handleRenameDeck, handleDeleteDeck, handleLogin, handleRegister, handleLogout,

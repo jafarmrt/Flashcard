@@ -27,6 +27,7 @@ interface SettingsViewProps {
     onNavigateToChangelog: () => void;
     onNavigateToProfile: () => void;
     onNavigateToUsage: () => void;
+    onNavigateToDiagnostics?: () => void;
     currentUser: { username: string } | null;
     onLogout: (everywhere?: boolean) => void;
 }
@@ -708,7 +709,7 @@ const TelegramSettings: React.FC = () => {
 
 const SettingsView: React.FC<SettingsViewProps> = ({
     settings, onUpdateSettings, onExportCSV, onImportCSV, onExportBackup, onRestoreBackup, onResetApp, onDeleteAllCards, onNavigateToChangelog,
-    onNavigateToProfile, onNavigateToUsage, currentUser, onLogout,
+    onNavigateToProfile, onNavigateToUsage, onNavigateToDiagnostics, currentUser, onLogout,
 }) => {
     const importFileRef = useRef<HTMLInputElement>(null);
     const backupFileRef = useRef<HTMLInputElement>(null);
@@ -842,6 +843,11 @@ const SettingsView: React.FC<SettingsViewProps> = ({
             </Card>
 
             <Card title="بیشتر">
+                {onNavigateToDiagnostics && (
+                    <Row title="وضعیت و عیب‌یابی" hint="صف همگام‌سازی، سلامت سرویس‌ها، حافظهٔ آفلاین و نصب برنامه روی گوشی.">
+                        <button type="button" onClick={onNavigateToDiagnostics} className={button}>بررسی وضعیت</button>
+                    </Row>
+                )}
                 <Row title="پروفایل" hint="نام، معرفی و پیشرفت.">
                     <button type="button" onClick={onNavigateToProfile} className={button}>پروفایل</button>
                 </Row>

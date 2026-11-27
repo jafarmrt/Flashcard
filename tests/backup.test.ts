@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { backupDue, BackupData, BackupError, makeBackup, planRestore, readBackup } from '../services/backup';
+import { backupDue, BackupData, BackupError, chapterNeedsRemoteText, makeBackup, planRestore, readBackup } from '../services/backup';
 
 const T = '2026-11-01T00:00:00.000Z';
 const NOW = new Date('2026-11-21T10:00:00.000Z');
@@ -74,6 +74,43 @@ test('restoring twice adds nothing the second time', () => {
   const plan = planRestore(backup, account(), () => 'new', NOW);
   assert.deepEqual(Object.values(plan.counts).reduce((a, b) => a + b, 0), 0);
   assert.equal(plan.chapterTexts.length, 0);
+});
+
+test('chapterNeedsRemoteText spots missing or older edited chapter texts and ignores deleted or fresh ones', () => {
+  const ch = { id: 'ch1', textEditedAt: '2026-11-10T00:00:00.000Z' };
+  assert.equal(chapterNeedsRemoteText(ch, undefined), true, 'missing local copy');
+  assert.equal(chapterNeedsRemoteText(ch, { editedAt: '2026-11-05T00:00:00.000Z' }), true, 'local copy predates remote edit');
+  assert.equal(chapterNeedsRemoteText(ch, { editedAt: '2026-11-10T00:00:00.000Z' }), false, 'up to date');
+  assert.equal(chapterNeedsRemoteText({ ...ch, isDeleted: true }, undefined), false, 'deleted chapter');
+});
+
+test('restoring a backup with a newer edited chapter text updates the text and edit stamp while keeping reading progress', () => {
+  const newerAt = '2026-11-15T12:00:00.000Z';
+  const fileData = account();
+  fileData.chapters = [{ ...fileData.chapters[0], textEditedAt: newerAt, wordCount: 950 } as any];
+  fileData.chapterTexts = [{ id: 'ch1', sourceId: 's1', chunks: ['It abated quickly.'], editedAt: newerAt, uploaded: true }];
+  const backup = makeBackup(fileData, '7.21.0', NOW);
+
+  const local = account();
+  local.chapters = [{ ...local.chapters[0], completed: [0, 1, 2], textEditedAt: '2026-11-02T00:00:00.000Z' } as any];
+  local.chapterTexts = [{ id: 'ch1', sourceId: 's1', chunks: ['It abated.'], editedAt: '2026-11-02T00:00:00.000Z', uploaded: true }];
+
+  const plan = planRestore(backup, local, () => 'new', NOW);
+  assert.equal(plan.chapterTexts.length, 1);
+  assert.deepEqual(plan.chapterTexts[0].chunks, ['It abated quickly.']);
+  assert.equal(plan.chapterTexts[0].editedAt, newerAt);
+  assert.equal(plan.chapterTexts[0].uploaded, false);
+  assert.equal(plan.rows.chapters.length, 1);
+  assert.equal(plan.rows.chapters[0].textEditedAt, newerAt);
+  assert.equal(plan.rows.chapters[0].wordCount, 950);
+  assert.deepEqual(plan.rows.chapters[0].completed, [0, 1, 2], 'local reading progress stays intact');
+
+  // Restoring again once the newer edit is already here does nothing.
+  local.chapters = [plan.rows.chapters[0] as any];
+  local.chapterTexts = [plan.chapterTexts[0]];
+  const second = planRestore(backup, local, () => 'new', NOW);
+  assert.equal(second.chapterTexts.length, 0);
+  assert.equal(second.rows.chapters.length, 0);
 });
 
 test('a backup is asked for once there is something to lose, and again after a month', () => {

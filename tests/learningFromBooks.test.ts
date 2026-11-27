@@ -28,6 +28,47 @@ test('the quiz asks words being learned in their book sentences, with three of y
   assert.ok(!q.options.includes('gull') || q.options.filter(o => o === 'gull').length === 1);
 });
 
+test('mixed quiz rotates across gap, word-to-meaning, audio and meaning while mapping Persian options back to English headwords', () => {
+  const cards = [
+    learning('a', 'harbor'),
+    learning('b', 'pier'),
+    learning('c', 'stripe'),
+    learning('d', 'anchor'),
+    learning('e', 'vessel'),
+    learning('f', 'beacon'),
+  ];
+  const places = new Map([
+    ['a', [place('He walked slowly to the harbor every morning.')]],
+    ['b', [place('She waited quietly on the wooden pier at dusk.')]],
+    ['c', [place('A narrow blue stripe ran along the hull.')]],
+    ['d', [place('They dropped the heavy anchor near the bay.')]],
+  ]);
+  const quiz = bookQuiz(cards, places, { count: 6, mix: true, canSpeak: true, random: () => 0.25 });
+  assert.equal(quiz.length, 6, 'includes cards with and without book sentences when mixed');
+  const asks = new Set(quiz.map(q => q.ask));
+  assert.ok(asks.size >= 3, 'rotates across multiple question styles');
+  for (const q of quiz) {
+    assert.equal(new Set(q.options).size, 4, 'four distinct choices');
+    if (q.ask === 'word-to-meaning' || q.ask === 'audio') {
+      assert.equal(q.correctAnswer, `م ${q.targetWord}`);
+      for (const opt of q.options) {
+        assert.ok(cards.some(c => c.front === q.optionWords[opt]), 'optionWords maps Persian meaning back to English word');
+      }
+    } else {
+      assert.equal(q.correctAnswer, q.targetWord);
+      assert.equal(q.optionWords[q.correctAnswer], q.targetWord);
+    }
+  }
+});
+
+test('a targeted quiz of "still hard" cards includes brand-new cards even without book sentences', () => {
+  const cards = [card('n1', 'glimpse'), card('n2', 'murmur'), learning('b', 'pier'), learning('c', 'stripe'), learning('d', 'boat')];
+  const quiz = bookQuiz(cards, new Map(), { only: new Set(['n1', 'n2']), count: 5, random: () => 0.4 });
+  assert.equal(quiz.length, 2);
+  assert.deepEqual(new Set(quiz.map(q => q.cardId)), new Set(['n1', 'n2']));
+  assert.ok(quiz.every(q => q.ask === 'meaning'));
+});
+
 test('retention counts the first answer of each card a day, not a card seen for the first time', () => {
   const logs: StudyLog[] = [
     { cardId: 'a', date: '2026-11-01', rating: 'GOOD' }, // first ever: not counted

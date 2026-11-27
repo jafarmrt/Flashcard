@@ -9,6 +9,13 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.21.0] - 2026-11-26 - Mixed Quizzes, Diagnostics, and Safer Sync
+- **Mixed four-choice quizzes:** The four-choice quiz now mixes sentence gaps from your books with Persian-to-English, English-to-Persian, and audio-to-meaning questions (or stays on book sentences alone when chosen), while still recording every answer by its English word in «اشتباه‌های من».
+- **Quiz the words that stayed hard:** When a review finishes with «هنوز سخت» words, «آزمون چهارگزینه‌ای از همین واژه‌ها» opens a quiz of just those cards right away.
+- **«وضعیت و عیب‌یابی»:** A troubleshooting page in «من» and Settings shows your sync revision, unsent cards, reviews, chapter texts and keys, live service checks, plain Persian explanations for recent network, region, key or quota errors, offline cache status with a safe «تازه‌سازی کش برنامه» refresh, and an app install guide.
+- **Edited chapters across devices and backups:** Chapters edited on another device or in a newer backup file are now re-fetched in the background, exported in full backups, and restored without losing reading progress.
+- **Safer reviews, offline cache, and sign-out:** Undoing a new card's first confirmation in a review asks it twice again, ending a review no longer re-stamps untouched cards, the service worker falls back to the offline page on server 5xx errors with true least-recently-used cache order, and «خروج از همهٔ دستگاه‌ها» revokes AI, speech, and page-fetch endpoints at once.
+
 ## [7.20.0] - 2026-11-23 - A Quiz That Teaches When You Are Wrong
 - **A hint and a second try:** A wrong choice in the four-choice quiz no longer gives the answer away. The word you picked shows what it means, a hint comes (the Persian meaning of the right word), and you choose once more. The card still counts as not remembered.
 - **Both words, side by side:** After a wrong answer the right word and the one you picked stand together with their meanings, from your own cards, and every choice shows its meaning. «چرا؟» asks the AI, only when you want it, to say in a line or two why one fits this sentence and the other does not.

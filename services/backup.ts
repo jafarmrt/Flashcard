@@ -101,6 +101,17 @@ export interface RestorePlan {
   counts: Record<SyncTable, number> & { studyHistory: number };
 }
 
+// Whether this device lacks the chapter's latest text (never downloaded, or
+// edited more recently on another device).
+export const chapterNeedsRemoteText = (
+  chapter: { isDeleted?: boolean; textEditedAt?: string },
+  localText: { editedAt?: string } | undefined,
+): boolean => {
+  if (chapter.isDeleted) return false;
+  if (!localText) return true;
+  return !!chapter.textEditedAt && (localText.editedAt || '') < chapter.textEditedAt;
+};
+
 // What putting `backup` back adds to `local`. `newId` makes ids for rows that
 // come back; `now` stamps them so the next sync sends them.
 export const planRestore = (backup: Backup, local: BackupData, newId: () => string, now: Date = new Date()): RestorePlan => {
@@ -124,14 +135,23 @@ export const planRestore = (backup: Backup, local: BackupData, newId: () => stri
 
   // A row that is here and stays, but points to a row that came back under a
   // new id (the place a deleted card was met in a book), is pointed to the
-  // new id; it would point to the deleted row otherwise.
+  // new id; it would point to the deleted row otherwise. Also, a live chapter
+  // whose text was edited more recently in the backup takes the newer edit
+  // timestamp and word count while keeping its local reading progress.
   const moved = (r: Row) => [['deckId', 'decks'], ['cardId', 'cards'], ['sourceId', 'sources'], ['chapterId', 'chapters']]
     .some(([field, table]) => typeof r[field] === 'string' && remap[table as SyncTable].has(r[field]));
   for (const table of SYNC_TABLES) {
     const inFile = new Map((backup.data[table] as Row[]).map(r => [r.id, r]));
     for (const mine of local[table] as Row[]) {
       if (mine.isDeleted || !inFile.has(mine.id) || taken[table].some(r => r.id === mine.id)) continue;
-      if (moved(mine)) taken[table].push({ ...mine });
+      const fileRow = inFile.get(mine.id)!;
+      const newerChapterEdit = table === 'chapters' && typeof fileRow.textEditedAt === 'string' && (mine.textEditedAt || '') < fileRow.textEditedAt;
+      if (moved(mine) || newerChapterEdit) {
+        taken[table].push({
+          ...mine,
+          ...(newerChapterEdit ? { textEditedAt: fileRow.textEditedAt, wordCount: fileRow.wordCount } : {}),
+        });
+      }
     }
   }
 
@@ -160,11 +180,13 @@ export const planRestore = (backup: Backup, local: BackupData, newId: () => stri
     studyHistory.push(next);
   }
 
-  const haveTexts = new Set(local.chapterTexts.map(t => t.id));
+  const localTexts = new Map(local.chapterTexts.map(t => [t.id, t]));
   const chapterTexts: ChapterText[] = [];
   for (const text of backup.data.chapterTexts) {
     const id = to('chapters', text.id)!;
-    if (id === text.id && haveTexts.has(id)) continue;
+    const existing = id === text.id ? localTexts.get(id) : undefined;
+    const newerEdit = !!text.editedAt && (existing?.editedAt || '') < text.editedAt;
+    if (existing && !newerEdit) continue;
     chapterTexts.push({ ...text, id, sourceId: to('sources', text.sourceId)!, uploaded: false });
   }
 

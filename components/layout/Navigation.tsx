@@ -5,7 +5,7 @@ import { UserProfile } from '../../types';
 import { Icon, fa } from '../common/ui';
 
 const DECK_VIEWS: View[] = ['DECKS', 'LIST', 'FORM', 'BULK_ADD'];
-const ME_VIEWS: View[] = ['ME', 'SETTINGS', 'USAGE', 'CHANGELOG', 'PROFILE', 'STATS', 'PRACTICE'];
+const ME_VIEWS: View[] = ['ME', 'SETTINGS', 'USAGE', 'CHANGELOG', 'PROFILE', 'STATS', 'PRACTICE', 'DIAGNOSTICS'];
 const TEXT_VIEWS: View[] = ['TEXTS', 'READER', 'AI_EXTRACT'];
 
 export const SYNC_LABEL: Record<SyncStatus, string> = {
@@ -59,7 +59,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ view, dueCount, userProfile, u
       <NavLink active={TEXT_VIEWS.includes(view)} onClick={() => onNavigate('TEXTS')} icon={<Icon.Book size={20} />} label="کتابخانه" />
       <NavLink active={DECK_VIEWS.includes(view)} onClick={() => onNavigate('DECKS')} icon={<Icon.Layers size={20} />} label="واژه‌ها و دسته‌ها" />
       <NavLink active={view === 'STATS'} onClick={() => onNavigate('STATS')} icon={<Icon.Chart size={20} />} label="پیشرفت" />
-      <NavLink active={['SETTINGS', 'USAGE', 'CHANGELOG', 'PROFILE'].includes(view)} onClick={() => onNavigate('SETTINGS')} icon={<Icon.Gear size={20} />} label="تنظیمات" />
+      <NavLink active={['SETTINGS', 'USAGE', 'CHANGELOG', 'PROFILE', 'DIAGNOSTICS'].includes(view)} onClick={() => onNavigate('SETTINGS')} icon={<Icon.Gear size={20} />} label="تنظیمات" />
 
       <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-2">
         <span className="px-3 text-xs text-ink-muted dark:text-slate-400">افزودن</span>
@@ -86,13 +86,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ view, dueCount, userProfile, u
           </span>
         </span>
       </button>
-      <div dir="ltr" className="flex justify-center gap-3 pt-2 text-[11px] text-slate-400">
+      <button type="button" onClick={() => onNavigate('DIAGNOSTICS')} dir="ltr" title="وضعیت و عیب‌یابی"
+        className="flex justify-center items-center gap-3 min-h-[36px] rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 text-[11px] text-slate-400 transition-colors">
         {health.map(h => (
           <span key={h.label} className="flex items-center gap-1" title={`${h.label}: ${h.status}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${h.status === 'ok' ? 'bg-emerald-500' : h.status === 'error' ? 'bg-red-500' : 'bg-amber-500 animate-pulse'}`} />{h.label}
+            <span className={`w-1.5 h-1.5 rounded-full ${h.status === 'ok' ? 'bg-emerald-500' : h.status === 'error' ? 'bg-red-500' : 'bg-amber-500'}`} />{h.label}
           </span>
         ))}
-      </div>
+      </button>
       {health.some(h => h.label === 'DB' && h.status === 'error') && <DbRepair />}
     </aside>
   );

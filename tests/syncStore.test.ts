@@ -362,6 +362,8 @@ test('"sign out everywhere" ends every session made before it; a new sign-in wor
   assert.equal((await call({ action: 'sync', since: 0 }, 'mina')).status, 200);
   assert.equal((await call({ action: 'auth-logout', everywhere: true }, 'mina')).status, 200);
   assert.equal((await call({ action: 'sync', since: 0 }, 'mina')).status, 401, 'an old cookie no longer opens the account');
+  assert.equal((await call({ action: 'gemini-generate', prompt: 'hi' }, 'mina')).status, 401, 'AI generation is revoked too');
+  assert.equal((await call({ action: 'fetch-page', url: 'https://example.com' }, 'mina')).status, 401, 'page fetching is revoked too');
   assert.deepEqual((await call({ action: 'auth-session' }, 'mina')).body, { username: null });
   const cookies: string[] = [];
   const res: ProxyResponse = { status() { return res; }, json(b) { return b; }, send(b) { return b; }, setHeader(_n: string, v: any) { cookies.push(String(v)); return undefined; } };

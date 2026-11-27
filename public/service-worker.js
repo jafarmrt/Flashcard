@@ -6,7 +6,7 @@
 //  - The API and other sites are never cached.
 // Change VERSION when this file changes so old caches are removed.
 
-const VERSION = 'v3'; // the caches' contents did not change in v7.7, so they are kept
+const VERSION = 'v4'; // v4: navigation 5xx fallback, true LRU touch, non-blocking asset caching
 const SHELL_CACHE = `lc-shell-${VERSION}`;
 const ASSET_CACHE = `lc-assets-${VERSION}`;
 const SHELL_URLS = ['/', '/index.html', '/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/icon.svg'];
@@ -55,8 +55,13 @@ const trim = async cache => {
   for (const key of removable.slice(0, extra)) await cache.delete(key);
 };
 
-// Putting an entry again places it last in the cache's order.
-const touch = (request, response) => caches.open(ASSET_CACHE).then(cache => cache.put(request, response)).catch(() => {});
+// Cache.put over an existing key updates it in place without changing its
+// insertion order in cache.keys(); deleting first moves it to the end (LRU).
+const touch = (request, response) =>
+  caches.open(ASSET_CACHE).then(async cache => {
+    await cache.delete(request);
+    await cache.put(request, response);
+  }).catch(() => {});
 
 const saveCopy = (cacheName, key, response) =>
   caches.open(cacheName).then(async cache => {
@@ -76,8 +81,8 @@ const page = async event => {
   const network = fetchAndSave(event, SHELL_CACHE, '/index.html');
   const timeout = new Promise(resolve => setTimeout(resolve, NAVIGATION_TIMEOUT_MS));
   const first = await Promise.race([network.catch(() => null), timeout]);
-  if (first) return first;
-  return (await caches.match('/index.html')) || network;
+  if (first && first.ok) return first;
+  return (await caches.match('/index.html')) || first || network;
 };
 
 const asset = async event => {
@@ -88,7 +93,7 @@ const asset = async event => {
     return saved;
   }
   const response = await fetch(request);
-  if (cacheable(response)) await saveCopy(ASSET_CACHE, request, response.clone());
+  if (cacheable(response)) event.waitUntil(saveCopy(ASSET_CACHE, request, response.clone()).catch(() => {}));
   return response;
 };
 

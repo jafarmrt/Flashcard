@@ -51,6 +51,7 @@ interface StudyViewProps {
   onEditCard?: (card: Flashcard, onDone: (saved: Flashcard | null) => void) => void; // the card form over the session
   onSaveCard?: (card: Flashcard) => Promise<Flashcard>; // a changed card's content (a stubborn card's new memory aid)
   allCards?: Flashcard[]; // every card, so a word of a sentence that has its own card shows its meaning
+  onQuizHard?: (cardIds: string[]) => void; // starts a four-choice quiz of the review's missed words
 }
 
 // Reads a word, phrase or sentence aloud with the browser's speech synthesis.
@@ -311,11 +312,12 @@ interface Snapshot {
   updated: Map<string, Flashcard>;
   reviews: number;
   firstAnswers: Map<string, boolean>;
+  confirmed: Set<string>;
   logId?: number;
   card?: Flashcard; // the card as it was before this answer
 }
 
-export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit, places, sourceId, aiOptions, onEditCard, onSaveCard, allCards }) => {
+export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit, places, sourceId, aiOptions, onEditCard, onSaveCard, allCards, onQuizHard }) => {
   const [queue, setQueue] = useState<Flashcard[]>([]);
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
@@ -399,7 +401,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
   const rate = async (rating: PerformanceRating) => {
     if (!card || !current || busy.current) return;
     busy.current = true;
-    const snapshot: Snapshot = { queue, index, updated, reviews, firstAnswers };
+    const snapshot: Snapshot = { queue, index, updated, reviews, firstAnswers, confirmed: new Set(confirmed.current) };
 
     const next = { ...answerCard(current, rating), updatedAt: new Date().toISOString() };
     // Saved at once, so closing the app mid-session keeps every answer. The
@@ -467,6 +469,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
       busy.current = false;
     }
     setSaveError('');
+    confirmed.current = new Set(last.confirmed);
     setHistory(h => h.slice(0, -1));
     setQueue(last.queue);
     setIndex(last.index);
@@ -589,6 +592,15 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
                 </div>
               );
             })}
+            {onQuizHard && (allCards?.length || cards.length) >= 4 && hard.some(c => c.kind !== 'grammar') && (
+              <button
+                type="button"
+                onClick={() => onQuizHard(hard.filter(c => c.kind !== 'grammar').map(c => c.id))}
+                className="mt-1.5 self-start min-h-[44px] px-4 rounded-xl text-sm font-bold bg-amber-200/80 hover:bg-amber-200 text-amber-950 dark:bg-amber-800/60 dark:hover:bg-amber-800 dark:text-amber-50 transition-colors"
+              >
+                آزمون چهارگزینه‌ای از همین واژه‌ها
+              </button>
+            )}
           </div>
         )}
         <div className="flex flex-col gap-2 pt-1">

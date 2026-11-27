@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { bookQuiz } from '../services/bookQuiz';
 import { mistakeSummary, newPracticeAnswer } from '../services/practiceLog';
 import { QuizPractice, type QuizFirstAnswer, type QuizQuestion } from './practice/QuizPractice';
@@ -6,6 +6,7 @@ import { MistakesPanel } from './practice/MistakesPanel';
 import { pickDictation, type DictationItem } from '../services/dictation';
 import { ListeningPractice } from './practice/ListeningPractice';
 import { isDue } from '../services/srsService';
+import { isSpeechSupported } from '../services/ttsService';
 import type { CardPlace } from '../services/library';
 import { Flashcard, Occurrence, PracticeAnswer, SpeechAttempt } from '../types';
 import { AiRequestOptions, generateInstructionalQuiz } from '../services/geminiService';
@@ -27,6 +28,8 @@ interface PracticeViewProps {
   onQuizMiss?: (cardId: string) => void; // a wrong answer counts as forgetting the card
   practice?: PracticeAnswer[]; // earlier answers of the quiz and of listening
   onSavePractice?: (answers: PracticeAnswer[]) => void;
+  initialQuizCardIds?: string[] | null; // jumps straight into a quiz of chosen cards (e.g. from StudyView's "still hard" list)
+  onConsumeInitialQuiz?: () => void;
 }
 
 // What one pronunciation session did for each item, and when it comes back.
@@ -69,11 +72,16 @@ const Shell: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 
 const NO_PRACTICE: PracticeAnswer[] = [];
 
-export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences = [], aiOptions, audioOptions, speechAttempts, onSaveSpeechAttempt, places, onQuizMiss, practice = NO_PRACTICE, onSavePractice }) => {
+export const PracticeView: React.FC<PracticeViewProps> = ({
+  cards, occurrences = [], aiOptions, audioOptions, speechAttempts, onSaveSpeechAttempt, places, onQuizMiss, practice = NO_PRACTICE, onSavePractice,
+  initialQuizCardIds, onConsumeInitialQuiz,
+}) => {
   type PracticeState = 'idle' | 'generating' | 'active' | 'finished';
   type Mode = 'quiz' | 'speaking' | 'listening' | 'mistakes' | 'progress';
+  type QuizStyle = 'mixed' | 'sentences';
 
   const [mode, setMode] = useState<Mode>('quiz');
+  const [quizStyle, setQuizStyle] = useState<QuizStyle>('mixed');
   const [practiceState, setPracticeState] = useState<PracticeState>('idle');
   const [listeningItems, setListeningItems] = useState<DictationItem[]>([]);
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
@@ -132,10 +140,18 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
       return;
     }
 
-    // First, a quiz from the books' own sentences (no AI, every question a
-    // card of yours); the AI writes one only when the books give too few.
-    const fromBooks = places ? bookQuiz(cards, places, { count: 5 }) : [];
-    if (fromBooks.length >= 3) { beginQuiz(fromBooks); return; }
+    // First, a quiz from your own cards and books (no AI); mixed mode adds
+    // reverse meaning and audio questions alongside book sentences.
+    const emptyPlaces = new Map<string, CardPlace[]>();
+    const fromBooks = bookQuiz(cards, places || emptyPlaces, {
+      count: 6,
+      mix: quizStyle === 'mixed',
+      canSpeak: isSpeechSupported(),
+    });
+    if (fromBooks.length >= 3 || (quizStyle === 'mixed' && fromBooks.length >= 1)) {
+      beginQuiz(fromBooks);
+      return;
+    }
 
     // Tier 1: Prefer new cards
     let practicePool = cards.filter(c => c.repetition === 0);
@@ -152,7 +168,7 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
     const validPracticePool = practicePool.filter(c => c.front && c.front.trim() !== '');
 
     if (validPracticePool.length < MIN_CARDS) {
-        alert(`برای شروع تمرین دست‌کم ${fa(MIN_CARDS)} کارت لازم است.`);
+        setErrorMessage(`برای شروع تمرین دست‌کم ${fa(MIN_CARDS)} کارت لازم است.`);
         return;
     }
 
@@ -169,8 +185,9 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
         beginQuiz(generatedQuestions.map(q => {
           const card = byFront.get(q.correctAnswer.trim().toLowerCase());
           return {
-            ...q, ask: 'gap' as const, cardId: card?.id, hint: card?.back,
+            ...q, ask: 'gap' as const, cardId: card?.id, targetWord: card?.front.trim() || q.correctAnswer, hint: card?.back,
             meanings: Object.fromEntries(q.options.map(o => [o, byFront.get(o.trim().toLowerCase())?.back || '']).filter(([, back]) => back)),
+            optionWords: Object.fromEntries(q.options.map(o => [o, o.trim()])),
           };
         }));
     } else {
@@ -185,17 +202,31 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
     setMode('quiz');
     setPracticeState('active');
   };
-  // A quiz of chosen cards: the ones just answered wrong, or «اشتباه‌های من».
-  const quizFrom = (cardIds: string[]) => {
+  // A quiz of chosen cards: the ones just answered wrong, «اشتباه‌های من», or
+  // "still hard" words right after a flashcard review.
+  const quizFrom = (cardIds: string[], mixed = quizStyle === 'mixed') => {
     setErrorMessage(null);
-    const list = places ? bookQuiz(cards, places, { only: new Set(cardIds), count: Math.min(8, cardIds.length) }) : [];
+    const emptyPlaces = new Map<string, CardPlace[]>();
+    const list = bookQuiz(cards, places || emptyPlaces, {
+      only: new Set(cardIds),
+      count: Math.min(8, cardIds.length),
+      mix: mixed,
+      canSpeak: isSpeechSupported(),
+    });
     if (list.length === 0) {
-      setErrorMessage('برای آزمون از این واژه‌ها دست‌کم چهار واژهٔ کارت‌دار لازم است.');
+      setErrorMessage('برای آزمون چهارگزینه‌ای دست‌کم چهار واژهٔ کارت‌دار با معنی‌های متفاوت لازم است.');
       setPracticeState('idle');
       return;
     }
     beginQuiz(list);
   };
+
+  useEffect(() => {
+    if (!initialQuizCardIds || initialQuizCardIds.length === 0) return;
+    quizFrom(initialQuizCardIds, true);
+    onConsumeInitialQuiz?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuizCardIds]);
   // The first answer to a question: kept with the account, and a wrong one
   // counts as forgetting the card.
   const quizAnswered = (answer: QuizFirstAnswer) => {
@@ -296,6 +327,12 @@ export const PracticeView: React.FC<PracticeViewProps> = ({ cards, occurrences =
                     ? 'جمله‌ای از کتاب‌هایت با صدا خوانده می‌شود و تو همان را می‌نویسی؛ بعد واژه‌به‌واژه می‌بینی کدام را درست شنیدی. گوش همان واژه‌هایی را یاد می‌گیرد که چشم در کتاب دیده.'
                     : 'واژه‌هایت را در همان جمله‌ای که در کتاب دیدی بلند بخوان. هوش مصنوعی (Gemini یا مدل صوتی OpenRouter، از تنظیمات) کل جمله را می‌شنود و واژه‌به‌واژه نشان می‌دهد کدام درست، کدام نامفهوم و کدام اشتباه بود؛ روانی، تکیه و آهنگ جمله را هم نمره می‌دهد. هر مورد سر وقتش برای مرور برمی‌گردد.'}
             </p>
+            {mode === 'quiz' && (
+                <div role="group" aria-label="نوع پرسش‌های آزمون" className="flex flex-wrap justify-center gap-2 mt-1">
+                    {choice<QuizStyle>(quizStyle, 'mixed', setQuizStyle, 'ترکیبی (جمله، معنی و شنیداری)')}
+                    {choice<QuizStyle>(quizStyle, 'sentences', setQuizStyle, 'فقط جمله‌های کتاب')}
+                </div>
+            )}
             {mode === 'speaking' && (
                 <div className="flex flex-col gap-3 items-center mt-1">
                     <div role="group" aria-label="چه بخوانم" className="flex flex-wrap justify-center gap-2">

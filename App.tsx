@@ -35,6 +35,7 @@ const SCREENS = {
     aiExtract: () => import('./components/AiTextExtractorView'),
     reader: () => import('./components/ChunkReaderView'),
     usage: () => import('./components/UsageView'),
+    diagnostics: () => import('./components/DiagnosticsView'),
 };
 const StatsView = lazy(() => SCREENS.stats().then(m => ({ default: m.StatsView })));
 const PracticeView = lazy(() => SCREENS.practice().then(m => ({ default: m.PracticeView })));
@@ -43,6 +44,7 @@ const BulkAddView = lazy(() => SCREENS.bulkAdd().then(m => ({ default: m.BulkAdd
 const ProfileView = lazy(() => SCREENS.profile().then(m => ({ default: m.ProfileView })));
 const AiTextExtractorView = lazy(() => SCREENS.aiExtract().then(m => ({ default: m.AiTextExtractorView })));
 const UsageView = lazy(() => SCREENS.usage().then(m => ({ default: m.UsageView })));
+const DiagnosticsView = lazy(() => SCREENS.diagnostics().then(m => ({ default: m.DiagnosticsView })));
 const ReaderScreen = lazy(() => SCREENS.reader().then(m => ({ default: m.ReaderScreen })));
 const StudyView = lazy(() => SCREENS.study().then(m => ({ default: m.StudyView })));
 const LibraryView = lazy(() => SCREENS.library().then(m => ({ default: m.LibraryView })));
@@ -87,7 +89,9 @@ const App: React.FC = () => {
         updateSettings, studyCards,
         handleCompleteCardDetails, handleAutoFixCards, handleStopAutoFix, autoFixProgress,
         handleCloseAutoFixReport, handleSaveExtractedCards, previousViewRef,
-        syncStatus, studyMode, studySourceId, studyLogs, studySessionId, sources, chapters, occurrences,
+        syncStatus, lastSyncTimestamp, lastSyncErrorText, pendingQuizCardIds,
+        handleSync, recheckHealth, handleStartHardQuiz, clearPendingQuiz,
+        studyMode, studySourceId, studyLogs, studySessionId, sources, chapters, occurrences,
         activeSourceId, activeChapterId, activeChunk, startQuickReview, openStudySetup,
         handleAddSource, handleOpenSource, handleOpenChapter, handleOpenChunk, handleDeleteSource,
         handleCompleteChunk, handleReadingTime, loadChapterText, handleEditChunk, handleSaveReaderCards,
@@ -253,9 +257,23 @@ const App: React.FC = () => {
                     onEditCard={openCardEditor}
                     onSaveCard={handleSaveCardContent}
                     allCards={visibleFlashcards}
+                    onQuizHard={handleStartHardQuiz}
                 />;
             case 'PRACTICE':
-                return <PracticeView cards={visibleFlashcards} occurrences={occurrences} places={places} onQuizMiss={handleQuizMiss} practice={practice} onSavePractice={handleSavePractice} speechAttempts={speechAttempts} onSaveSpeechAttempt={handleSaveSpeechAttempt} aiOptions={aiRequestOptions(settings)} audioOptions={pronunciationOptions(settings)} />;
+                return <PracticeView
+                    cards={visibleFlashcards}
+                    occurrences={occurrences}
+                    places={places}
+                    onQuizMiss={handleQuizMiss}
+                    practice={practice}
+                    onSavePractice={handleSavePractice}
+                    speechAttempts={speechAttempts}
+                    onSaveSpeechAttempt={handleSaveSpeechAttempt}
+                    aiOptions={aiRequestOptions(settings)}
+                    audioOptions={pronunciationOptions(settings)}
+                    initialQuizCardIds={pendingQuizCardIds}
+                    onConsumeInitialQuiz={clearPendingQuiz}
+                />;
             case 'AI_EXTRACT':
                 return <AiTextExtractorView
                     decks={visibleDecks}
@@ -280,9 +298,21 @@ const App: React.FC = () => {
                     onNavigateToChangelog={() => setView('CHANGELOG')}
                     onNavigateToProfile={() => setView('PROFILE')}
                     onNavigateToUsage={() => setView('USAGE')}
+                    onNavigateToDiagnostics={() => { previousViewRef.current = 'SETTINGS'; setView('DIAGNOSTICS'); }}
                     currentUser={currentUser}
                     onLogout={handleLogout}
-                />
+                />;
+            case 'DIAGNOSTICS':
+                return <DiagnosticsView
+                    username={currentUser?.username}
+                    syncStatus={syncStatus}
+                    lastSyncAt={lastSyncTimestamp}
+                    lastSyncError={lastSyncErrorText}
+                    health={health}
+                    onSyncNow={handleSync}
+                    onRecheckHealth={recheckHealth}
+                    onBack={() => setView(previousViewRef.current && previousViewRef.current !== 'DIAGNOSTICS' ? previousViewRef.current : 'SETTINGS')}
+                />;
             case 'DECKS':
                 return <DeckList
                     decks={visibleDecks}
@@ -371,9 +401,7 @@ const App: React.FC = () => {
         );
     }
 
-    // New screens are Persian (right to left); the older screens keep their
-    // English, left-to-right layout inside the same shell.
-    const PERSIAN_VIEWS = ['TODAY', 'ME', 'TEXTS', 'READER', 'STUDY', 'SETTINGS', 'USAGE', 'DECKS', 'LIST', 'FORM', 'BULK_ADD', 'STATS', 'PROFILE', 'PRACTICE', 'AI_EXTRACT', 'CHANGELOG'];
+    const PERSIAN_VIEWS = ['TODAY', 'ME', 'TEXTS', 'READER', 'STUDY', 'SETTINGS', 'USAGE', 'DIAGNOSTICS', 'DECKS', 'LIST', 'FORM', 'BULK_ADD', 'STATS', 'PROFILE', 'PRACTICE', 'AI_EXTRACT', 'CHANGELOG'];
     const isStudy = view === 'STUDY';
     const fullScreen = isStudy;
 
