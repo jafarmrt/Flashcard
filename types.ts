@@ -90,6 +90,7 @@ export interface Flashcard extends CardExtras {
   definition?: string[];
   exampleSentenceTarget?: string[];
   notes?: string;
+  themes?: string[]; // Thematic bundles this card belongs to, independent of deckId (services/wordThemes)
   kind?: CardKind;
   sourceSentence?: string; // The exact sentence of the source text the term came from
   collocations?: Collocation[];
@@ -171,6 +172,7 @@ export interface Settings {
     orAudioModel?: string; // the OpenRouter model that listens (one that takes audio)
     readerGloss?: 'off' | 'new' | 'learning'; // a word's meaning from its card above it in the text, while the card is new (default) or still being learned
     openBookOnStart?: boolean; // the app opens on the page of the book being read
+    savedThemes?: string[]; // custom thematic bundle names kept even when empty (services/wordThemes)
     updatedAt?: string; // when settings last changed; the newest wins across devices
 }
 
@@ -283,6 +285,7 @@ export interface ExtractedWordCard extends CardExtras {
   definition?: string[];
   exampleSentenceTarget?: string[];
   notes?: string;
+  themes?: string[];
   kind?: CardKind;
   sourceSentence?: string;
   collocations?: Collocation[];

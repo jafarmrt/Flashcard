@@ -39,7 +39,7 @@ export const FIELD_NAMES: Record<RefreshField, string> = {
 const FIELD_ORDER: RefreshField[] = ['back', 'notes', 'grammarPattern', 'practicePrompt', 'pronunciation', 'partOfSpeech', 'level', 'definition', 'exampleSentenceTarget', 'collocations', 'commonMistake', 'register', 'synonyms', 'wordFamily', 'wordRoot', 'reference', 'audioSrc'];
 
 export type CardContent = Pick<Flashcard, 'front' | 'back'> & Partial<Pick<Flashcard,
-  'notes' | 'pronunciation' | 'partOfSpeech' | 'definition' | 'exampleSentenceTarget' | 'collocations' | 'audioSrc'
+  'notes' | 'themes' | 'pronunciation' | 'partOfSpeech' | 'definition' | 'exampleSentenceTarget' | 'collocations' | 'audioSrc'
   | 'level' | 'grammarPattern' | 'practicePrompt' | 'kind' | 'sourceSentence' | 'origin'
   | 'synonyms' | 'commonMistake' | 'register' | 'wordFamily' | 'wordRoot' | 'reference'>>;
 

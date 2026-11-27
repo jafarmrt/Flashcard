@@ -9,7 +9,7 @@ const HEADERS = [
   'definition', 'exampleSentenceTarget', 'notes',
   'kind', 'sourceSentence', 'collocations', 'grammarPattern', 'practicePrompt',
   'level', 'grammarId',
-  'synonyms', 'commonMistake', 'register', 'wordFamily', 'wordRoot', 'reference',
+  'synonyms', 'commonMistake', 'register', 'wordFamily', 'wordRoot', 'reference', 'themes',
 ] as const;
 
 const escapeCSV = (value: string | string[] | undefined): string => {
@@ -43,6 +43,7 @@ export const convertToCSV = (cards: Flashcard[], decks: Deck[]): string => {
       wordFamily: card.wordFamily?.length ? familyText(card.wordFamily, '; ') : undefined,
       wordRoot: card.wordRoot,
       reference: card.reference,
+      themes: card.themes?.length ? card.themes : undefined,
     };
     return HEADERS.map(header => escapeCSV(rowData[header])).join(',');
   });
