@@ -33,6 +33,7 @@ interface QuizPracticeProps {
   onAnswer: (answer: QuizFirstAnswer) => void; // the first answer to each question
   onRetry: (cardIds: string[]) => void; // a new quiz from the cards that went wrong
   onDone: () => void;
+  doneLabel?: string;
 }
 
 type Asked = QuizQuestion & { again?: boolean };
@@ -57,7 +58,7 @@ const pairOf = (q: QuizQuestion, option: string): { en: string; faText: string }
   };
 };
 
-export const QuizPractice: React.FC<QuizPracticeProps> = ({ questions, aiOptions, onAnswer, onRetry, onDone }) => {
+export const QuizPractice: React.FC<QuizPracticeProps> = ({ questions, aiOptions, onAnswer, onRetry, onDone, doneLabel = 'برگشت' }) => {
   const [queue, setQueue] = useState<Asked[]>(questions);
   const [index, setIndex] = useState(0);
   const [picked, setPicked] = useState<string[]>([]); // the choices tapped for this question, in order
@@ -135,7 +136,7 @@ export const QuizPractice: React.FC<QuizPracticeProps> = ({ questions, aiOptions
           {missed.some(m => m.q.cardId) && (
             <button type="button" onClick={() => onRetry(missed.map(m => m.q.cardId).filter((id): id is string => !!id))} className={primary}>دوباره همین‌ها</button>
           )}
-          <button type="button" onClick={onDone} className={secondary}>برگشت</button>
+          <button type="button" onClick={onDone} className={missed.some(m => m.q.cardId) ? secondary : primary}>{doneLabel}</button>
         </div>
       </section>
     );

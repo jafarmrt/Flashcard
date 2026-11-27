@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { comeBackAt, dailyQueue, newCardsStartedToday } from '../services/dailyQueue';
+import { capStudyBatch, clampReviewBatch, comeBackAt, dailyQueue, newCardsStartedToday } from '../services/dailyQueue';
 import { answerCard, calculateSrs, previewIntervals } from '../services/srsService';
 import { meaningMatches } from '../services/stringSimilarity';
 import type { Flashcard, StudyLog } from '../types';
@@ -32,6 +32,8 @@ test("today's queue: cards being learned first, then new cards up to the day's a
   assert.equal(q.reviews, 2);
   assert.equal(q.fresh, 4);
   assert.equal(q.heldBack, 2);
+  assert.equal(q.totalDue, 6);
+  assert.equal(q.remainingDue, 0);
 });
 
 test('new cards already started today count against the allowance; 0 means no cap', () => {
@@ -41,6 +43,27 @@ test('new cards already started today count against the allowance; 0 means no ca
   assert.equal(dailyQueue(fresh, logs, TODAY, 2, NOW).fresh, 0);
   assert.equal(dailyQueue(fresh, logs, TODAY, 0, NOW).fresh, 5);
   assert.equal(dailyQueue([card('x', { isDeleted: true })], [], TODAY, 0, NOW).cards.length, 0);
+});
+
+test('every review sitting obeys a bounded word-count rule and prioritizes fragile reviews first', () => {
+  assert.equal(clampReviewBatch(0), 20, 'unlimited zero is replaced by the default bounded batch');
+  assert.equal(clampReviewBatch(999), 50, 'batches are capped at 50 words');
+  assert.equal(clampReviewBatch(3), 5, 'batches have a 5-word floor');
+
+  const fragile = Array.from({ length: 18 }, (_, i) => ({
+    ...learned(`r${i}`, -1),
+    stability: i + 1,
+  }));
+  const fresh = Array.from({ length: 10 }, (_, i) => card(`n${i}`));
+  const q = dailyQueue([...fresh, ...fragile], [], TODAY, 10, NOW, () => 0.5, 10);
+  assert.equal(q.cards.length, 10);
+  assert.equal(q.reviews, 10, 'due reviews fill the batch before new cards');
+  assert.equal(q.fresh, 0);
+  assert.equal(q.totalDue, 28);
+  assert.equal(q.remainingDue, 18);
+
+  const custom = capStudyBatch([...fresh, ...fragile, learned('future', 10)], 12, NOW, () => 0.5);
+  assert.equal(custom.length, 12);
 });
 
 test('a card comes back after ten other cards, or at the end of a short queue', () => {

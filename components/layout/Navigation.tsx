@@ -5,7 +5,7 @@ import { UserProfile } from '../../types';
 import { Icon, fa } from '../common/ui';
 
 const DECK_VIEWS: View[] = ['DECKS', 'LIST', 'FORM', 'BULK_ADD'];
-const ME_VIEWS: View[] = ['ME', 'SETTINGS', 'USAGE', 'CHANGELOG', 'PROFILE', 'STATS', 'PRACTICE', 'DRIVING', 'DIAGNOSTICS'];
+const ME_VIEWS: View[] = ['ME', 'LESSON', 'SETTINGS', 'USAGE', 'CHANGELOG', 'PROFILE', 'STATS', 'PRACTICE', 'DRIVING', 'DIAGNOSTICS'];
 const TEXT_VIEWS: View[] = ['TEXTS', 'READER', 'AI_EXTRACT'];
 
 export const SYNC_LABEL: Record<SyncStatus, string> = {
@@ -21,14 +21,12 @@ const SYNC_DOT: Record<SyncStatus, string> = {
 
 interface SidebarProps {
   view: View;
-  dueCount: number;
   userProfile: UserProfile | null;
   username?: string;
   syncStatus: SyncStatus;
   health: { label: string; status: HealthStatus }[];
   hasCards: boolean;
   onNavigate: (view: View) => void;
-  onStartReview: () => void;
   onAddCard: () => void;
 }
 
@@ -45,7 +43,7 @@ const NavLink: React.FC<{ active: boolean; onClick: () => void; icon: React.Reac
 );
 
 // Desktop side menu: every section of the app in one place.
-export const Sidebar: React.FC<SidebarProps> = ({ view, dueCount, userProfile, username, syncStatus, health, hasCards, onNavigate, onStartReview, onAddCard }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ view, userProfile, username, syncStatus, health, hasCards, onNavigate, onAddCard }) => {
   return (
     <aside className="hidden md:flex flex-col gap-1 w-64 shrink-0 h-screen sticky top-0 bg-white dark:bg-slate-900 border-l border-stone-200/80 dark:border-slate-800 px-3 py-5">
       <button type="button" onClick={() => onNavigate('TODAY')} className="flex items-center gap-2.5 px-2 pb-5">
@@ -54,7 +52,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ view, dueCount, userProfile, u
       </button>
 
       <NavLink active={view === 'TODAY'} onClick={() => onNavigate('TODAY')} icon={<Icon.Home size={20} />} label="امروز" />
-      <NavLink active={view === 'STUDY'} onClick={onStartReview} icon={<Icon.Cards size={20} />} label="مرور" badge={dueCount} disabled={!hasCards} />
+      <NavLink active={view === 'LESSON'} onClick={() => onNavigate('LESSON')} icon={<Icon.Cards size={20} />} label="جلسهٔ آموزشی" disabled={!hasCards} />
       <NavLink active={view === 'DRIVING'} onClick={() => onNavigate('DRIVING')} icon={<Icon.Headphones size={20} />} label="حالت رانندگی" />
       <NavLink active={view === 'PRACTICE'} onClick={() => onNavigate('PRACTICE')} icon={<Icon.Chat size={20} />} label="تمرین و آزمون" disabled={!hasCards} />
       <NavLink active={TEXT_VIEWS.includes(view)} onClick={() => onNavigate('TEXTS')} icon={<Icon.Book size={20} />} label="کتابخانه" />

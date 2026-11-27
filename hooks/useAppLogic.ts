@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile, UserAchievement, ExtractedWordCard, StudyLog, Source, Chapter, ChapterText, Occurrence, KnownWord, PracticeAnswer, SavedThemeExercise, SpeechAttempt, TextNote } from '../types';
+import { Flashcard, Deck, Settings, StudySessionOptions, UserProfile, UserAchievement, ExtractedWordCard, StudyLog, Source, Chapter, ChapterText, Occurrence, KnownWord, PracticeAnswer, SavedThemeExercise, SavedStudyLesson, LessonDuration, PerformanceRating, SpeechAttempt, TextNote } from '../types';
 import { clearAccountData, db } from '../services/localDBService';
 import { belongsToAnother, localOwner, OWNER_KEY } from '../services/localOwner';
 import { APP_VERSION, RELEASES } from '../services/appVersion';
 import { unseenReleases } from '../services/changelog';
 import { dayString } from '../services/calendar';
-import { dailyQueue, DEFAULT_NEW_PER_DAY } from '../services/dailyQueue';
+import { capStudyBatch, clampReviewBatch, dailyQueue, DEFAULT_NEW_PER_DAY } from '../services/dailyQueue';
 import { BackupData, BackupError, chapterNeedsRemoteText, makeBackup, markBackupMade, planRestore, readBackup, RestorePlan } from '../services/backup';
 import { addReading } from '../services/readingTime';
 import { tokensOf } from '../services/lemma';
@@ -55,7 +55,7 @@ import {
 } from '../services/wordThemes';
 
 // Types used within the hook and exported for the App component
-export type View = 'TODAY' | 'ME' | 'TEXTS' | 'READER' | 'DRIVING' | 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'PROFILE' | 'AI_EXTRACT' | 'USAGE' | 'DIAGNOSTICS';
+export type View = 'TODAY' | 'ME' | 'LESSON' | 'TEXTS' | 'READER' | 'DRIVING' | 'LIST' | 'FORM' | 'STUDY' | 'STATS' | 'PRACTICE' | 'SETTINGS' | 'DECKS' | 'CHANGELOG' | 'BULK_ADD' | 'PROFILE' | 'AI_EXTRACT' | 'USAGE' | 'DIAGNOSTICS';
 export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'offline' | 'error';
 export type HealthStatus = 'ok' | 'error' | 'checking';
 type FlashcardFormData = Omit<Flashcard, 'id' | 'repetition' | 'easinessFactor' | 'interval' | 'dueDate' | 'deckId' | 'isDeleted' | 'createdAt' | 'updatedAt'>;
@@ -190,6 +190,8 @@ export const useAppLogic = () => {
   const [speechAttempts, setSpeechAttempts] = useState<SpeechAttempt[]>([]);
   const [practice, setPractice] = useState<PracticeAnswer[]>([]);
   const [themeExercises, setThemeExercises] = useState<SavedThemeExercise[]>([]);
+  const [studyLessons, setStudyLessons] = useState<SavedStudyLesson[]>([]);
+  const [pendingLessonDuration, setPendingLessonDuration] = useState<LessonDuration | null>(null);
   const [notes, setNotes] = useState<TextNote[]>([]);
   // A section just finished: its cards, offered for a short review.
   const [sectionReview, setSectionReview] = useState<{ sourceId: string; chapterId: string; chunk: number; cardIds: string[] } | null>(null);
@@ -329,6 +331,7 @@ export const useAppLogic = () => {
     const allNotes = await db.notes.toArray();
     const allPractice = await db.practice.toArray();
     const allThemeExercises = await db.themeExercises.toArray();
+    const allStudyLessons = await db.studyLessons.toArray();
     setSources(allSources);
     setChapters(allChapters);
     setOccurrences(allOccurrences);
@@ -337,6 +340,7 @@ export const useAppLogic = () => {
     setNotes(allNotes);
     setPractice(allPractice);
     setThemeExercises(allThemeExercises);
+    setStudyLessons(allStudyLessons);
     setFlashcards(allCards);
     setDecks(allDecks);
     setEarnedAchievements(allAchievements);
@@ -354,7 +358,7 @@ export const useAppLogic = () => {
     
     return {
       cards: allCards, decks: allDecks, sources: allSources, chapters: allChapters, occurrences: allOccurrences,
-      knownWords: allKnown, speechAttempts: allSpeech, notes: allNotes, practice: allPractice, themeExercises: allThemeExercises, logs: allLogs, profile, achievements: allAchievements,
+      knownWords: allKnown, speechAttempts: allSpeech, notes: allNotes, practice: allPractice, themeExercises: allThemeExercises, studyLessons: allStudyLessons, logs: allLogs, profile, achievements: allAchievements,
     };
   };
   
@@ -388,7 +392,7 @@ export const useAppLogic = () => {
   const rememberSynced = (fresh: Awaited<ReturnType<typeof fetchData>>) => {
     lastSyncedFingerprint.current = syncFingerprint({
       cards: fresh.cards, decks: fresh.decks, sources: fresh.sources, chapters: fresh.chapters, occurrences: fresh.occurrences,
-      knownWords: fresh.knownWords, speechAttempts: fresh.speechAttempts, notes: fresh.notes, practice: fresh.practice, themeExercises: fresh.themeExercises, profile: fresh.profile, achievements: fresh.achievements, settingsUpdatedAt: readSavedSettings().updatedAt,
+      knownWords: fresh.knownWords, speechAttempts: fresh.speechAttempts, notes: fresh.notes, practice: fresh.practice, themeExercises: fresh.themeExercises, studyLessons: fresh.studyLessons, profile: fresh.profile, achievements: fresh.achievements, settingsUpdatedAt: readSavedSettings().updatedAt,
     });
   };
 
@@ -403,6 +407,7 @@ export const useAppLogic = () => {
     notes: await db.notes.toArray(),
     practice: await db.practice.toArray(),
     themeExercises: await db.themeExercises.toArray(),
+    studyLessons: await db.studyLessons.toArray(),
     logs: await db.studyHistory.toArray(),
     profile: await db.userProfile.get(1),
     achievements: await db.userAchievements.toArray(),
@@ -411,7 +416,7 @@ export const useAppLogic = () => {
 
   const SYNC_DB_TABLES: Record<SyncTable, any> = {
     decks: db.decks, cards: db.flashcards, sources: db.sources, chapters: db.chapters, occurrences: db.occurrences,
-    knownWords: db.knownWords, speechAttempts: db.speechAttempts, notes: db.notes, practice: db.practice, themeExercises: db.themeExercises,
+    knownWords: db.knownWords, speechAttempts: db.speechAttempts, notes: db.notes, practice: db.practice, themeExercises: db.themeExercises, studyLessons: db.studyLessons,
   };
 
   // After a sync, missing or remotely-edited chapter texts are prefetched in
@@ -455,7 +460,7 @@ export const useAppLogic = () => {
           let nextState = roundState;
           let maxBefore = 0;
           let maxAfter = 0;
-          await (db as any).transaction('rw', [db.decks, db.flashcards, db.sources, db.chapters, db.occurrences, db.knownWords, db.speechAttempts, db.notes, db.practice, db.themeExercises, db.studyHistory, db.userProfile, db.userAchievements], async () => {
+          await (db as any).transaction('rw', [db.decks, db.flashcards, db.sources, db.chapters, db.occurrences, db.knownWords, db.speechAttempts, db.notes, db.practice, db.themeExercises, db.studyLessons, db.studyHistory, db.userProfile, db.userAchievements], async () => {
             for (const table of SYNC_TABLES) {
               const incoming = changes[table];
               if (!Array.isArray(incoming) || incoming.length === 0) continue;
@@ -646,13 +651,13 @@ export const useAppLogic = () => {
     }
 
     const fingerprint = syncFingerprint({
-        cards: flashcards, decks, sources, chapters, occurrences, knownWords, speechAttempts, notes, practice, themeExercises, profile: userProfile, achievements: earnedAchievements, settingsUpdatedAt: settings.updatedAt,
+        cards: flashcards, decks, sources, chapters, occurrences, knownWords, speechAttempts, notes, practice, themeExercises, studyLessons, profile: userProfile, achievements: earnedAchievements, settingsUpdatedAt: settings.updatedAt,
     });
     if (fingerprint === lastSyncedFingerprint.current) return;
 
     const handler = setTimeout(() => latest.current.handleSync(), 2000);
     return () => clearTimeout(handler);
-  }, [flashcards, decks, userProfile, earnedAchievements, sources, chapters, occurrences, knownWords, speechAttempts, notes, practice, themeExercises, isLoggedIn, autoFixProgress, settings.updatedAt]);
+  }, [flashcards, decks, userProfile, earnedAchievements, sources, chapters, occurrences, knownWords, speechAttempts, notes, practice, themeExercises, studyLessons, isLoggedIn, autoFixProgress, settings.updatedAt]);
 
 
   const updateSettings = (changes: Partial<Settings>) => {
@@ -903,7 +908,7 @@ export const useAppLogic = () => {
     const local = await readLocal();
     return {
       decks: local.decks, cards: local.cards, sources: local.sources, chapters: local.chapters, occurrences: local.occurrences,
-      knownWords: local.knownWords, speechAttempts: local.speechAttempts, notes: local.notes || [], practice: local.practice || [], themeExercises: local.themeExercises || [], studyHistory: local.logs,
+      knownWords: local.knownWords, speechAttempts: local.speechAttempts, notes: local.notes || [], practice: local.practice || [], themeExercises: local.themeExercises || [], studyLessons: local.studyLessons || [], studyHistory: local.logs,
       chapterTexts: await db.chapterTexts.toArray(),
     };
   };
@@ -955,6 +960,7 @@ export const useAppLogic = () => {
       c.cards && `${fa(c.cards)} کارت`, c.decks && `${fa(c.decks)} دسته`, c.sources && `${fa(c.sources)} کتاب و متن`,
       c.chapters && `${fa(c.chapters)} فصل`, c.notes && `${fa(c.notes)} یادداشت`, c.knownWords && `${fa(c.knownWords)} واژهٔ «بلدم»`,
       c.themeExercises && `${fa(c.themeExercises)} تمرین موضوعی`,
+      c.studyLessons && `${fa(c.studyLessons)} جلسهٔ آموزشی`,
       c.studyHistory && `${fa(c.studyHistory)} مرور ثبت‌شده`,
     ].filter(Boolean).join('، ');
     if (!window.confirm(`از این پشتیبان برمی‌گردد: ${parts || 'متن فصل‌ها'}.\nچیزی پاک یا جایگزین نمی‌شود. ادامه؟`)) return;
@@ -1120,15 +1126,12 @@ export const useAppLogic = () => {
         cardsToStudy = cardsToStudy.filter(c => isDue(c));
         break;
     }
-    
-    for (let i = cardsToStudy.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [cardsToStudy[i], cardsToStudy[j]] = [cardsToStudy[j], cardsToStudy[i]];
-    }
-    
-    if (options.limit > 0) {
-      cardsToStudy = cardsToStudy.slice(0, options.limit);
-    }
+
+    // Every review obeys a concrete word-count rule (prioritizing due & fragile cards).
+    const effectiveLimit = clampReviewBatch(
+      options.limit > 0 && Number.isFinite(options.limit) ? options.limit : settings.reviewBatchSize,
+    );
+    cardsToStudy = capStudyBatch(cardsToStudy, effectiveLimit);
     
     if (cardsToStudy.length === 0) {
         showToast('کارتی با این انتخاب پیدا نشد.');
@@ -1143,14 +1146,13 @@ export const useAppLogic = () => {
     return true;
   };
 
-  // "Start review" on the Today screen: the day's queue (services/dailyQueue:
-  // cards being learned first, then new cards up to the day's allowance),
-  // no setup dialog. "More" after a session takes cards past the allowance.
+  // "Start review" on the Today screen: bounded by Settings.reviewBatchSize so
+  // no review dumps an endless queue of words at once.
   const startQuickReview = (mode: StudyMode = 'auto', limit = 0, sourceCards: Flashcard[] = flashcards, logs: StudyLog[] = studyLogs, pastAllowance = false) => {
     setStudyMode(mode);
     const newPerDay = pastAllowance ? 0 : settings.newCardsPerDay ?? DEFAULT_NEW_PER_DAY;
-    let queue = dailyQueue(sourceCards, logs, dayString(new Date()), newPerDay).cards;
-    if (limit > 0) queue = queue.slice(0, limit);
+    const batchLimit = limit > 0 ? clampReviewBatch(limit) : clampReviewBatch(settings.reviewBatchSize);
+    const queue = dailyQueue(sourceCards, logs, dayString(new Date()), newPerDay, new Date(), Math.random, batchLimit).cards;
     if (queue.length === 0) {
       showToast('امروز کارت موعددار نداری. می‌توانی مرور آزاد را انتخاب کنی.');
       setStudyDeckId(null);
@@ -1500,7 +1502,7 @@ export const useAppLogic = () => {
     const returnTo = view === 'STUDY' ? 'TODAY' : view;
     setStudyMode('auto');
     setStudyDeckId(null);
-    handleStartStudySession({ filter: 'all-cards', limit: 0 }, null, live, returnTo);
+    handleStartStudySession({ filter: 'all-cards', limit: clampReviewBatch(settings.reviewBatchSize) }, null, live, returnTo);
   };
 
   const persistModifiedCards = async (changed: Flashcard[]) => {
@@ -1562,6 +1564,66 @@ export const useAppLogic = () => {
     const row: SavedThemeExercise = { ...existing, isDeleted: true, updatedAt: nowIso };
     await db.themeExercises.put(row);
     setThemeExercises(prev => prev.map(e => (e.id === row.id ? row : e)));
+  };
+
+  const handleSaveStudyLesson = async (lesson: SavedStudyLesson) => {
+    const row: SavedStudyLesson = {
+      ...lesson,
+      updatedAt: lesson.updatedAt || new Date().toISOString(),
+    };
+    await db.studyLessons.put(row);
+    setStudyLessons(prev => [...prev.filter(l => l.id !== row.id), row]);
+  };
+
+  const handleDeleteStudyLesson = async (lessonId: string) => {
+    const existing =
+      studyLessons.find(l => l.id === lessonId) || (await db.studyLessons.get(lessonId));
+    if (!existing || existing.isDeleted) return;
+    const nowIso = new Date().toISOString();
+    const row: SavedStudyLesson = { ...existing, isDeleted: true, updatedAt: nowIso };
+    await db.studyLessons.put(row);
+    setStudyLessons(prev => prev.map(l => (l.id === row.id ? row : l)));
+  };
+
+  // Records a card review rating inside a timed Study Lesson, updating its
+  // real FSRS schedule and appending to `studyHistory` just like `StudyView`.
+  const handleRateCardInLesson = async (
+    cardId: string,
+    rating: PerformanceRating,
+  ): Promise<Flashcard | null> => {
+    try {
+      const next = await db.transaction('rw', db.flashcards, db.studyHistory, async () => {
+        const stored = await db.flashcards.get(cardId);
+        if (!stored || stored.isDeleted) return null;
+        const answered = answerCard(stored, rating);
+        const updated: Flashcard =
+          answered === stored
+            ? stored
+            : { ...answered, updatedAt: new Date().toISOString() };
+        if (updated !== stored) {
+          await db.flashcards.put(updated);
+        }
+        await db.studyHistory.add({
+          uid: crypto.randomUUID(),
+          cardId,
+          date: dayString(new Date()),
+          rating,
+        });
+        return updated;
+      });
+      if (!next) return null;
+      setFlashcards(prev => prev.map(c => (c.id === next.id ? next : c)));
+      setStudyLogs(await db.studyHistory.toArray());
+      return next;
+    } catch (error) {
+      console.warn('Saving lesson card rating failed:', error);
+      return null;
+    }
+  };
+
+  const handleOpenLessonDuration = (duration: LessonDuration) => {
+    setPendingLessonDuration(duration);
+    setView('LESSON');
   };
 
   const handleRenameTheme = async (from: string, to: string) => {
@@ -1662,7 +1724,7 @@ export const useAppLogic = () => {
     // The words in the sentences just read, each with its gap to fill.
     setStudyMode('cloze');
     setStudyDeckId(null);
-    handleStartStudySession({ filter: 'all-cards', limit: 0 }, null, flashcards.filter(c => ids.has(c.id)), 'TEXTS');
+    handleStartStudySession({ filter: 'all-cards', limit: clampReviewBatch(settings.reviewBatchSize) }, null, flashcards.filter(c => ids.has(c.id)), 'TEXTS');
     setStudySourceId(sectionReview.sourceId);
   };
 
@@ -1679,16 +1741,16 @@ export const useAppLogic = () => {
     if (!due) showToast(`کارت موعدداری نمانده؛ ${fa(picked.length)} کارتِ ضعیف‌تر مرور می‌شود.`);
     setStudyMode(mode);
     setStudyDeckId(null);
-    handleStartStudySession({ filter: 'all-cards', limit: 0 }, null, picked, 'TEXTS');
+    handleStartStudySession({ filter: 'all-cards', limit: clampReviewBatch(settings.reviewBatchSize) }, null, picked, 'TEXTS');
     setStudySourceId(sourceId);
   };
 
-  // Any cards, by id (the hardest words on the stats page, say).
+  // Any cards, by id (the hardest words on the stats page, or a recorded lesson's words).
   const handleReviewCards = (ids: string[], returnTo: View = 'TODAY', mode: StudyMode = 'flip') => {
     const wanted = new Set(ids);
     setStudyMode(mode);
     setStudyDeckId(null);
-    return handleStartStudySession({ filter: 'all-cards', limit: 0 }, null, flashcards.filter(c => wanted.has(c.id)), returnTo);
+    return handleStartStudySession({ filter: 'all-cards', limit: Math.max(ids.length, clampReviewBatch(settings.reviewBatchSize)) }, null, flashcards.filter(c => wanted.has(c.id)), returnTo);
   };
 
   // A chapter's hard words, picked before reading it: saved as cards at the
@@ -1709,7 +1771,7 @@ export const useAppLogic = () => {
     showToast(added ? `${fa(added)} کارت تازه برای پیش‌مطالعه ساخته شد.` : 'این واژه‌ها کارت داشتند؛ مرورشان کن.');
     setStudyMode('flip');
     setStudyDeckId(null);
-    handleStartStudySession({ filter: 'all-cards', limit: 0 }, null, fresh, 'TEXTS');
+    handleStartStudySession({ filter: 'all-cards', limit: clampReviewBatch(settings.reviewBatchSize) }, null, fresh, 'TEXTS');
   };
 
   const handleNavigate = (newView: View) => {
@@ -2116,6 +2178,8 @@ export const useAppLogic = () => {
       handleFillExtras, handleStopFillExtras, handleSaveCardContent, handleApplyImprovements,
       handleDeleteNote, handleSaveDriveCard, handleOpenBookChunkById, handleStartCustomStudy, handleSaveAudioPosition,
       themeExercises, handleSaveThemeExercise, handleDeleteThemeExercise,
+      studyLessons, handleSaveStudyLesson, handleDeleteStudyLesson, handleRateCardInLesson,
+      pendingLessonDuration, clearPendingLessonDuration: () => setPendingLessonDuration(null), handleOpenLessonDuration,
       handleCreateTheme, handleRenameTheme, handleDeleteTheme, handleUpdateThemeMembers, handleApplyBatchThemes,
   };
 };

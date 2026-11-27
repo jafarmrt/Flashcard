@@ -4,12 +4,18 @@ import App from './App';
 import './index.css';
 import { startFresh } from './services/freshStart';
 
-// Register Service Worker for PWA
+// Register Service Worker for PWA (bypass HTTP cache on SW checks and re-check on foreground)
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/service-worker.js', { type: 'module' })
+    navigator.serviceWorker
+      .register('/service-worker.js', { type: 'module', updateViaCache: 'none' })
       .then(registration => {
-        console.log('SW registered: ', registration);
+        const checkUpdate = () => {
+          if (document.visibilityState === 'visible') {
+            registration.update().catch(() => undefined);
+          }
+        };
+        document.addEventListener('visibilitychange', checkUpdate);
       })
       .catch(registrationError => {
         console.log('SW registration failed: ', registrationError);

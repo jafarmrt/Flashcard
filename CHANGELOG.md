@@ -9,6 +9,12 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.24.0] - 2026-11-27 - Daily Timed Study Lessons, Bounded Reviews, and Smooth AI Speech
+- **«جلسهٔ آموزشی زمان‌بندی‌شده» (30, 45, or 60 minutes):** Build a structured daily lesson from your own flashcards (`۳۰ دقیقه`، `۴۵ دقیقه`، `۶۰ دقیقه`) combining active FSRS review, a mixed four-choice quiz, and contextual sentence consolidation prioritizing words that stayed hard. Every lesson is recorded under its calendar day (`studyLessons`, synced across devices and backups) so you can resume, inspect its words, re-review, or re-test any day's lesson.
+- **Bounded word-count rule on every review & cleaner menu:** Removed the standalone «مرور» link from the side menu (since Today already hosts review) and enforced a clear per-session word limit (`۱۰`، `۱۵`، `۲۰`، `۳۰` واژه در هر نوبت، حداکثر ۵۰ کارت) across Today, custom setup, deck, book, and bundle reviews so no review ever dumps an unbounded queue of words.
+- **Smooth AI speech playback without mid-line restarts:** Isolated active book and card playback in «حالت رانندگی» from background progress saves and auto-sync refreshes, preventing AI-generated audio from cutting off and restarting from the beginning of a sentence.
+- **Automatic PWA shell update check:** Bumped the Service Worker cache (`v5`) and registered `updateViaCache: 'none'` with foreground update checks so mobile installations pick up newly deployed builds promptly.
+
 ## [7.23.0] - 2026-11-27 - Audiobook Chapter Picker, Saved AI Voices, and Saved Bundle Exercises
 - **Audiobook chapter & section picker + exact resume:** In «حالت رانندگی», choose any chapter (such as Chapter 3) and any section directly from an interactive audiobook picker with completion badges, jump chapters or sections mid-playback via «فصل و بخش», and resume next time from the exact chapter, section, and sentence where listening stopped (`Source.audioPosition`, synced across devices and backups).
 - **Persistent AI speech cache without paying twice:** All AI-generated read-aloud audio (OpenRouter and Gemini) is stored in IndexedDB (`LinguaSpeechCache`, up to 5,000 pieces) as universal byte buffers with normalized keys and shared chunk boundaries across Reader, Driving Mode, and Micro-Story playback, alongside one-tap «ذخیرهٔ صدای این بخش» and «ذخیرهٔ صدای کل این فصل» pre-download controls.

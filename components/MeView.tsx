@@ -17,6 +17,7 @@ interface MeViewProps {
 // The phone's "Me" tab: profile, progress and every secondary section.
 export const MeView: React.FC<MeViewProps> = ({ userProfile, username, syncStatus, health, hasCards, onNavigate }) => {
   const links: { view: View; label: string; hint: string; icon: React.ReactNode; disabled?: boolean }[] = [
+    { view: 'LESSON', label: 'جلسهٔ آموزشی', hint: 'آموزش ۳۰، ۴۵ یا ۶۰ دقیقه‌ای (مرور، آزمون و تثبیت روزانه)', icon: <Icon.Cards />, disabled: !hasCards },
     { view: 'DRIVING', label: 'حالت رانندگی', hint: 'پیوسته‌خوانی کتاب و مرور شنیداری بی‌نیاز از نگاه', icon: <Icon.Headphones /> },
     { view: 'PRACTICE', label: 'تمرین و آزمون', hint: 'آزمون چهارگزینه‌ای، شنیداری و تمرین تلفظ', icon: <Icon.Chat />, disabled: !hasCards },
     { view: 'STATS', label: 'پیشرفت', hint: 'خواندن، واژه‌ها و کارنامهٔ سال', icon: <Icon.Chart /> },

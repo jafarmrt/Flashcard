@@ -6,11 +6,11 @@
 // batches small enough for Vercel's request limit, plus the last server rev it
 // saw; the server answers with what other devices changed after that rev.
 
-import type { Chapter, Deck, Flashcard, KnownWord, Occurrence, PracticeAnswer, SavedThemeExercise, Source, SpeechAttempt, StudyLog, TextNote, UserAchievement, UserProfile } from '../types';
+import type { Chapter, Deck, Flashcard, KnownWord, Occurrence, PracticeAnswer, SavedStudyLesson, SavedThemeExercise, Source, SpeechAttempt, StudyLog, TextNote, UserAchievement, UserProfile } from '../types';
 import { cardStamp, deckStamp, profileStamp } from './syncState.js';
 import { mergeRow } from './rowMerge.js';
 
-export const SYNC_TABLES = ['decks', 'cards', 'sources', 'chapters', 'occurrences', 'knownWords', 'speechAttempts', 'notes', 'practice', 'themeExercises'] as const;
+export const SYNC_TABLES = ['decks', 'cards', 'sources', 'chapters', 'occurrences', 'knownWords', 'speechAttempts', 'notes', 'practice', 'themeExercises', 'studyLessons'] as const;
 export type SyncTable = (typeof SYNC_TABLES)[number];
 
 type Stamped = { id: string; updatedAt?: string; isDeleted?: boolean };
@@ -92,6 +92,7 @@ export interface LocalData {
   notes?: TextNote[]; // optional: rows from before notes existed read as none
   practice?: PracticeAnswer[];
   themeExercises?: SavedThemeExercise[];
+  studyLessons?: SavedStudyLesson[];
   logs: StudyLog[];
   profile?: UserProfile | null;
   achievements: UserAchievement[];

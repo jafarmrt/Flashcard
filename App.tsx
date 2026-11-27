@@ -12,7 +12,7 @@ import { TodayView } from './components/TodayView';
 import { MeView } from './components/MeView';
 import { chaptersOf, currentChunkOf, currentReading, placesByCard } from './services/library';
 import { knownTermSet } from './services/knownWords';
-import { dailyQueue, DEFAULT_NEW_PER_DAY } from './services/dailyQueue';
+import { clampReviewBatch, dailyQueue, DEFAULT_NEW_PER_DAY } from './services/dailyQueue';
 import { dayString } from './services/calendar';
 import { newPracticeAnswer } from './services/practiceLog';
 import { themeSummaries } from './services/wordThemes';
@@ -37,6 +37,7 @@ const SCREENS = {
     aiExtract: () => import('./components/AiTextExtractorView'),
     reader: () => import('./components/ChunkReaderView'),
     driving: () => import('./components/driving/DrivingView'),
+    lesson: () => import('./components/lesson/LessonView'),
     usage: () => import('./components/UsageView'),
     diagnostics: () => import('./components/DiagnosticsView'),
 };
@@ -50,6 +51,7 @@ const UsageView = lazy(() => SCREENS.usage().then(m => ({ default: m.UsageView }
 const DiagnosticsView = lazy(() => SCREENS.diagnostics().then(m => ({ default: m.DiagnosticsView })));
 const ReaderScreen = lazy(() => SCREENS.reader().then(m => ({ default: m.ReaderScreen })));
 const DrivingView = lazy(SCREENS.driving);
+const LessonView = lazy(SCREENS.lesson);
 const StudyView = lazy(() => SCREENS.study().then(m => ({ default: m.StudyView })));
 const LibraryView = lazy(() => SCREENS.library().then(m => ({ default: m.LibraryView })));
 const SettingsView = lazy(SCREENS.settings);
@@ -105,6 +107,8 @@ const App: React.FC = () => {
         handleFillExtras, handleStopFillExtras, extrasProgress, handleSaveCardContent, handleApplyImprovements,
         handleDeleteNote, handleSaveDriveCard, handleOpenBookChunkById, handleStartCustomStudy, handleSaveAudioPosition,
         themeExercises, handleSaveThemeExercise, handleDeleteThemeExercise,
+        studyLessons, handleSaveStudyLesson, handleDeleteStudyLesson, handleRateCardInLesson,
+        pendingLessonDuration, clearPendingLessonDuration, handleOpenLessonDuration,
         handleCreateTheme, handleRenameTheme, handleDeleteTheme, handleUpdateThemeMembers, handleApplyBatchThemes,
     } = useAppLogic();
 
@@ -113,10 +117,22 @@ const App: React.FC = () => {
     const visibleDecks = decks.filter(d => !d.isDeleted);
     const cardSources = useMemo(() => refreshSources(settings), [settings]);
     const backdropPress = useRef(false);
-    // The day's review: due cards, new ones up to the daily cap (services/dailyQueue).
+    // The day's review: due cards bounded by both the daily new-card cap and the per-session batch rule.
     const today = dayString(new Date());
-    const queue = useMemo(() => dailyQueue(visibleFlashcards, studyLogs, today, settings.newCardsPerDay ?? DEFAULT_NEW_PER_DAY),
-        [visibleFlashcards, studyLogs, today, settings.newCardsPerDay]);
+    const reviewBatchSize = clampReviewBatch(settings.reviewBatchSize);
+    const queue = useMemo(
+        () =>
+            dailyQueue(
+                visibleFlashcards,
+                studyLogs,
+                today,
+                settings.newCardsPerDay ?? DEFAULT_NEW_PER_DAY,
+                new Date(),
+                Math.random,
+                reviewBatchSize,
+            ),
+        [visibleFlashcards, studyLogs, today, settings.newCardsPerDay, reviewBatchSize],
+    );
     const health = [
         { label: 'DB', status: dbStatus },
         { label: 'AI', status: apiStatus },
@@ -175,6 +191,12 @@ const App: React.FC = () => {
                     sources={sources}
                     chapters={chapters}
                     dueCount={queue.cards.length}
+                    totalDueCount={queue.totalDue}
+                    remainingDueCount={queue.remainingDue}
+                    reviewBatchSize={reviewBatchSize}
+                    onChangeReviewBatchSize={size => updateSettings({ reviewBatchSize: clampReviewBatch(size) })}
+                    studyLessons={studyLessons}
+                    onOpenLesson={dur => (dur ? handleOpenLessonDuration(dur) : handleNavigate('LESSON'))}
                     newDueCount={queue.fresh}
                     heldBack={queue.heldBack}
                     knownWords={knownWords}
@@ -193,6 +215,25 @@ const App: React.FC = () => {
                     onUnflagDriveCard={id => updateSettings({ driveFlaggedCardIds: (settings.driveFlaggedCardIds || []).filter(x => x !== id) })}
                     onClearDriveFlags={() => updateSettings({ driveFlaggedCardIds: [] })}
                     speechAttempts={speechAttempts}
+                />;
+            case 'LESSON':
+                return <LessonView
+                    cards={visibleFlashcards}
+                    places={places}
+                    practice={practice}
+                    lessons={studyLessons}
+                    aiOptions={aiRequestOptions(settings)}
+                    initialDuration={pendingLessonDuration}
+                    onConsumeInitialDuration={clearPendingLessonDuration}
+                    onSaveLesson={handleSaveStudyLesson}
+                    onDeleteLesson={handleDeleteStudyLesson}
+                    onRateCard={handleRateCardInLesson}
+                    onPracticeAnswer={(cardId, right, chose) => {
+                        void handleSavePractice([newPracticeAnswer({ cardId, kind: 'quiz', right, ...(chose ? { chose } : {}) })]);
+                        if (!right) void handleQuizMiss(cardId);
+                    }}
+                    onReviewLessonCards={ids => handleReviewCards(ids, 'LESSON')}
+                    onBackToToday={() => handleNavigate('TODAY')}
                 />;
             case 'ME':
                 return <MeView
@@ -469,7 +510,7 @@ const App: React.FC = () => {
         );
     }
 
-    const PERSIAN_VIEWS = ['TODAY', 'ME', 'TEXTS', 'READER', 'DRIVING', 'STUDY', 'SETTINGS', 'USAGE', 'DIAGNOSTICS', 'DECKS', 'LIST', 'FORM', 'BULK_ADD', 'STATS', 'PROFILE', 'PRACTICE', 'AI_EXTRACT', 'CHANGELOG'];
+    const PERSIAN_VIEWS = ['TODAY', 'ME', 'LESSON', 'TEXTS', 'READER', 'DRIVING', 'STUDY', 'SETTINGS', 'USAGE', 'DIAGNOSTICS', 'DECKS', 'LIST', 'FORM', 'BULK_ADD', 'STATS', 'PROFILE', 'PRACTICE', 'AI_EXTRACT', 'CHANGELOG'];
     const isStudy = view === 'STUDY';
     const isDriving = view === 'DRIVING';
     const fullScreen = isStudy || isDriving;
@@ -479,14 +520,12 @@ const App: React.FC = () => {
             {!fullScreen && (
                 <Sidebar
                     view={view}
-                    dueCount={queue.cards.length}
                     userProfile={userProfile}
                     username={currentUser?.username}
                     syncStatus={syncStatus}
                     health={health}
                     hasCards={visibleFlashcards.length > 0}
                     onNavigate={handleNavigate}
-                    onStartReview={() => startQuickReview('auto')}
                     onAddCard={handleAddCard}
                 />
             )}
@@ -506,6 +545,7 @@ const App: React.FC = () => {
                     onClose={() => setIsStudySetupModalOpen(false)}
                     onStart={options => handleStartStudySession(options)}
                     cards={cardsForSetupModal}
+                    defaultLimit={reviewBatchSize}
                 />
                 <AutoFixReportModal
                     isOpen={!!autoFixReport}

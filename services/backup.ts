@@ -11,7 +11,7 @@
 // under a new id (references to it follow): a deleted row stays deleted
 // wherever it is synced, so the old id could not come back.
 
-import type { Chapter, ChapterText, Deck, Flashcard, KnownWord, Occurrence, PracticeAnswer, SavedThemeExercise, Source, SpeechAttempt, StudyLog, TextNote } from '../types';
+import type { Chapter, ChapterText, Deck, Flashcard, KnownWord, Occurrence, PracticeAnswer, SavedStudyLesson, SavedThemeExercise, Source, SpeechAttempt, StudyLog, TextNote } from '../types';
 import { SYNC_TABLES, type SyncTable } from './syncClient';
 import { studyLogKey } from './syncState';
 
@@ -30,6 +30,7 @@ export interface BackupData {
   notes: TextNote[];
   practice: PracticeAnswer[];
   themeExercises?: SavedThemeExercise[];
+  studyLessons?: SavedStudyLesson[];
   studyHistory: StudyLog[];
   chapterTexts: ChapterText[];
 }
@@ -63,6 +64,7 @@ export const makeBackup = (local: BackupData, version: string, now: Date = new D
       notes: alive(local.notes),
       practice: alive(local.practice || []),
       themeExercises: alive(local.themeExercises || []),
+      studyLessons: alive(local.studyLessons || []),
       studyHistory: local.studyHistory.map(({ id: _deviceId, ...log }) => log),
       chapterTexts: local.chapterTexts.map(({ uploaded: _u, ...t }) => t),
     },
@@ -91,6 +93,7 @@ export const readBackup = (text: string): Backup => {
       decks: rows(d.decks), cards: rows(d.cards), sources: rows(d.sources), chapters: rows(d.chapters),
       occurrences: rows(d.occurrences), knownWords: rows(d.knownWords), speechAttempts: rows(d.speechAttempts), notes: rows(d.notes), practice: rows(d.practice),
       themeExercises: rows(d.themeExercises),
+      studyLessons: rows(d.studyLessons),
       studyHistory: list(d.studyHistory).filter(l => typeof l.cardId === 'string' && typeof l.date === 'string'),
       chapterTexts: rows(d.chapterTexts).filter(t => Array.isArray(t.chunks)),
     },
@@ -170,6 +173,15 @@ export const planRestore = (backup: Backup, local: BackupData, newId: () => stri
       if (table === 'sources' && r.position?.chapterId) out.position = { ...r.position, chapterId: to('chapters', r.position.chapterId) };
       if (table === 'sources' && r.audioPosition?.chapterId) out.audioPosition = { ...r.audioPosition, chapterId: to('chapters', r.audioPosition.chapterId) };
       if (table === 'themeExercises' && Array.isArray(r.cardIds)) out.cardIds = r.cardIds.map((id: string) => to('cards', id) || id);
+      if (table === 'studyLessons') {
+        if (Array.isArray(r.cardIds)) out.cardIds = r.cardIds.map((id: string) => to('cards', id) || id);
+        if (Array.isArray(r.hardCardIds)) out.hardCardIds = r.hardCardIds.map((id: string) => to('cards', id) || id);
+        if (Array.isArray(r.words)) out.words = r.words.map((w: any) => ({ ...w, cardId: to('cards', w.cardId) || w.cardId }));
+        if (Array.isArray(r.stages)) out.stages = r.stages.map((s: any) => ({
+          ...s,
+          ...(Array.isArray(s.cardIds) ? { cardIds: s.cardIds.map((id: string) => to('cards', id) || id) } : {}),
+        }));
+      }
       return out;
     });
   }

@@ -6,7 +6,7 @@
 //  - The API and other sites are never cached.
 // Change VERSION when this file changes so old caches are removed.
 
-const VERSION = 'v4'; // v4: navigation 5xx fallback, true LRU touch, non-blocking asset caching
+const VERSION = 'v5'; // v5: refresh shell cache for daily lessons, bounded reviews, and smooth AI speech
 const SHELL_CACHE = `lc-shell-${VERSION}`;
 const ASSET_CACHE = `lc-assets-${VERSION}`;
 const SHELL_URLS = ['/', '/index.html', '/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/icon.svg'];

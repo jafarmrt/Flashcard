@@ -4,7 +4,7 @@ import { backupDue, BackupData, BackupError, chapterNeedsRemoteText, makeBackup,
 
 const T = '2026-11-01T00:00:00.000Z';
 const NOW = new Date('2026-11-21T10:00:00.000Z');
-const empty = (): BackupData => ({ decks: [], cards: [], sources: [], chapters: [], occurrences: [], knownWords: [], speechAttempts: [], notes: [], practice: [], themeExercises: [], studyHistory: [], chapterTexts: [] });
+const empty = (): BackupData => ({ decks: [], cards: [], sources: [], chapters: [], occurrences: [], knownWords: [], speechAttempts: [], notes: [], practice: [], themeExercises: [], studyLessons: [], studyHistory: [], chapterTexts: [] });
 const account = (): BackupData => ({
   ...empty(),
   decks: [{ id: 'd1', name: 'Book', updatedAt: T } as any],
@@ -16,6 +16,13 @@ const account = (): BackupData => ({
   chapters: [{ id: 'ch1', sourceId: 's1', title: 'One', order: 0, chunkCount: 3, wordCount: 900, completed: [0, 1], createdAt: T, updatedAt: T } as any],
   occurrences: [{ id: 'o1', cardId: 'c1', sourceId: 's1', chapterId: 'ch1', chunk: 0, sentence: 'It abated.', updatedAt: T } as any],
   notes: [{ id: 'n1', sourceId: 's1', chapterId: 'ch1', chunk: 0, from: 0, to: 1, quote: 'It', text: 'note', kind: 'note', updatedAt: T } as any],
+  studyLessons: [{
+    id: 'l1', day: '2026-11-02', durationMinutes: 30, titleFa: 'آموزش ۳۰ دقیقه‌ای', status: 'completed',
+    currentStageIndex: 0, cardIds: ['c1'], words: [{ cardId: 'c1', front: 'abate', back: 'کاهش' }],
+    stages: [{ id: 'review-1', kind: 'review', titleFa: 'مرور', subtitleFa: '', estimatedMinutes: 14, cardIds: ['c1'], targetCount: 1, completed: true }],
+    reviewedCount: 1, quizRight: 0, quizTotal: 0, clozeRight: 0, clozeTotal: 0, hardCardIds: ['c1'], elapsedSeconds: 300,
+    startedAt: T, createdAt: T, updatedAt: T,
+  }],
   studyHistory: [{ id: 7, uid: 'u1', cardId: 'c1', date: '2026-11-02', rating: 'GOOD' }],
   chapterTexts: [{ id: 'ch1', sourceId: 's1', chunks: ['It abated.'], uploaded: true }],
 });
@@ -51,6 +58,7 @@ test('restoring keeps rows that are here; rows deleted here come back under new 
   const local = account();
   local.cards = local.cards.map(c => (c.id === 'c1' ? { ...c, isDeleted: true } : c));
   local.chapters = local.chapters.map(c => ({ ...c, isDeleted: true }));
+  local.studyLessons = local.studyLessons.map(l => ({ ...l, isDeleted: true }));
   let n = 0;
   const plan = planRestore(backup, local, () => `x${++n}`, NOW);
   assert.equal(plan.rows.decks.length, 0, 'the deck is here and stays as it is');
@@ -64,6 +72,10 @@ test('restoring keeps rows that are here; rows deleted here come back under new 
   assert.equal(plan.rows.occurrences[0].id, 'o1');
   assert.equal(plan.rows.occurrences[0].cardId, card.id);
   assert.equal(plan.rows.occurrences[0].chapterId, chapter.id);
+  assert.equal(plan.rows.studyLessons.length, 1);
+  assert.deepEqual(plan.rows.studyLessons[0].cardIds, [card.id], 'studyLessons remap recreated card ids');
+  assert.deepEqual(plan.rows.studyLessons[0].hardCardIds, [card.id]);
+  assert.equal(plan.rows.studyLessons[0].words[0].cardId, card.id);
   assert.equal(plan.studyHistory[0].cardId, card.id, 'the history follows the card');
   assert.notEqual(plan.studyHistory[0].uid, 'u1');
   assert.equal(plan.chapterTexts[0].id, chapter.id, 'the text follows its chapter');

@@ -362,9 +362,41 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
   // Mutable refs for async audio loop cancellation and MediaSession handlers
   const runIdRef = useRef(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUnlockedRef = useRef(false);
   const objectUrlsRef = useRef<string[]>([]);
   const chunkStartedAtRef = useRef<number>(Date.now());
   const wakeLockRef = useRef<any>(null);
+
+  // Latest values read inside playback loops so saving audioPosition, bookmarking,
+  // or background account sync never re-triggers the active sentence mid-playback.
+  const latestRef = useRef({
+    settings,
+    rate,
+    voice,
+    chapters,
+    selectedSource,
+    onSaveAudioPosition,
+    onCompleteChunk,
+    activeCardQueue,
+    placesMap,
+    pauseSeconds,
+    canSpeakPersian,
+    loadChapterText,
+  });
+  latestRef.current = {
+    settings,
+    rate,
+    voice,
+    chapters,
+    selectedSource,
+    onSaveAudioPosition,
+    onCompleteChunk,
+    activeCardQueue,
+    placesMap,
+    pauseSeconds,
+    canSpeakPersian,
+    loadChapterText,
+  };
 
   const activeChapter = useMemo(
     () => chapters.find(c => c.id === bookChapterId),
@@ -396,24 +428,17 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
     }
   }, []);
 
-  // Persist exact audiobook listening spot (chapter, section, sentence) whenever it moves
+  // Persist exact audiobook listening spot (chapter, section, sentence) whenever it moves.
+  // Reads `selectedSource` & `onSaveAudioPosition` from `latestRef` so updating `sources`
+  // state never causes a re-save or playback restart loop.
   useEffect(() => {
     if (!active || mode !== 'book' || loadingBook) return;
-    if (!selectedSource || !bookChapterId) return;
+    const src = latestRef.current.selectedSource;
+    if (!src || !bookChapterId) return;
     const clampedPiece =
       bookPieces.length > 0 ? Math.max(0, Math.min(pieceIndex, bookPieces.length - 1)) : 0;
-    void onSaveAudioPosition?.(selectedSource.id, bookChapterId, bookChunk, clampedPiece);
-  }, [
-    active,
-    mode,
-    loadingBook,
-    selectedSource,
-    bookChapterId,
-    bookChunk,
-    pieceIndex,
-    bookPieces.length,
-    onSaveAudioPosition,
-  ]);
+    void latestRef.current.onSaveAudioPosition?.(src.id, bookChapterId, bookChunk, clampedPiece);
+  }, [active, mode, loadingBook, bookChapterId, bookChunk, pieceIndex, bookPieces.length]);
 
   // Screen Wake Lock while actively playing
   useEffect(() => {
@@ -468,8 +493,10 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
   }, []);
 
   const unlockAudio = useCallback(() => {
+    if (audioUnlockedRef.current) return;
     try {
       const a = ensureAudioElement();
+      audioUnlockedRef.current = true;
       a.src = SILENCE_WAV;
       a.play().catch(() => undefined);
     } catch {
@@ -478,6 +505,8 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
   }, [ensureAudioElement]);
 
   // Speaks one utterance (AI or device voice) and resolves when done or cancelled.
+  // Stable callback: reads `settings`, `rate`, and `voice` from `latestRef` so
+  // React state updates never recreate `playUtterance` mid-sentence.
   const playUtterance = useCallback(
     async (
       text: string,
@@ -485,17 +514,24 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
       expectedRun: number,
     ): Promise<boolean> => {
       if (runIdRef.current !== expectedRun || !text.trim()) return false;
-      const effectiveRate = opts.slow ? Math.max(0.7, rate * 0.85) : rate;
+      const curRate = latestRef.current.rate;
+      const curVoice = latestRef.current.voice;
+      const curSettings = latestRef.current.settings;
+      const effectiveRate = opts.slow ? Math.max(0.7, curRate * 0.85) : curRate;
 
       // Prefer recorded dictionary audio for single English headwords in device mode
-      if (opts.audioSrc && voice === 'device' && opts.lang === 'en-US') {
+      if (opts.audioSrc && curVoice === 'device' && opts.lang === 'en-US') {
         setCurrentPieceFromCache(false);
         const played = await new Promise<boolean>(resolve => {
           const audio = ensureAudioElement();
+          audio.onended = null;
+          audio.onerror = null;
+          audio.pause();
           audio.onended = () => resolve(true);
           audio.onerror = () => resolve(false);
           audio.src = opts.audioSrc!;
           audio.playbackRate = effectiveRate;
+          audioUnlockedRef.current = true;
           audio.play().catch(() => resolve(false));
         });
         if (played || runIdRef.current !== expectedRun) return runIdRef.current === expectedRun;
@@ -504,22 +540,30 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
       // AI voice path (Gemini speaks both English & Persian; OpenRouter speaks English).
       // `aiSpeechWithMeta` persists every generated clip in IndexedDB (`LinguaSpeechCache`)
       // so replaying a section or card never calls the API twice.
-      if (voice === 'ai' && (opts.lang === 'en-US' || speechProvider(settings) === 'gemini')) {
+      if (curVoice === 'ai' && (opts.lang === 'en-US' || speechProvider(curSettings) === 'gemini')) {
         try {
-          const { blob, fromCache } = await aiSpeechWithMeta(text, settings);
+          const { blob, fromCache } = await aiSpeechWithMeta(text, curSettings);
           if (runIdRef.current !== expectedRun) return false;
           setCurrentPieceFromCache(fromCache);
           if (opts.prefetchNext?.trim()) {
-            aiSpeechWithMeta(opts.prefetchNext, settings).catch(() => undefined);
+            aiSpeechWithMeta(opts.prefetchNext, curSettings).catch(() => undefined);
           }
           const url = URL.createObjectURL(blob);
           objectUrlsRef.current.push(url);
           const ok = await new Promise<boolean>(resolve => {
+            if (runIdRef.current !== expectedRun) {
+              resolve(false);
+              return;
+            }
             const audio = ensureAudioElement();
+            audio.onended = null;
+            audio.onerror = null;
+            audio.pause();
             audio.onended = () => resolve(true);
             audio.onerror = () => resolve(false);
             audio.src = url;
             audio.playbackRate = effectiveRate;
+            audioUnlockedRef.current = true;
             audio.play().catch(() => resolve(false));
           });
           if (ok) return runIdRef.current === expectedRun;
@@ -552,29 +596,27 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
         });
       });
     },
-    [ensureAudioElement, rate, settings, voice],
+    [ensureAudioElement],
   );
 
   // Loads a section's pieces using the exact same piece boundaries as ChunkReaderView
-  const loadSectionPieces = useCallback(
-    async (chapterId: string, chunk: number): Promise<Piece[]> => {
-      setLoadingBook(true);
-      try {
-        const chapterText = await loadChapterText(chapterId);
-        const raw = chapterText.chunks[chunk] || '';
-        const parsed = readerSection(raw);
-        return sectionPiecesForVoice(parsed, voice);
-      } finally {
-        setLoadingBook(false);
-      }
-    },
-    [loadChapterText, voice],
-  );
+  const loadSectionPieces = useCallback(async (chapterId: string, chunk: number): Promise<Piece[]> => {
+    setLoadingBook(true);
+    try {
+      const chapterText = await latestRef.current.loadChapterText(chapterId);
+      const raw = chapterText.chunks[chunk] || '';
+      const parsed = readerSection(raw);
+      return sectionPiecesForVoice(parsed, latestRef.current.voice);
+    } finally {
+      setLoadingBook(false);
+    }
+  }, []);
 
   // Jumps directly to any chosen chapter & section while inside the active player
   const jumpToChapterChunk = useCallback(
     async (chapterId: string, chunk: number, startPiece = 0) => {
       haltAudio();
+      unlockAudio();
       setStatusMessage(null);
       setChapterDrawerOpen(false);
       chunkStartedAtRef.current = Date.now();
@@ -587,17 +629,17 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
         const clamped = pieces.length > 0 ? Math.max(0, Math.min(startPiece, pieces.length - 1)) : 0;
         setBookPieces(pieces);
         setPieceIndex(clamped);
-        if (selectedSource) {
-          void onSaveAudioPosition?.(selectedSource.id, chapterId, chunk, clamped);
+        const src = latestRef.current.selectedSource;
+        if (src) {
+          void latestRef.current.onSaveAudioPosition?.(src.id, chapterId, chunk, clamped);
         }
-        unlockAudio();
         setPaused(false);
       } catch {
         setPaused(true);
         setStatusMessage('متن این بخش در دسترس نیست. اتصال را بررسی کن.');
       }
     },
-    [haltAudio, loadSectionPieces, onSaveAudioPosition, selectedSource, unlockAudio],
+    [haltAudio, loadSectionPieces, unlockAudio],
   );
 
   // Advances to next section/chapter when current section ends
@@ -606,18 +648,18 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
       const elapsed = Math.max(0, Date.now() - chunkStartedAtRef.current);
       if (markCompleted) {
         try {
-          await onCompleteChunk(chapterId, chunk, 'stay', elapsed);
+          await latestRef.current.onCompleteChunk(chapterId, chunk, 'stay', elapsed);
         } catch {
           // keep playing even if saving fails momentarily
         }
       }
-      const nextPos = nextBookPosition(sourceId, chapters, chapterId, chunk);
+      const nextPos = nextBookPosition(sourceId, latestRef.current.chapters, chapterId, chunk);
       if (!nextPos) {
         haltAudio();
         setBookPieces(pieces => {
           const endIdx = Math.max(0, pieces.length - 1);
           setPieceIndex(endIdx);
-          void onSaveAudioPosition?.(sourceId, chapterId, chunk, endIdx);
+          void latestRef.current.onSaveAudioPosition?.(sourceId, chapterId, chunk, endIdx);
           return pieces;
         });
         setPaused(true);
@@ -625,32 +667,34 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
         return;
       }
       chunkStartedAtRef.current = Date.now();
+      const nextPieces = await loadSectionPieces(nextPos.chapter.id, nextPos.chunk);
       setBookChapterId(nextPos.chapter.id);
       setBookChunk(nextPos.chunk);
       setTargetChapterId(nextPos.chapter.id);
       setTargetChunk(nextPos.chunk);
-      setPieceIndex(0);
-      void onSaveAudioPosition?.(sourceId, nextPos.chapter.id, nextPos.chunk, 0);
-      const nextPieces = await loadSectionPieces(nextPos.chapter.id, nextPos.chunk);
       setBookPieces(nextPieces);
+      setPieceIndex(0);
+      void latestRef.current.onSaveAudioPosition?.(sourceId, nextPos.chapter.id, nextPos.chunk, 0);
     },
-    [chapters, haltAudio, loadSectionPieces, onCompleteChunk, onSaveAudioPosition],
+    [haltAudio, loadSectionPieces],
   );
 
-  // Continuous Book Playback Effect
+  // Continuous Book Playback Effect — depends strictly on positional playback state
+  // so background syncs or audioPosition saves never cut off or restart a line.
+  const activeBookSourceId = selectedSource?.id || '';
   useEffect(() => {
     if (!active || paused || mode !== 'book' || loadingBook) return;
-    if (!selectedSource || !bookChapterId) return;
+    if (!activeBookSourceId || !bookChapterId) return;
 
     if (bookPieces.length === 0) {
       const timer = setTimeout(() => {
-        void advanceBookSection(selectedSource.id, bookChapterId, bookChunk, true);
+        void advanceBookSection(activeBookSourceId, bookChapterId, bookChunk, true);
       }, 300);
       return () => clearTimeout(timer);
     }
 
     if (pieceIndex >= bookPieces.length) {
-      void advanceBookSection(selectedSource.id, bookChapterId, bookChunk, true);
+      void advanceBookSection(activeBookSourceId, bookChapterId, bookChunk, true);
       return;
     }
 
@@ -671,7 +715,7 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
     paused,
     mode,
     loadingBook,
-    selectedSource,
+    activeBookSourceId,
     bookChapterId,
     bookChunk,
     bookPieces,
@@ -680,19 +724,21 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
     playUtterance,
   ]);
 
-  // Eyes-Free Audio Flashcard Loop Effect
+  // Eyes-Free Audio Flashcard Loop Effect — depends strictly on cardIndex & play state
+  const cardQueueLength = activeCardQueue.length;
   useEffect(() => {
     if (!active || paused || mode !== 'cards') return;
-    if (activeCardQueue.length === 0) return;
+    if (cardQueueLength === 0) return;
 
-    const card = activeCardQueue[cardIndex % activeCardQueue.length];
+    const queue = latestRef.current.activeCardQueue;
+    const card = queue[cardIndex % queue.length];
     if (!card) return;
 
     const expectedRun = ++runIdRef.current;
-    const places = placesMap.get(card.id);
+    const places = latestRef.current.placesMap.get(card.id);
     const script = buildCardAudioScript(card, places, {
-      pauseSeconds,
-      canSpeakPersian,
+      pauseSeconds: latestRef.current.pauseSeconds,
+      canSpeakPersian: latestRef.current.canSpeakPersian,
     });
 
     (async () => {
@@ -718,42 +764,36 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
         await new Promise<void>(r => setTimeout(r, 280));
       }
       if (runIdRef.current !== expectedRun) return;
-      setCardIndex(i => (i + 1) % activeCardQueue.length);
+      setCardIndex(i => (i + 1) % Math.max(1, latestRef.current.activeCardQueue.length));
     })();
-  }, [
-    active,
-    paused,
-    mode,
-    activeCardQueue,
-    cardIndex,
-    placesMap,
-    pauseSeconds,
-    canSpeakPersian,
-    playUtterance,
-  ]);
+  }, [active, paused, mode, cardIndex, cardQueueLength, playUtterance]);
 
   const startSession = async () => {
     setStatusMessage(null);
     prefetchAbortRef.current?.abort();
+    haltAudio();
     unlockAudio();
     if (mode === 'book') {
       if (!selectedSource || !targetChapter) return;
       const startChapterId = targetChapter.id;
       const startChunk = Math.max(0, Math.min(targetChunk, Math.max(1, targetChapter.chunkCount) - 1));
-      setBookChapterId(startChapterId);
-      setBookChunk(startChunk);
       setChapterDrawerOpen(false);
       chunkStartedAtRef.current = Date.now();
-      setActive(true);
-      setPaused(false);
       try {
         const pieces = await loadSectionPieces(startChapterId, startChunk);
         const clampedPiece =
           pieces.length > 0 ? Math.max(0, Math.min(effectiveStartPiece, pieces.length - 1)) : 0;
+        setBookChapterId(startChapterId);
+        setBookChunk(startChunk);
         setBookPieces(pieces);
         setPieceIndex(clampedPiece);
+        setPaused(false);
+        setActive(true);
         void onSaveAudioPosition?.(selectedSource.id, startChapterId, startChunk, clampedPiece);
       } catch {
+        setBookChapterId(startChapterId);
+        setBookChunk(startChunk);
+        setActive(true);
         setPaused(true);
         setStatusMessage('متن این بخش در دسترس نیست. اتصال را بررسی کن.');
       }
@@ -761,8 +801,8 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
       if (activeCardQueue.length === 0) return;
       setCardIndex(0);
       setCardPhase('listen');
-      setActive(true);
       setPaused(false);
+      setActive(true);
     }
   };
 
@@ -1316,12 +1356,13 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
                   </div>
                   <select
                     id="drive-book-select"
+                    dir="auto"
                     value={selectedSource?.id || ''}
                     onChange={e => setSelectedSourceId(e.target.value)}
-                    className="min-h-[48px] px-4 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 text-sm"
+                    className="min-h-[48px] px-4 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 text-sm text-right"
                   >
                     {liveSources.map(src => (
-                      <option key={src.id} value={src.id}>
+                      <option key={src.id} value={src.id} dir="auto">
                         {src.title}
                       </option>
                     ))}
@@ -1700,9 +1741,13 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
           >
             <Icon.Headphones size={22} />
             <span>
-              {mode === 'book' && targetChapter
-                ? `شروع شنیدن (${targetChapter.title} · بخش ${fa(targetChunk + 1)})`
-                : 'شروع حالت رانندگی'}
+              {mode === 'book' && targetChapter ? (
+                <>
+                  شروع شنیدن (<bdi dir="auto">{targetChapter.title}</bdi> · بخش {fa(targetChunk + 1)})
+                </>
+              ) : (
+                'شروع حالت رانندگی'
+              )}
             </span>
           </button>
         </section>

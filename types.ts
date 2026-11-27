@@ -167,6 +167,7 @@ export interface Settings {
     orSpeechModel?: string; // the OpenRouter speech model
     orSpeechVoice?: string; // its voice; unset: the model's own default
     newCardsPerDay?: number; // new cards started per day in the day's review (services/dailyQueue; unset: 15, 0: no cap)
+    reviewBatchSize?: number; // bounded word count per review session (services/dailyQueue; 10, 15, 20, 30; default 20)
     readerFontSize?: number; // the reader's type size, step 0-4 (READER_FONT_SIZES)
     pronunciationService?: 'auto' | 'gemini' | 'openrouter'; // who listens in pronunciation practice; auto: Gemini, then OpenRouter
     orAudioModel?: string; // the OpenRouter model that listens (one that takes audio)
@@ -443,6 +444,57 @@ export interface SavedThemeExercise {
   contrastUnits?: SavedContrastUnit[];
   playCount?: number;
   lastPlayedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  isDeleted?: boolean;
+}
+
+// Structured timed study lessons (30, 45, or 60 minutes) built from the user's
+// cards, combining FSRS flashcard review, mixed four-choice testing, and
+// contextual sentence consolidation, recorded to that calendar day and synced.
+export type LessonDuration = 30 | 45 | 60;
+export type LessonStageKind = 'review' | 'quiz' | 'cloze';
+
+export interface LessonWordSnapshot {
+  cardId: string;
+  front: string;
+  back: string;
+  partOfSpeech?: string;
+  sentence?: string;
+}
+
+export interface LessonStageSpec {
+  id: string;
+  kind: LessonStageKind;
+  titleFa: string;
+  subtitleFa: string;
+  estimatedMinutes: number;
+  cardIds: string[];
+  targetCount: number;
+  completed: boolean;
+  rightCount?: number;
+  totalCount?: number;
+}
+
+export interface SavedStudyLesson {
+  id: string;
+  day: string; // YYYY-MM-DD on the device's calendar
+  durationMinutes: LessonDuration;
+  titleFa: string;
+  status: 'in_progress' | 'completed';
+  currentStageIndex: number;
+  cardIds: string[];
+  words: LessonWordSnapshot[];
+  stages: LessonStageSpec[];
+  reviewedCount: number;
+  quizRight: number;
+  quizTotal: number;
+  clozeRight: number;
+  clozeTotal: number;
+  hardCardIds: string[];
+  elapsedSeconds: number;
+  startedAt: string;
+  completedAt?: string;
   createdAt: string;
   updatedAt: string;
   isDeleted?: boolean;

@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie';
-import { Flashcard, Deck, StudyLog, UserProfile, UserAchievement, TextDoc, Source, Chapter, ChapterText, Occurrence, KnownWord, SpeechAttempt, PracticeAnswer, SavedThemeExercise, TextNote } from '../types';
+import { Flashcard, Deck, StudyLog, UserProfile, UserAchievement, TextDoc, Source, Chapter, ChapterText, Occurrence, KnownWord, SpeechAttempt, PracticeAnswer, SavedThemeExercise, SavedStudyLesson, TextNote } from '../types';
 
 // Small values this browser keeps for itself, such as how far it has synced.
 export interface MetaRow {
@@ -52,6 +52,7 @@ export class LinguaCardsDB extends Dexie {
   notes!: Table<TextNote>;
   practice!: Table<PracticeAnswer>;
   themeExercises!: Table<SavedThemeExercise>;
+  studyLessons!: Table<SavedStudyLesson>;
 
   constructor() {
     super('LinguaCardsDB');
@@ -334,6 +335,29 @@ export class LinguaCardsDB extends Dexie {
         notes: 'id, sourceId, chapterId, updatedAt',
         practice: 'id, cardId, day, updatedAt',
         themeExercises: 'id, themeName, kind, updatedAt'
+    });
+
+    // Version 19: structured timed daily study lessons (30/45/60 min) recorded per day (synced).
+    (this as any).version(19).stores({
+        flashcards: 'id, deckId, front, back, dueDate, isDeleted, createdAt, updatedAt',
+        decks: 'id, name, isDeleted',
+        studyHistory: '++id, cardId, date',
+        userProfile: 'id, firstName, lastName, bio',
+        userAchievements: '&achievementId',
+        texts: 'id, updatedAt, isDeleted',
+        sources: 'id, updatedAt',
+        chapters: 'id, sourceId, updatedAt',
+        chapterTexts: 'id, sourceId',
+        occurrences: 'id, cardId, sourceId, chapterId',
+        meta: 'key',
+        knownWords: 'id, term, updatedAt',
+        lookups: 'term',
+        usage: '++id, day',
+        speechAttempts: 'id, cardId, createdAt',
+        notes: 'id, sourceId, chapterId, updatedAt',
+        practice: 'id, cardId, day, updatedAt',
+        themeExercises: 'id, themeName, kind, updatedAt',
+        studyLessons: 'id, day, status, updatedAt'
     });
   }
 }

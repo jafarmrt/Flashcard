@@ -1,5 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Chapter, ChapterText, ExtractedWordCard, Flashcard, KnownWord, Source, SpeechAttempt, StudyLog, TextNote, UserProfile } from '../types';
+import {
+  Chapter,
+  ChapterText,
+  ExtractedWordCard,
+  Flashcard,
+  KnownWord,
+  LessonDuration,
+  SavedStudyLesson,
+  Source,
+  SpeechAttempt,
+  StudyLog,
+  TextNote,
+  UserProfile,
+} from '../types';
 import { dueSchedules, liveAttempts } from '../services/speechPractice';
 import { minutesLeft, todayPlan, type PlanStep } from '../services/todayPlan';
 import { lastDays, readingByDay } from '../services/readingTime';
@@ -10,12 +23,15 @@ import { currentReading } from '../services/library';
 import { weekSummary } from '../services/weekSummary';
 import { nextReading, readingInvite, readOn, type ReadingInvite } from '../services/readingInvite';
 import { backupDue, daysSinceBackup } from '../services/backup';
+import { DEFAULT_REVIEW_BATCH, REVIEW_BATCH_OPTIONS } from '../services/dailyQueue';
+import { LESSON_BLUEPRINTS, LESSON_DURATIONS, liveStudyLessons, todayOpenLesson } from '../services/studyLesson';
 import { DriveBookmarksTray } from './driving/DriveBookmarksTray';
 import { fa, Icon, Kbd, STAGE_COLORS } from './common/ui';
 
 const NO_KNOWN: KnownWord[] = [];
 const NO_NOTES: TextNote[] = [];
 const NO_FLAGS: string[] = [];
+const NO_LESSONS: SavedStudyLesson[] = [];
 
 interface TodayViewProps {
   userProfile: UserProfile | null;
@@ -24,7 +40,13 @@ interface TodayViewProps {
   studyLogs: StudyLog[];
   sources: Source[];
   chapters: Chapter[];
-  dueCount: number; // the day's queue (services/dailyQueue)
+  dueCount: number; // bounded session queue count (services/dailyQueue)
+  totalDueCount?: number; // total due cards before batch cap
+  remainingDueCount?: number; // due cards waiting for later batches today
+  reviewBatchSize?: number;
+  onChangeReviewBatchSize?: (size: number) => void;
+  studyLessons?: SavedStudyLesson[];
+  onOpenLesson?: (duration?: LessonDuration) => void;
   heldBack?: number; // new cards left for the next days by the daily cap
   knownWords?: KnownWord[];
   notes?: TextNote[];
@@ -98,12 +120,20 @@ const TodayPlan: React.FC<{ steps: PlanStep[]; reading: Reading; onRead: () => v
 };
 
 export const TodayView: React.FC<TodayViewProps> = ({
-  userProfile, username, cards, studyLogs, sources, chapters, dueCount, newDueCount, heldBack = 0, knownWords = NO_KNOWN,
+  userProfile, username, cards, studyLogs, sources, chapters, dueCount,
+  totalDueCount = dueCount, remainingDueCount = 0, reviewBatchSize = DEFAULT_REVIEW_BATCH,
+  onChangeReviewBatchSize, studyLessons = NO_LESSONS, onOpenLesson,
+  newDueCount, heldBack = 0, knownWords = NO_KNOWN,
   notes = NO_NOTES, flaggedCardIds = NO_FLAGS, onMoreNew, loadText, onStartReview, onOpenSetup, onNavigate, onOpenChunk,
   onOpenBookChunk, onDismissDriveNote, onSaveDriveCard, onStudyCustomCards, onUnflagDriveCard, onClearDriveFlags, speechAttempts = [],
 }) => {
-
   const today = dayString(new Date());
+  const openLessonToday = useMemo(() => todayOpenLesson(studyLessons, today), [studyLessons, today]);
+  const completedLessonsToday = useMemo(
+    () => liveStudyLessons(studyLessons).filter(l => l.day === today && l.status === 'completed'),
+    [studyLessons, today],
+  );
+  const allRecordedLessonsCount = useMemo(() => liveStudyLessons(studyLessons).length, [studyLessons]);
   const studied = useMemo(() => new Set(studyLogs.map(l => l.date)), [studyLogs]);
   const week = weekStrip(studied, today);
   const stages = stageCounts(cards);
@@ -258,51 +288,189 @@ export const TodayView: React.FC<TodayViewProps> = ({
       )}
 
       <div className="grid gap-5 md:grid-cols-2">
-        <section className="md:col-span-2 bg-brand-500 text-white rounded-3xl p-5 md:p-7 flex flex-wrap items-center gap-5 md:gap-7">
-          <div className="flex-1 min-w-[15rem] flex flex-col gap-3">
-            <div>
+        <section className="md:col-span-2 bg-brand-500 text-white rounded-3xl p-5 md:p-7 flex flex-col gap-4">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex-1 min-w-[15rem]">
               <h2 className="text-xl md:text-2xl font-extrabold">
-                {dueCount > 0 ? 'مرور کارت‌ها' : 'مرور'}
+                {dueCount > 0 ? 'مرور هدفمند کارت‌ها' : 'مرور واژه‌ها'}
               </h2>
-              <p className="mt-1 text-sm md:text-base text-white/90">
+              <p className="mt-1 text-sm md:text-base text-white/90 leading-relaxed">
                 {dueCount > 0
-                  ? `${fa(dueCount)} کارت برای امروز${newDueCount > 0 ? `، ${fa(newDueCount)} تا تازه` : ''}.${heldBack > 0 ? ` ${fa(heldBack)} کارت تازهٔ دیگر برای روزهای بعد کنار ماند (سقف روزانه در تنظیمات).` : ''}`
-                  : heldBack > 0 ? `کارت‌های امروز تمام شد. ${fa(heldBack)} کارت تازه برای روزهای بعد مانده؛ اگر وقت داری چندتایش را همین حالا شروع کن.`
-                  : 'کارت موعدداری نمانده. با مرور آزاد یا یک بخش تازه از متن ادامه بده.'}
+                  ? `${fa(dueCount)} واژه در این نوبت${newDueCount > 0 ? ` (${fa(newDueCount)} تازه)` : ''}${
+                      remainingDueCount > 0
+                        ? ` · از مجموع ${fa(totalDueCount)} کارت موعددار امروز (${fa(remainingDueCount)} واژه برای نوبت بعدی می‌ماند)`
+                        : ''
+                    }.${heldBack > 0 ? ` ${fa(heldBack)} کارت تازه هم طبق سقف روزانه برای فردا کنار گذاشته شد.` : ''}`
+                  : heldBack > 0
+                    ? `نوبت‌های امروز تمام شد. ${fa(heldBack)} کارت تازه برای روزهای بعد مانده؛ اگر وقت داری چندتایش را شروع کن.`
+                    : 'کارت موعدداری نمانده. می‌توانی جلسهٔ آموزشی زمان‌بندی‌شده بسازی یا یک بخش کتاب بخوانی.'}
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
-              {dueCount > 0 ? (
-                <button type="button" onClick={() => onStartReview('auto')}
-                  className="inline-flex items-center gap-2.5 min-h-[52px] px-6 rounded-2xl bg-white text-ink font-extrabold text-lg hover:bg-brand-50">
-                  شروع مرور
-                  <span className="rounded-full bg-brand-100 text-brand-700 text-sm px-2.5 py-0.5">{fa(dueCount)} کارت</span>
-                  <Kbd className="text-ink-muted">Space</Kbd>
-                </button>
-              ) : heldBack > 0 && onMoreNew ? (
-                // Today's allowance is used up and nothing else is due: the
-                // cards kept for later can still be started by choice.
-                <button type="button" onClick={onMoreNew}
-                  className="inline-flex items-center min-h-[52px] px-6 rounded-2xl bg-white text-ink font-extrabold text-lg hover:bg-brand-50">
-                  {fa(Math.min(10, heldBack))} کارت تازهٔ دیگر
-                </button>
-              ) : (
-                <button type="button" onClick={onOpenSetup} disabled={totalWords === 0}
-                  className="inline-flex items-center min-h-[52px] px-6 rounded-2xl bg-white text-ink font-extrabold text-lg hover:bg-brand-50 disabled:opacity-50">
-                  مرور آزاد
-                </button>
-              )}
-              <button type="button" onClick={() => onStartReview('flip')} disabled={dueCount === 0} title="فقط برگرداندن کارت‌ها"
-                className="min-h-[52px] px-4 rounded-2xl bg-white/15 hover:bg-white/25 font-bold disabled:opacity-40">برگرداندن</button>
-              <button type="button" onClick={() => onStartReview('cloze')} disabled={dueCount === 0} title="واژه در جملهٔ کتاب جا افتاده؛ بنویسش"
-                className="min-h-[52px] px-4 rounded-2xl bg-white/15 hover:bg-white/25 font-bold disabled:opacity-40">جای خالی</button>
-              <button type="button" onClick={() => onNavigate('PRACTICE')} disabled={totalWords === 0}
-                className="min-h-[52px] px-4 rounded-2xl bg-white/15 hover:bg-white/25 font-bold disabled:opacity-40">آزمون چهارگزینه‌ای</button>
-              <button type="button" onClick={onOpenSetup} disabled={totalWords === 0}
-                className="min-h-[52px] px-4 rounded-2xl bg-white/15 hover:bg-white/25 font-bold disabled:opacity-40">انتخاب دسته</button>
-            </div>
+            {onChangeReviewBatchSize && (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs text-white/80">اندازهٔ هر نوبت مرور</span>
+                <div className="inline-flex items-center gap-1 p-1 rounded-2xl bg-black/15">
+                  {REVIEW_BATCH_OPTIONS.map(size => (
+                    <button
+                      key={size}
+                      type="button"
+                      onClick={() => onChangeReviewBatchSize(size)}
+                      className={`min-h-[36px] px-3 rounded-xl text-xs font-bold transition-colors whitespace-nowrap tabular-nums ${
+                        reviewBatchSize === size
+                          ? 'bg-white text-ink shadow-sm'
+                          : 'text-white/85 hover:bg-white/15'
+                      }`}
+                    >
+                      {fa(size)} واژه
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {dueCount > 0 ? (
+              <button
+                type="button"
+                onClick={() => onStartReview('auto')}
+                className="inline-flex items-center gap-2.5 min-h-[52px] px-6 rounded-2xl bg-white text-ink font-extrabold text-lg hover:bg-brand-50 whitespace-nowrap"
+              >
+                <span>شروع مرور ({fa(dueCount)} واژه)</span>
+                <Kbd className="text-ink-muted">Space</Kbd>
+              </button>
+            ) : heldBack > 0 && onMoreNew ? (
+              <button
+                type="button"
+                onClick={onMoreNew}
+                className="inline-flex items-center min-h-[52px] px-6 rounded-2xl bg-white text-ink font-extrabold text-lg hover:bg-brand-50 whitespace-nowrap"
+              >
+                {fa(Math.min(10, heldBack))} کارت تازهٔ دیگر
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onOpenSetup}
+                disabled={totalWords === 0}
+                className="inline-flex items-center min-h-[52px] px-6 rounded-2xl bg-white text-ink font-extrabold text-lg hover:bg-brand-50 disabled:opacity-50 whitespace-nowrap"
+              >
+                مرور با انتخاب تعداد
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onStartReview('flip')}
+              disabled={dueCount === 0}
+              title="فقط برگرداندن کارت‌ها"
+              className="min-h-[52px] px-4 rounded-2xl bg-white/15 hover:bg-white/25 font-bold disabled:opacity-40 whitespace-nowrap"
+            >
+              برگرداندن
+            </button>
+            <button
+              type="button"
+              onClick={() => onStartReview('cloze')}
+              disabled={dueCount === 0}
+              title="واژه در جملهٔ کتاب جا افتاده؛ بنویسش"
+              className="min-h-[52px] px-4 rounded-2xl bg-white/15 hover:bg-white/25 font-bold disabled:opacity-40 whitespace-nowrap"
+            >
+              جای خالی
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate('PRACTICE')}
+              disabled={totalWords === 0}
+              className="min-h-[52px] px-4 rounded-2xl bg-white/15 hover:bg-white/25 font-bold disabled:opacity-40 whitespace-nowrap"
+            >
+              آزمون چهارگزینه‌ای
+            </button>
+            <button
+              type="button"
+              onClick={onOpenSetup}
+              disabled={totalWords === 0}
+              className="min-h-[52px] px-4 rounded-2xl bg-white/15 hover:bg-white/25 font-bold disabled:opacity-40 whitespace-nowrap"
+            >
+              تنظیم تعداد و دسته
+            </button>
           </div>
         </section>
+
+        {totalWords > 0 && onOpenLesson && (
+          <section
+            aria-label="جلسهٔ آموزشی زمان‌بندی‌شده"
+            className="md:col-span-2 bg-white dark:bg-slate-800 rounded-3xl p-5 md:p-6 border border-stone-200/80 dark:border-slate-700/80 flex flex-col gap-4"
+          >
+            <div className="flex flex-wrap items-baseline justify-between gap-3">
+              <div>
+                <h2 className="text-lg md:text-xl font-extrabold text-ink dark:text-white">
+                  جلسهٔ آموزشی روزانه (مرور + آزمون + تثبیت)
+                </h2>
+                <p className="text-sm text-ink-muted dark:text-slate-400 mt-1">
+                  بر اساس واژه‌های ثبت‌شدهٔ خودت یک جلسهٔ ۳۰، ۴۵ یا ۶۰ دقیقه‌ای بساز؛ در تاریخ امروز ثبت می‌شود و هر زمان قابل مرور دوباره است.
+                </p>
+              </div>
+              {allRecordedLessonsCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => onOpenLesson()}
+                  className="text-sm font-bold text-brand-600 dark:text-brand-300 hover:underline whitespace-nowrap tabular-nums"
+                >
+                  آرشیو جلسه‌ها ({fa(allRecordedLessonsCount)})
+                </button>
+              )}
+            </div>
+
+            {openLessonToday && (
+              <div className="rounded-2xl bg-brand-50 dark:bg-brand-900/30 border border-brand-200/70 dark:border-brand-800/60 p-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-bold text-ink dark:text-white">
+                    {openLessonToday.titleFa} در حال انجام است
+                  </p>
+                  <p className="text-xs text-ink-muted dark:text-slate-300 mt-0.5 tabular-nums">
+                    گام {fa(openLessonToday.currentStageIndex + 1)} از {fa(openLessonToday.stages.length)} · {fa(openLessonToday.cardIds.length)} واژه
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onOpenLesson()}
+                  className="min-h-[44px] px-5 rounded-xl bg-brand-500 hover:bg-brand-600 text-white text-sm font-bold whitespace-nowrap"
+                >
+                  ادامهٔ جلسهٔ امروز
+                </button>
+              </div>
+            )}
+
+            {!openLessonToday && completedLessonsToday.length > 0 && (
+              <p className="text-xs text-emerald-700 dark:text-emerald-300 font-bold tabular-nums">
+                ✓ امروز {fa(completedLessonsToday.length)} جلسهٔ آموزشی تکمیل و ثبت شده است · می‌توانی دوباره مرورش کنی یا جلسهٔ تازه‌ای بسازی.
+              </p>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {LESSON_DURATIONS.map(dur => {
+                const bp = LESSON_BLUEPRINTS[dur];
+                return (
+                  <button
+                    key={dur}
+                    type="button"
+                    onClick={() => onOpenLesson(dur)}
+                    className="text-right rounded-2xl p-4 bg-stone-50 hover:bg-brand-50/70 dark:bg-slate-900/60 dark:hover:bg-slate-700/70 border border-stone-200/80 dark:border-slate-700 hover:border-brand-400 transition-colors flex flex-col gap-1.5 min-h-[88px]"
+                  >
+                    <span className="flex items-baseline justify-between gap-2">
+                      <span className="text-base font-extrabold text-ink dark:text-white whitespace-nowrap tabular-nums">
+                        {fa(dur)} دقیقه
+                      </span>
+                      <span className="text-xs text-brand-600 dark:text-brand-300 font-bold whitespace-nowrap tabular-nums">
+                        {fa(bp.wordCount)} واژه
+                      </span>
+                    </span>
+                    <span className="text-xs text-ink-muted dark:text-slate-400 leading-relaxed">
+                      {bp.stageSummaryFa}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        )}
 
         <Card>
           <div className="flex justify-between items-center">
