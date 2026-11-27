@@ -21,6 +21,14 @@ export interface Piece {
 // is cut, so no piece is too long for the device voice.
 export const LONGEST_SENTENCE = 40;
 
+// Shared AI speech piece sizing across Reader and Driving Mode so audio cached
+// in one screen is reused verbatim in the other without paying twice.
+export const AI_PIECE_WORDS = 90;
+export const AI_FIRST_PIECE_WORDS = 35;
+
+export const sectionPiecesForVoice = (section: ReaderSection, voice: ReadAloudVoice): Piece[] =>
+  voice === 'ai' ? piecesOf(section, AI_PIECE_WORDS, AI_FIRST_PIECE_WORDS) : piecesOf(section);
+
 // Whole sentences of one paragraph, up to `maxWords` a piece. The first piece
 // can be shorter, so the first AI audio is ready sooner. maxWords 0: one
 // sentence a piece. A sentence longer than that (or LONGEST_SENTENCE with

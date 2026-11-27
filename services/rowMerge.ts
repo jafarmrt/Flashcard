@@ -22,6 +22,13 @@ export const mergeRow = (table: string, cloud: Row | undefined, client: Row): Ro
     const done = new Set<number>([...(cloud.completed || []), ...(client.completed || [])]);
     merged.completed = Array.from(done).sort((a, b) => a - b);
   }
-  if (table === 'sources' && (cloud.reading || client.reading)) merged.reading = mergeReading(cloud.reading, client.reading);
+  if (table === 'sources') {
+    if (cloud.reading || client.reading) merged.reading = mergeReading(cloud.reading, client.reading);
+    if (cloud.audioPosition || client.audioPosition) {
+      const ca = cloud.audioPosition;
+      const cla = client.audioPosition;
+      merged.audioPosition = !ca ? cla : !cla ? ca : time(cla.updatedAt) >= time(ca.updatedAt) ? cla : ca;
+    }
+  }
   return merged;
 };

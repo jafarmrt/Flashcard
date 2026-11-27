@@ -11,7 +11,7 @@
 // under a new id (references to it follow): a deleted row stays deleted
 // wherever it is synced, so the old id could not come back.
 
-import type { Chapter, ChapterText, Deck, Flashcard, KnownWord, Occurrence, PracticeAnswer, Source, SpeechAttempt, StudyLog, TextNote } from '../types';
+import type { Chapter, ChapterText, Deck, Flashcard, KnownWord, Occurrence, PracticeAnswer, SavedThemeExercise, Source, SpeechAttempt, StudyLog, TextNote } from '../types';
 import { SYNC_TABLES, type SyncTable } from './syncClient';
 import { studyLogKey } from './syncState';
 
@@ -29,6 +29,7 @@ export interface BackupData {
   speechAttempts: SpeechAttempt[];
   notes: TextNote[];
   practice: PracticeAnswer[];
+  themeExercises?: SavedThemeExercise[];
   studyHistory: StudyLog[];
   chapterTexts: ChapterText[];
 }
@@ -61,6 +62,7 @@ export const makeBackup = (local: BackupData, version: string, now: Date = new D
       speechAttempts: alive(local.speechAttempts),
       notes: alive(local.notes),
       practice: alive(local.practice || []),
+      themeExercises: alive(local.themeExercises || []),
       studyHistory: local.studyHistory.map(({ id: _deviceId, ...log }) => log),
       chapterTexts: local.chapterTexts.map(({ uploaded: _u, ...t }) => t),
     },
@@ -88,6 +90,7 @@ export const readBackup = (text: string): Backup => {
     data: {
       decks: rows(d.decks), cards: rows(d.cards), sources: rows(d.sources), chapters: rows(d.chapters),
       occurrences: rows(d.occurrences), knownWords: rows(d.knownWords), speechAttempts: rows(d.speechAttempts), notes: rows(d.notes), practice: rows(d.practice),
+      themeExercises: rows(d.themeExercises),
       studyHistory: list(d.studyHistory).filter(l => typeof l.cardId === 'string' && typeof l.date === 'string'),
       chapterTexts: rows(d.chapterTexts).filter(t => Array.isArray(t.chunks)),
     },
@@ -121,8 +124,8 @@ export const planRestore = (backup: Backup, local: BackupData, newId: () => stri
 
   // Which rows come back, and under which id.
   for (const table of SYNC_TABLES) {
-    const here = new Map((local[table] as Row[]).map(r => [r.id, r]));
-    for (const row of backup.data[table] as Row[]) {
+    const here = new Map(((local[table] || []) as Row[]).map(r => [r.id, r]));
+    for (const row of (backup.data[table] || []) as Row[]) {
       if (row.isDeleted) continue;
       const mine = here.get(row.id);
       if (mine && !mine.isDeleted) continue;
@@ -141,8 +144,8 @@ export const planRestore = (backup: Backup, local: BackupData, newId: () => stri
   const moved = (r: Row) => [['deckId', 'decks'], ['cardId', 'cards'], ['sourceId', 'sources'], ['chapterId', 'chapters']]
     .some(([field, table]) => typeof r[field] === 'string' && remap[table as SyncTable].has(r[field]));
   for (const table of SYNC_TABLES) {
-    const inFile = new Map((backup.data[table] as Row[]).map(r => [r.id, r]));
-    for (const mine of local[table] as Row[]) {
+    const inFile = new Map(((backup.data[table] || []) as Row[]).map(r => [r.id, r]));
+    for (const mine of (local[table] || []) as Row[]) {
       if (mine.isDeleted || !inFile.has(mine.id) || taken[table].some(r => r.id === mine.id)) continue;
       const fileRow = inFile.get(mine.id)!;
       const newerChapterEdit = table === 'chapters' && typeof fileRow.textEditedAt === 'string' && (mine.textEditedAt || '') < fileRow.textEditedAt;
@@ -165,6 +168,8 @@ export const planRestore = (backup: Backup, local: BackupData, newId: () => stri
       if ('sourceId' in r) out.sourceId = to('sources', r.sourceId);
       if ('chapterId' in r) out.chapterId = to('chapters', r.chapterId);
       if (table === 'sources' && r.position?.chapterId) out.position = { ...r.position, chapterId: to('chapters', r.position.chapterId) };
+      if (table === 'sources' && r.audioPosition?.chapterId) out.audioPosition = { ...r.audioPosition, chapterId: to('chapters', r.audioPosition.chapterId) };
+      if (table === 'themeExercises' && Array.isArray(r.cardIds)) out.cardIds = r.cardIds.map((id: string) => to('cards', id) || id);
       return out;
     });
   }

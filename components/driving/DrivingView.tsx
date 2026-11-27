@@ -13,6 +13,7 @@ import type {
 } from '../../types';
 import {
   DRIVE_NOTE_BY,
+  bookAudioOverview,
   buildCardAudioScript,
   canSpeakPersianInDrive,
   displayDeckName,
@@ -26,8 +27,16 @@ import {
 import { placesByCard } from '../../services/library';
 import { newNote } from '../../services/notes';
 import { readerSection } from '../../services/readerText';
-import { piecesOf, type Piece, type ReadAloudVoice } from '../../services/readAloud';
-import { aiSpeech, speechModel, speechProvider, speechVoice } from '../../services/aiSpeech';
+import { sectionPiecesForVoice, type Piece, type ReadAloudVoice } from '../../services/readAloud';
+import {
+  aiSpeechWithMeta,
+  countCachedSpeechForSettings,
+  prefetchSpeechTexts,
+  speechModel,
+  speechProvider,
+  speechVoice,
+} from '../../services/aiSpeech';
+import { speechCacheSize } from '../../services/speechCache';
 import { hasPersianDeviceVoice, isSpeechSupported, speakText, stopSpeech } from '../../services/ttsService';
 import { cardHasTheme, themeSummaries } from '../../services/wordThemes';
 import { DriveBookmarksTray } from './DriveBookmarksTray';
@@ -63,6 +72,12 @@ export interface DrivingViewProps {
     chunk: number,
     card: ExtractedWordCard,
   ) => Promise<number>;
+  onSaveAudioPosition?: (
+    sourceId: string,
+    chapterId: string,
+    chunk: number,
+    pieceIndex: number,
+  ) => Promise<void> | void;
   onOpenBookChunk: (sourceId: string, chapterId: string, chunk: number) => void;
   onStudyCards: (cards: Flashcard[], title: string) => void;
   onExit: () => void;
@@ -94,6 +109,7 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
   onSaveNote,
   onDeleteNote,
   onSaveReaderCard,
+  onSaveAudioPosition,
   onOpenBookChunk,
   onStudyCards,
   onExit,
@@ -163,11 +179,174 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
     return liveCards.slice(0, 40);
   }, [cardPoolKey, todayQueue, liveCards]);
 
+  const selectedSource = useMemo(
+    () => liveSources.find(s => s.id === selectedSourceId) || liveSources[0],
+    [liveSources, selectedSourceId],
+  );
+
+  const bookOverview = useMemo(
+    () => (selectedSource ? bookAudioOverview(selectedSource.id, chapters) : null),
+    [selectedSource, chapters],
+  );
+
+  const savedSpot = useMemo(
+    () => (selectedSource ? resolveDriveStartPosition(selectedSource, chapters) : null),
+    [selectedSource, chapters],
+  );
+
+  // Setup target chapter, section, and resume-from-sentence selection
+  const [targetChapterId, setTargetChapterId] = useState<string>(
+    () => savedSpot?.chapter.id || '',
+  );
+  const [targetChunk, setTargetChunk] = useState<number>(() => savedSpot?.chunk || 0);
+  const [resumeFromPiece, setResumeFromPiece] = useState<boolean>(true);
+  const prevSourceIdRef = useRef<string | undefined>(selectedSource?.id);
+
+  // Sync setup picker to the book's saved listening spot when switching books
+  // or when the selected chapter no longer belongs to this book.
+  useEffect(() => {
+    if (!selectedSource || !savedSpot) return;
+    const bookChapters = orderedBookChapters(selectedSource.id, chapters);
+    const chapterStillValid = bookChapters.some(c => c.id === targetChapterId);
+    if (prevSourceIdRef.current !== selectedSource.id || !chapterStillValid) {
+      prevSourceIdRef.current = selectedSource.id;
+      setTargetChapterId(savedSpot.chapter.id);
+      setTargetChunk(savedSpot.chunk);
+      setResumeFromPiece(true);
+    }
+  }, [selectedSource, savedSpot, chapters, targetChapterId]);
+
+  const targetChapter = useMemo(() => {
+    if (!selectedSource) return undefined;
+    const list = orderedBookChapters(selectedSource.id, chapters);
+    return list.find(c => c.id === targetChapterId) || savedSpot?.chapter || list[0];
+  }, [selectedSource, chapters, targetChapterId, savedSpot]);
+
+  const isAtSavedSpot = Boolean(
+    savedSpot &&
+      targetChapter &&
+      targetChapter.id === savedSpot.chapter.id &&
+      targetChunk === savedSpot.chunk,
+  );
+
+  const effectiveStartPiece =
+    isAtSavedSpot && resumeFromPiece ? Math.max(0, savedSpot?.pieceIndex || 0) : 0;
+
+  // AI Speech Cache inspection & pre-save state for the selected section/chapter
+  const [sectionCacheStats, setSectionCacheStats] = useState<{
+    cached: number;
+    total: number;
+  } | null>(null);
+  const [totalCachedPieces, setTotalCachedPieces] = useState<number>(0);
+  const [prefetchProgress, setPrefetchProgress] = useState<{
+    done: number;
+    total: number;
+    label: string;
+  } | null>(null);
+  const [prefetchFeedback, setPrefetchFeedback] = useState<string | null>(null);
+  const prefetchAbortRef = useRef<AbortController | null>(null);
+  const [cacheRefreshTick, setCacheRefreshTick] = useState(0);
+
+  const activeSpeechModel = speechModel(settings);
+  const activeSpeechProvider = speechProvider(settings);
+  const activeSpeechVoice = speechVoice(settings);
+
+  useEffect(() => {
+    if (voice !== 'ai' || mode !== 'book' || !targetChapter) {
+      setSectionCacheStats(null);
+      return;
+    }
+    let alive = true;
+    (async () => {
+      try {
+        const [chapterText, deviceCache] = await Promise.all([
+          loadChapterText(targetChapter.id),
+          speechCacheSize(),
+        ]);
+        if (!alive) return;
+        setTotalCachedPieces(deviceCache.pieces);
+        const raw = chapterText.chunks[targetChunk] || '';
+        const pieces = sectionPiecesForVoice(readerSection(raw), 'ai').map(p => p.text);
+        const cached = await countCachedSpeechForSettings(pieces, settings);
+        if (!alive) return;
+        setSectionCacheStats({ cached, total: pieces.length });
+      } catch {
+        if (alive) setSectionCacheStats(null);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [
+    voice,
+    mode,
+    targetChapter,
+    targetChunk,
+    loadChapterText,
+    settings,
+    activeSpeechProvider,
+    activeSpeechModel,
+    activeSpeechVoice,
+    cacheRefreshTick,
+  ]);
+
+  const handlePrefetchAudio = async (scope: 'section' | 'chapter') => {
+    if (!targetChapter || prefetchProgress) return;
+    setPrefetchFeedback(null);
+    const controller = new AbortController();
+    prefetchAbortRef.current = controller;
+    try {
+      const chapterText = await loadChapterText(targetChapter.id);
+      const texts: string[] = [];
+      if (scope === 'section') {
+        const raw = chapterText.chunks[targetChunk] || '';
+        texts.push(...sectionPiecesForVoice(readerSection(raw), 'ai').map(p => p.text));
+      } else {
+        for (const raw of chapterText.chunks) {
+          texts.push(...sectionPiecesForVoice(readerSection(raw || ''), 'ai').map(p => p.text));
+        }
+      }
+      if (texts.length === 0) {
+        setPrefetchFeedback('متنی برای تولید صدا در این بخش نیست.');
+        return;
+      }
+      const label =
+        scope === 'section'
+          ? `بخش ${fa(targetChunk + 1)}`
+          : `فصل «${targetChapter.title}»`;
+      setPrefetchProgress({ done: 0, total: texts.length, label });
+      const res = await prefetchSpeechTexts(
+        texts,
+        settings,
+        (done, total) => setPrefetchProgress({ done, total, label }),
+        controller.signal,
+      );
+      setCacheRefreshTick(t => t + 1);
+      if (!controller.signal.aborted) {
+        setPrefetchFeedback(
+          `صدای ${fa(res.saved)} تکه در برنامه ذخیره شد؛ پخش‌های بعدی بدون اینترنت و بدون هزینهٔ مجدد انجام می‌شود.`,
+        );
+      }
+    } catch (err) {
+      const msg = (err as Error)?.message || '';
+      setPrefetchFeedback(
+        msg
+          ? `ذخیرهٔ صدای هوش مصنوعی ناتمام ماند: ${msg}`
+          : 'ذخیرهٔ صدای هوش مصنوعی ناتمام ماند؛ تنظیمات کلید صدا را بررسی کن.',
+      );
+    } finally {
+      prefetchAbortRef.current = null;
+      setPrefetchProgress(null);
+    }
+  };
+
   // Active session state
   const [active, setActive] = useState(false);
   const [paused, setPaused] = useState(false);
+  const [chapterDrawerOpen, setChapterDrawerOpen] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [flashSaved, setFlashSaved] = useState<string | null>(null);
+  const [currentPieceFromCache, setCurrentPieceFromCache] = useState(false);
 
   // Book playback state
   const [bookChapterId, setBookChapterId] = useState<string>('');
@@ -186,11 +365,6 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
   const objectUrlsRef = useRef<string[]>([]);
   const chunkStartedAtRef = useRef<number>(Date.now());
   const wakeLockRef = useRef<any>(null);
-
-  const selectedSource = useMemo(
-    () => liveSources.find(s => s.id === selectedSourceId) || liveSources[0],
-    [liveSources, selectedSourceId],
-  );
 
   const activeChapter = useMemo(
     () => chapters.find(c => c.id === bookChapterId),
@@ -221,6 +395,25 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
       }
     }
   }, []);
+
+  // Persist exact audiobook listening spot (chapter, section, sentence) whenever it moves
+  useEffect(() => {
+    if (!active || mode !== 'book' || loadingBook) return;
+    if (!selectedSource || !bookChapterId) return;
+    const clampedPiece =
+      bookPieces.length > 0 ? Math.max(0, Math.min(pieceIndex, bookPieces.length - 1)) : 0;
+    void onSaveAudioPosition?.(selectedSource.id, bookChapterId, bookChunk, clampedPiece);
+  }, [
+    active,
+    mode,
+    loadingBook,
+    selectedSource,
+    bookChapterId,
+    bookChunk,
+    pieceIndex,
+    bookPieces.length,
+    onSaveAudioPosition,
+  ]);
 
   // Screen Wake Lock while actively playing
   useEffect(() => {
@@ -261,6 +454,7 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
 
   useEffect(() => {
     return () => {
+      prefetchAbortRef.current?.abort();
       haltAudio();
       revokeUrls();
     };
@@ -287,7 +481,7 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
   const playUtterance = useCallback(
     async (
       text: string,
-      opts: { lang: 'en-US' | 'fa-IR'; audioSrc?: string; slow?: boolean },
+      opts: { lang: 'en-US' | 'fa-IR'; audioSrc?: string; slow?: boolean; prefetchNext?: string },
       expectedRun: number,
     ): Promise<boolean> => {
       if (runIdRef.current !== expectedRun || !text.trim()) return false;
@@ -295,6 +489,7 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
 
       // Prefer recorded dictionary audio for single English headwords in device mode
       if (opts.audioSrc && voice === 'device' && opts.lang === 'en-US') {
+        setCurrentPieceFromCache(false);
         const played = await new Promise<boolean>(resolve => {
           const audio = ensureAudioElement();
           audio.onended = () => resolve(true);
@@ -306,11 +501,17 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
         if (played || runIdRef.current !== expectedRun) return runIdRef.current === expectedRun;
       }
 
-      // AI voice path (Gemini speaks both English & Persian; OpenRouter speaks English)
+      // AI voice path (Gemini speaks both English & Persian; OpenRouter speaks English).
+      // `aiSpeechWithMeta` persists every generated clip in IndexedDB (`LinguaSpeechCache`)
+      // so replaying a section or card never calls the API twice.
       if (voice === 'ai' && (opts.lang === 'en-US' || speechProvider(settings) === 'gemini')) {
         try {
-          const blob = await aiSpeech(text, settings);
+          const { blob, fromCache } = await aiSpeechWithMeta(text, settings);
           if (runIdRef.current !== expectedRun) return false;
+          setCurrentPieceFromCache(fromCache);
+          if (opts.prefetchNext?.trim()) {
+            aiSpeechWithMeta(opts.prefetchNext, settings).catch(() => undefined);
+          }
           const url = URL.createObjectURL(blob);
           objectUrlsRef.current.push(url);
           const ok = await new Promise<boolean>(resolve => {
@@ -323,14 +524,15 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
           });
           if (ok) return runIdRef.current === expectedRun;
         } catch {
+          setCurrentPieceFromCache(false);
           // Fall through to device speech synthesis
         }
+      } else {
+        setCurrentPieceFromCache(false);
       }
 
       if (runIdRef.current !== expectedRun) return false;
       if (!isSpeechSupported()) {
-        // Headless or unsupported speech environment: brief readable dwell so
-        // progression remains deterministic without crashing.
         await new Promise<void>(r => setTimeout(r, 1200));
         return runIdRef.current === expectedRun;
       }
@@ -353,7 +555,7 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
     [ensureAudioElement, rate, settings, voice],
   );
 
-  // Loads a section's pieces for continuous book mode
+  // Loads a section's pieces using the exact same piece boundaries as ChunkReaderView
   const loadSectionPieces = useCallback(
     async (chapterId: string, chunk: number): Promise<Piece[]> => {
       setLoadingBook(true);
@@ -361,13 +563,41 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
         const chapterText = await loadChapterText(chapterId);
         const raw = chapterText.chunks[chunk] || '';
         const parsed = readerSection(raw);
-        const maxWords = voice === 'ai' ? 45 : 0;
-        return piecesOf(parsed, maxWords, voice === 'ai' ? 25 : 0);
+        return sectionPiecesForVoice(parsed, voice);
       } finally {
         setLoadingBook(false);
       }
     },
     [loadChapterText, voice],
+  );
+
+  // Jumps directly to any chosen chapter & section while inside the active player
+  const jumpToChapterChunk = useCallback(
+    async (chapterId: string, chunk: number, startPiece = 0) => {
+      haltAudio();
+      setStatusMessage(null);
+      setChapterDrawerOpen(false);
+      chunkStartedAtRef.current = Date.now();
+      setBookChapterId(chapterId);
+      setBookChunk(chunk);
+      setTargetChapterId(chapterId);
+      setTargetChunk(chunk);
+      try {
+        const pieces = await loadSectionPieces(chapterId, chunk);
+        const clamped = pieces.length > 0 ? Math.max(0, Math.min(startPiece, pieces.length - 1)) : 0;
+        setBookPieces(pieces);
+        setPieceIndex(clamped);
+        if (selectedSource) {
+          void onSaveAudioPosition?.(selectedSource.id, chapterId, chunk, clamped);
+        }
+        unlockAudio();
+        setPaused(false);
+      } catch {
+        setPaused(true);
+        setStatusMessage('متن این بخش در دسترس نیست. اتصال را بررسی کن.');
+      }
+    },
+    [haltAudio, loadSectionPieces, onSaveAudioPosition, selectedSource, unlockAudio],
   );
 
   // Advances to next section/chapter when current section ends
@@ -385,7 +615,9 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
       if (!nextPos) {
         haltAudio();
         setBookPieces(pieces => {
-          setPieceIndex(Math.max(0, pieces.length - 1));
+          const endIdx = Math.max(0, pieces.length - 1);
+          setPieceIndex(endIdx);
+          void onSaveAudioPosition?.(sourceId, chapterId, chunk, endIdx);
           return pieces;
         });
         setPaused(true);
@@ -395,11 +627,14 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
       chunkStartedAtRef.current = Date.now();
       setBookChapterId(nextPos.chapter.id);
       setBookChunk(nextPos.chunk);
+      setTargetChapterId(nextPos.chapter.id);
+      setTargetChunk(nextPos.chunk);
       setPieceIndex(0);
+      void onSaveAudioPosition?.(sourceId, nextPos.chapter.id, nextPos.chunk, 0);
       const nextPieces = await loadSectionPieces(nextPos.chapter.id, nextPos.chunk);
       setBookPieces(nextPieces);
     },
-    [chapters, haltAudio, loadSectionPieces, onCompleteChunk],
+    [chapters, haltAudio, loadSectionPieces, onCompleteChunk, onSaveAudioPosition],
   );
 
   // Continuous Book Playback Effect
@@ -408,22 +643,26 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
     if (!selectedSource || !bookChapterId) return;
 
     if (bookPieces.length === 0) {
-      // Empty section: skip straight to the next one
       const timer = setTimeout(() => {
-        advanceBookSection(selectedSource.id, bookChapterId, bookChunk, true);
+        void advanceBookSection(selectedSource.id, bookChapterId, bookChunk, true);
       }, 300);
       return () => clearTimeout(timer);
     }
 
     if (pieceIndex >= bookPieces.length) {
-      advanceBookSection(selectedSource.id, bookChapterId, bookChunk, true);
+      void advanceBookSection(selectedSource.id, bookChapterId, bookChunk, true);
       return;
     }
 
     const expectedRun = ++runIdRef.current;
     const currentPiece = bookPieces[pieceIndex];
+    const nextPieceText = bookPieces[pieceIndex + 1]?.text;
 
-    playUtterance(currentPiece.text, { lang: 'en-US' }, expectedRun).then(ok => {
+    playUtterance(
+      currentPiece.text,
+      { lang: 'en-US', prefetchNext: nextPieceText },
+      expectedRun,
+    ).then(ok => {
       if (!ok || runIdRef.current !== expectedRun) return;
       setPieceIndex(i => i + 1);
     });
@@ -495,20 +734,25 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
 
   const startSession = async () => {
     setStatusMessage(null);
+    prefetchAbortRef.current?.abort();
     unlockAudio();
     if (mode === 'book') {
-      if (!selectedSource) return;
-      const startPos = resolveDriveStartPosition(selectedSource, chapters);
-      if (!startPos) return;
-      setBookChapterId(startPos.chapter.id);
-      setBookChunk(startPos.chunk);
-      setPieceIndex(0);
+      if (!selectedSource || !targetChapter) return;
+      const startChapterId = targetChapter.id;
+      const startChunk = Math.max(0, Math.min(targetChunk, Math.max(1, targetChapter.chunkCount) - 1));
+      setBookChapterId(startChapterId);
+      setBookChunk(startChunk);
+      setChapterDrawerOpen(false);
       chunkStartedAtRef.current = Date.now();
       setActive(true);
       setPaused(false);
       try {
-        const pieces = await loadSectionPieces(startPos.chapter.id, startPos.chunk);
+        const pieces = await loadSectionPieces(startChapterId, startChunk);
+        const clampedPiece =
+          pieces.length > 0 ? Math.max(0, Math.min(effectiveStartPiece, pieces.length - 1)) : 0;
         setBookPieces(pieces);
+        setPieceIndex(clampedPiece);
+        void onSaveAudioPosition?.(selectedSource.id, startChapterId, startChunk, clampedPiece);
       } catch {
         setPaused(true);
         setStatusMessage('متن این بخش در دسترس نیست. اتصال را بررسی کن.');
@@ -544,6 +788,8 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
         if (prev) {
           setBookChapterId(prev.chapter.id);
           setBookChunk(prev.chunk);
+          setTargetChapterId(prev.chapter.id);
+          setTargetChunk(prev.chunk);
           const prevPieces = await loadSectionPieces(prev.chapter.id, prev.chunk);
           setBookPieces(prevPieces);
           setPieceIndex(Math.max(0, prevPieces.length - 1));
@@ -618,10 +864,10 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
         if (!paused) togglePlayPause();
       });
       ms.setActionHandler('previoustrack', () => {
-        handlePrevOrRepeat();
+        void handlePrevOrRepeat();
       });
       ms.setActionHandler('nexttrack', () => {
-        handleNext();
+        void handleNext();
       });
     } catch {
       // MediaSession partially supported
@@ -699,8 +945,18 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
   };
 
   const stopAndExitSession = () => {
+    if (mode === 'book' && selectedSource && bookChapterId) {
+      const clamped =
+        bookPieces.length > 0 ? Math.max(0, Math.min(pieceIndex, bookPieces.length - 1)) : 0;
+      void onSaveAudioPosition?.(selectedSource.id, bookChapterId, bookChunk, clamped);
+      setTargetChapterId(bookChapterId);
+      setTargetChunk(bookChunk);
+      setResumeFromPiece(true);
+    }
+    setCacheRefreshTick(t => t + 1);
     haltAudio();
     revokeUrls();
+    setChapterDrawerOpen(false);
     setActive(false);
     setPaused(false);
   };
@@ -708,7 +964,7 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
   const currentCard = activeCardQueue[cardIndex % Math.max(1, activeCardQueue.length)];
   const currentPiece = bookPieces[pieceIndex] || bookPieces[bookPieces.length - 1];
   const shownPieceNumber = bookPieces.length > 0 ? Math.min(pieceIndex + 1, bookPieces.length) : 0;
-  const speechCacheHint = `${speechProvider(settings)} · ${speechModel(settings)}${speechVoice(settings) ? ` · ${speechVoice(settings)}` : ''}`;
+  const speechCacheHint = `${activeSpeechProvider} · ${activeSpeechModel}${activeSpeechVoice ? ` · ${activeSpeechVoice}` : ''}`;
 
   // --- ACTIVE HANDS-FREE AUTOMOTIVE VIEW ---
   if (active) {
@@ -717,7 +973,7 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
         dir="rtl"
         className="min-h-screen bg-[#0B110F] text-slate-100 font-fa flex flex-col justify-between p-4 sm:p-6 lg:p-8 select-none"
       >
-        <div className="w-full max-w-4xl mx-auto flex items-center justify-between gap-4">
+        <div className="w-full max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-3">
           <button
             type="button"
             onClick={stopAndExitSession}
@@ -727,12 +983,109 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
             پایان حالت رانندگی
           </button>
 
-          <div className="flex items-center gap-2 text-xs text-slate-400 tabular-nums">
-            <span>{mode === 'book' ? 'پیوسته‌خوانی کتاب' : 'مرور شنیداری واژه‌ها'}</span>
-            <span aria-hidden="true">·</span>
-            <span>سرعت {fa(rate)}×</span>
+          <div className="flex items-center gap-3">
+            <div className="hidden sm:flex items-center gap-2 text-xs text-slate-400 tabular-nums">
+              <span>{mode === 'book' ? 'پیوسته‌خوانی کتاب' : 'مرور شنیداری واژه‌ها'}</span>
+              <span aria-hidden="true">·</span>
+              <span>سرعت {fa(rate)}×</span>
+              {voice === 'ai' && currentPieceFromCache && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span className="text-emerald-400">از حافظهٔ برنامه</span>
+                </>
+              )}
+            </div>
+
+            {mode === 'book' && bookOverview && bookOverview.chapters.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setChapterDrawerOpen(v => !v)}
+                aria-expanded={chapterDrawerOpen}
+                className="min-h-[48px] px-4 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-100 font-bold text-sm flex items-center gap-2 whitespace-nowrap"
+              >
+                <Icon.List size={18} />
+                <span>فصل و بخش</span>
+              </button>
+            )}
           </div>
         </div>
+
+        {/* In-Player Chapter & Section Switcher Sheet */}
+        {chapterDrawerOpen && mode === 'book' && bookOverview && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="انتخاب فصل و بخش در حال پخش"
+            className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-3 sm:p-6"
+            onClick={e => {
+              if (e.target === e.currentTarget) setChapterDrawerOpen(false);
+            }}
+          >
+            <div className="w-full max-w-2xl max-h-[82vh] overflow-y-auto rounded-3xl bg-slate-900 border border-slate-700 p-5 sm:p-6 flex flex-col gap-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-extrabold text-white">رفتن به فصل یا بخش دیگر</h2>
+                  <p className="text-xs text-slate-400 tabular-nums">
+                    در حال پخش: {activeChapter?.title} · بخش {fa(bookChunk + 1)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setChapterDrawerOpen(false)}
+                  aria-label="بستن فهرست فصل‌ها"
+                  className="min-h-[44px] min-w-[44px] rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center"
+                >
+                  <Icon.Close size={18} />
+                </button>
+              </div>
+
+              <div className="divide-y divide-slate-800">
+                {bookOverview.chapters.map(chSum => {
+                  const isCurrentChapter = chSum.chapter.id === bookChapterId;
+                  return (
+                    <div key={chSum.chapter.id} className="py-3.5 first:pt-1 last:pb-1 flex flex-col gap-2.5">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <h3 dir="auto" className="font-read text-sm sm:text-base font-bold text-slate-100">
+                          {bookOverview.chapters.length > 1 ? `فصل ${fa(chSum.orderNumber)}: ` : ''}
+                          {chSum.chapter.title}
+                        </h3>
+                        <span className="text-xs text-slate-400 tabular-nums shrink-0">
+                          {fa(chSum.completedSections)} از {fa(chSum.totalSections)} بخش
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {Array.from({ length: chSum.totalSections }, (_, idx) => {
+                          const isPlayingHere = isCurrentChapter && idx === bookChunk;
+                          const isDone = chSum.chapter.completed.includes(idx);
+                          return (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => {
+                                void jumpToChapterChunk(chSum.chapter.id, idx, 0);
+                              }}
+                              className={`min-h-[44px] px-3.5 rounded-xl text-xs font-bold tabular-nums transition-colors whitespace-nowrap ${
+                                isPlayingHere
+                                  ? 'bg-brand-600 text-white'
+                                  : isDone
+                                    ? 'bg-slate-800/90 border border-emerald-800/70 text-emerald-300 hover:bg-slate-800'
+                                    : 'bg-slate-950 border border-slate-800 text-slate-300 hover:border-slate-600'
+                              }`}
+                            >
+                              بخش {fa(idx + 1)}
+                              {isDone ? ' ✓' : ''}
+                              {isPlayingHere ? ' · در حال پخش' : ''}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Center Glanceable Display */}
         <main className="w-full max-w-4xl mx-auto my-auto py-6 flex flex-col items-center text-center gap-5">
@@ -825,7 +1178,9 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
           <div className="grid grid-cols-3 gap-3">
             <button
               type="button"
-              onClick={handlePrevOrRepeat}
+              onClick={() => {
+                void handlePrevOrRepeat();
+              }}
               aria-label="تکرار یا مورد قبلی"
               className="min-h-[88px] rounded-2xl bg-slate-900 hover:bg-slate-800 active:scale-[0.99] border border-slate-800 text-slate-100 font-extrabold text-base sm:text-lg flex flex-col items-center justify-center gap-1 transition-transform"
             >
@@ -844,7 +1199,9 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
 
             <button
               type="button"
-              onClick={handleNext}
+              onClick={() => {
+                void handleNext();
+              }}
               aria-label="مورد بعدی"
               className="min-h-[88px] rounded-2xl bg-slate-900 hover:bg-slate-800 active:scale-[0.99] border border-slate-800 text-slate-100 font-extrabold text-base sm:text-lg flex flex-col items-center justify-center gap-1 transition-transform"
             >
@@ -854,7 +1211,9 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
 
           <button
             type="button"
-            onClick={handleBookmarkNow}
+            onClick={() => {
+              void handleBookmarkNow();
+            }}
             className="w-full min-h-[104px] rounded-3xl bg-amber-500 hover:bg-amber-400 active:scale-[0.99] text-slate-950 font-extrabold text-xl sm:text-2xl flex items-center justify-center gap-3 transition-transform"
           >
             <Icon.Bookmark size={26} />
@@ -866,9 +1225,7 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
   }
 
   // --- SETUP & POST-DRIVE REVIEW VIEW ---
-  const startPreview = selectedSource
-    ? resolveDriveStartPosition(selectedSource, chapters)
-    : null;
+  const targetSectionCount = targetChapter ? Math.max(1, targetChapter.chunkCount) : 0;
 
   return (
     <div dir="rtl" className="min-h-screen bg-[#0B110F] text-slate-100 font-fa p-4 sm:p-6 lg:p-10">
@@ -891,7 +1248,7 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
         </header>
 
         <p className="text-sm text-slate-400 leading-relaxed max-w-2xl">
-          پخش بی‌نیاز از نگاه به صفحه، همراه با پشتیبانی از دکمه‌های روی فرمان خودرو و ثبت تک‌لمسی نشان برای بررسی سر فرصت بعد از توقف.
+          پخش بی‌نیاز از نگاه به صفحه، همراه با انتخاب فصل و بخش مثل کتاب صوتی، ادامه از همان جمله‌ای که شنیده‌ای و ثبت تک‌لمسی نشان برای بررسی بعد از توقف.
         </p>
 
         {/* Mode Selector */}
@@ -914,7 +1271,7 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
           >
             <span className="font-extrabold text-base">پیوسته‌خوانی کتاب</span>
             <span className="text-xs text-slate-400">
-              خوانش پیاپی بخش‌ها و فصل‌ها بدون نیاز به لمس صفحه
+              خوانش پیاپی بخش‌ها و فصل‌ها با امکان انتخاب هر فصل و بخش دلخواه
             </span>
           </button>
 
@@ -945,26 +1302,188 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
                 هنوز کتاب یا متنی در کتابخانه نیست. ابتدا یک کتاب یا مقاله به کتابخانه اضافه کن.
               </p>
             ) : (
-              <div className="flex flex-col gap-2">
-                <label htmlFor="drive-book-select" className="text-sm font-bold text-slate-200">
-                  انتخاب کتاب یا مقاله
-                </label>
-                <select
-                  id="drive-book-select"
-                  value={selectedSource?.id || ''}
-                  onChange={e => setSelectedSourceId(e.target.value)}
-                  className="min-h-[48px] px-4 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 text-sm"
-                >
-                  {liveSources.map(src => (
-                    <option key={src.id} value={src.id}>
-                      {src.title}
-                    </option>
-                  ))}
-                </select>
-                {startPreview && (
-                  <p className="text-xs text-slate-400">
-                    شروع از: <span dir="auto" className="font-read text-slate-200">{startPreview.chapter.title}</span> · بخش {fa(startPreview.chunk + 1)}
-                  </p>
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-2">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <label htmlFor="drive-book-select" className="text-sm font-bold text-slate-200">
+                      انتخاب کتاب یا مقاله
+                    </label>
+                    {bookOverview && (
+                      <span className="text-xs text-slate-400 tabular-nums">
+                        پیشرفت کتاب: {fa(bookOverview.completedSections)} از {fa(bookOverview.totalSections)} بخش تمام‌شده
+                      </span>
+                    )}
+                  </div>
+                  <select
+                    id="drive-book-select"
+                    value={selectedSource?.id || ''}
+                    onChange={e => setSelectedSourceId(e.target.value)}
+                    className="min-h-[48px] px-4 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 text-sm"
+                  >
+                    {liveSources.map(src => (
+                      <option key={src.id} value={src.id}>
+                        {src.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Saved Listening Spot Summary & Quick Jump Back */}
+                {savedSpot && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-300 pt-1">
+                    <p className="flex flex-wrap items-center gap-1.5 tabular-nums">
+                      <span className="text-slate-400">
+                        {savedSpot.sourceOfSpot === 'audio'
+                          ? 'آخرین جای شنیده‌شده:'
+                          : savedSpot.sourceOfSpot === 'reading'
+                            ? 'آخرین جای مطالعه:'
+                            : 'بخش پیشنهادی شروع:'}
+                      </span>
+                      <span dir="auto" className="font-read font-semibold text-emerald-300">
+                        {savedSpot.chapter.title}
+                      </span>
+                      <span aria-hidden="true">·</span>
+                      <span>بخش {fa(savedSpot.chunk + 1)}</span>
+                      {savedSpot.pieceIndex > 0 && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span>جملهٔ {fa(savedSpot.pieceIndex + 1)}</span>
+                        </>
+                      )}
+                    </p>
+                    {!isAtSavedSpot && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTargetChapterId(savedSpot.chapter.id);
+                          setTargetChunk(savedSpot.chunk);
+                          setResumeFromPiece(true);
+                        }}
+                        className="min-h-[36px] px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-emerald-300 transition-colors whitespace-nowrap"
+                      >
+                        برگشت به آخرین جای توقف
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Audiobook Chapter & Section Picker */}
+                {bookOverview && targetChapter && (
+                  <div className="flex flex-col gap-4 pt-3 border-t border-slate-800/80">
+                    {bookOverview.chapters.length > 1 && (
+                      <div className="flex flex-col gap-2">
+                        <label htmlFor="drive-chapter-select" className="text-sm font-bold text-slate-200">
+                          انتخاب فصل ({fa(bookOverview.chapters.length)} فصل)
+                        </label>
+                        <select
+                          id="drive-chapter-select"
+                          value={targetChapter.id}
+                          onChange={e => {
+                            const nextCh = bookOverview.chapters.find(
+                              c => c.chapter.id === e.target.value,
+                            )?.chapter;
+                            if (!nextCh) return;
+                            setTargetChapterId(nextCh.id);
+                            if (savedSpot && savedSpot.chapter.id === nextCh.id) {
+                              setTargetChunk(savedSpot.chunk);
+                              setResumeFromPiece(true);
+                            } else {
+                              const firstUnread = Array.from(
+                                { length: Math.max(1, nextCh.chunkCount) },
+                                (_, i) => i,
+                              ).find(i => !nextCh.completed.includes(i));
+                              setTargetChunk(firstUnread ?? 0);
+                              setResumeFromPiece(false);
+                            }
+                          }}
+                          className="min-h-[48px] px-4 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 text-sm"
+                        >
+                          {bookOverview.chapters.map(chSum => (
+                            <option key={chSum.chapter.id} value={chSum.chapter.id}>
+                              فصل {fa(chSum.orderNumber)}: {chSum.chapter.title} ({fa(chSum.completedSections)} از {fa(chSum.totalSections)} بخش{chSum.isComplete ? ' ✓' : ''})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <div className="flex flex-col gap-2">
+                      <div className="flex flex-wrap items-baseline justify-between gap-2">
+                        <span className="text-sm font-bold text-slate-200">
+                          انتخاب بخش برای شنیدن
+                        </span>
+                        <span className="text-xs text-slate-400 tabular-nums">
+                          شروع پخش از: <bdi dir="auto" className="font-read text-slate-200">{targetChapter.title}</bdi> · بخش {fa(targetChunk + 1)}
+                          {effectiveStartPiece > 0 ? ` · جملهٔ ${fa(effectiveStartPiece + 1)}` : ''}
+                        </span>
+                      </div>
+
+                      <div
+                        role="group"
+                        aria-label="بخش‌های فصل انتخاب‌شده"
+                        className="flex flex-wrap gap-2"
+                      >
+                        {Array.from({ length: targetSectionCount }, (_, idx) => {
+                          const isSelected = idx === targetChunk;
+                          const isDone = targetChapter.completed.includes(idx);
+                          const isSavedChunk =
+                            savedSpot?.chapter.id === targetChapter.id && savedSpot.chunk === idx;
+                          return (
+                            <button
+                              key={idx}
+                              type="button"
+                              aria-pressed={isSelected}
+                              onClick={() => {
+                                setTargetChunk(idx);
+                                setResumeFromPiece(Boolean(isSavedChunk));
+                              }}
+                              className={`min-h-[44px] px-3.5 rounded-xl text-xs font-bold tabular-nums transition-colors whitespace-nowrap ${
+                                isSelected
+                                  ? 'bg-brand-600 text-white border border-brand-400'
+                                  : isDone
+                                    ? 'bg-slate-950/90 border border-emerald-800/70 text-emerald-300 hover:border-emerald-600'
+                                    : isSavedChunk
+                                      ? 'bg-slate-950 border border-amber-600/70 text-amber-200 hover:border-amber-400'
+                                      : 'bg-slate-950 border border-slate-800 text-slate-300 hover:border-slate-600'
+                              }`}
+                            >
+                              بخش {fa(idx + 1)}
+                              {isDone ? ' ✓' : ''}
+                              {isSavedChunk && !isDone ? ' · ادامه' : ''}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {isAtSavedSpot && (savedSpot?.pieceIndex || 0) > 0 && (
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          <span className="text-xs text-slate-400">نقطهٔ شروع در این بخش:</span>
+                          <button
+                            type="button"
+                            onClick={() => setResumeFromPiece(true)}
+                            className={`min-h-[36px] px-3 rounded-lg text-xs font-bold tabular-nums transition-colors whitespace-nowrap ${
+                              resumeFromPiece
+                                ? 'bg-brand-600 text-white'
+                                : 'bg-slate-950 border border-slate-800 text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            ادامه از جملهٔ {fa((savedSpot?.pieceIndex || 0) + 1)}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setResumeFromPiece(false)}
+                            className={`min-h-[36px] px-3 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
+                              !resumeFromPiece
+                                ? 'bg-brand-600 text-white'
+                                : 'bg-slate-950 border border-slate-800 text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            از ابتدای بخش
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
             )
@@ -1006,7 +1525,7 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
           )}
 
           {/* Audio Settings Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-slate-800">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-3 border-t border-slate-800">
             <div className="flex flex-col gap-2">
               <span className="text-xs font-bold text-slate-300">نوع صدا</span>
               <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-950 border border-slate-800">
@@ -1079,10 +1598,91 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
             )}
           </div>
 
+          {/* Persistent AI Audio Cache Status & Pre-Save Controls */}
+          {voice === 'ai' && mode === 'book' && targetChapter && (
+            <div className="flex flex-col gap-2.5 pt-3 border-t border-slate-800/80 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-slate-300 tabular-nums">
+                  {sectionCacheStats ? (
+                    sectionCacheStats.total > 0 &&
+                    sectionCacheStats.cached >= sectionCacheStats.total ? (
+                      <span className="text-emerald-300 font-bold">
+                        صدای هوش مصنوعی این بخش کامل در برنامه ذخیره شده است ({fa(sectionCacheStats.cached)} از {fa(sectionCacheStats.total)} تکه · پخش بدون هزینهٔ مجدد)
+                      </span>
+                    ) : (
+                      <span>
+                        صدای هوش مصنوعی این بخش: {fa(sectionCacheStats.cached)} از {fa(sectionCacheStats.total)} تکه در برنامه ذخیره شده
+                      </span>
+                    )
+                  ) : (
+                    <span>هر تکه‌ای که با صدای هوش مصنوعی خوانده شود خودکار در برنامه ذخیره می‌ماند</span>
+                  )}
+                  {totalCachedPieces > 0 && (
+                    <>
+                      <span aria-hidden="true"> · </span>
+                      <span className="text-slate-400">
+                        در کل {fa(totalCachedPieces)} تکه صدای ذخیره‌شده
+                      </span>
+                    </>
+                  )}
+                </p>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {prefetchProgress ? (
+                    <>
+                      <span className="text-emerald-300 font-bold tabular-nums">
+                        در حال ذخیرهٔ صدای {prefetchProgress.label}: {fa(prefetchProgress.done)} از {fa(prefetchProgress.total)}…
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => prefetchAbortRef.current?.abort()}
+                        className="min-h-[38px] px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold whitespace-nowrap"
+                      >
+                        توقف ذخیره
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      {(!sectionCacheStats ||
+                        sectionCacheStats.cached < sectionCacheStats.total) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handlePrefetchAudio('section');
+                          }}
+                          className="min-h-[38px] px-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-100 font-bold transition-colors whitespace-nowrap"
+                        >
+                          ذخیرهٔ صدای این بخش
+                        </button>
+                      )}
+                      {targetSectionCount > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handlePrefetchAudio('chapter');
+                          }}
+                          className="min-h-[38px] px-3.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-300 font-bold transition-colors whitespace-nowrap"
+                        >
+                          ذخیرهٔ صدای کل این فصل
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {prefetchFeedback && (
+                <p role="status" className="text-slate-300 leading-relaxed">
+                  {prefetchFeedback}
+                </p>
+              )}
+            </div>
+          )}
+
           {mode === 'cards' && (
             <p className="text-xs text-slate-400 leading-relaxed">
               {canSpeakPersian
-                ? 'معنی فارسی واژه‌ها پس از مکث بلند خوانده می‌شود.'
+                ? 'معنی فارسی واژه‌ها پس از مکث بلند خوانده می‌شود (و صدای هوش مصنوعی هر واژه پس از اولین پخش در برنامه ذخیره می‌ماند).'
                 : 'این دستگاه صدای فارسی آفلاین ندارد؛ در حالت صدای دستگاه، به‌جای خواندن ناقص متن فارسی، تعریف انگلیسی واژه خوانده می‌شود (برای خوانش معنی فارسی، «هوش مصنوعی» با Gemini را برگزین).'}
             </p>
           )}
@@ -1090,14 +1690,20 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
           <button
             type="button"
             disabled={
-              (mode === 'book' && !selectedSource) ||
+              (mode === 'book' && (!selectedSource || !targetChapter)) ||
               (mode === 'cards' && activeCardQueue.length === 0)
             }
-            onClick={startSession}
+            onClick={() => {
+              void startSession();
+            }}
             className="w-full min-h-[60px] rounded-2xl bg-brand-600 hover:bg-brand-500 disabled:opacity-40 text-white font-extrabold text-lg flex items-center justify-center gap-2.5 transition-colors"
           >
             <Icon.Headphones size={22} />
-            <span>شروع حالت رانندگی</span>
+            <span>
+              {mode === 'book' && targetChapter
+                ? `شروع شنیدن (${targetChapter.title} · بخش ${fa(targetChunk + 1)})`
+                : 'شروع حالت رانندگی'}
+            </span>
           </button>
         </section>
 

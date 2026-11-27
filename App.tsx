@@ -103,7 +103,8 @@ const App: React.FC = () => {
         handleStartSourceReview, handleReviewCards, handlePrestudyChapter,
         overlayEdit, openCardEditor, closeCardEditor, saveOverlayEdit,
         handleFillExtras, handleStopFillExtras, extrasProgress, handleSaveCardContent, handleApplyImprovements,
-        handleDeleteNote, handleSaveDriveCard, handleOpenBookChunkById, handleStartCustomStudy,
+        handleDeleteNote, handleSaveDriveCard, handleOpenBookChunkById, handleStartCustomStudy, handleSaveAudioPosition,
+        themeExercises, handleSaveThemeExercise, handleDeleteThemeExercise,
         handleCreateTheme, handleRenameTheme, handleDeleteTheme, handleUpdateThemeMembers, handleApplyBatchThemes,
     } = useAppLogic();
 
@@ -282,6 +283,7 @@ const App: React.FC = () => {
                     onSaveNote={handleSaveNote}
                     onDeleteNote={handleDeleteNote}
                     onSaveReaderCard={handleSaveDriveCard}
+                    onSaveAudioPosition={handleSaveAudioPosition}
                     onOpenBookChunk={handleOpenBookChunkById}
                     onStudyCards={list => handleStartCustomStudy(list)}
                     onExit={() => setView(previousViewRef.current && previousViewRef.current !== 'DRIVING' ? previousViewRef.current : 'TODAY')}
@@ -361,6 +363,8 @@ const App: React.FC = () => {
                     savedThemes={settings.savedThemes}
                     places={places}
                     practice={practice}
+                    settings={settings}
+                    themeExercises={themeExercises}
                     aiOptions={aiRequestOptions(settings)}
                     aiSources={cardSources.filter(s => s.kind === 'ai')}
                     userLevel={settings.userLevel}
@@ -375,6 +379,8 @@ const App: React.FC = () => {
                     onDeleteTheme={handleDeleteTheme}
                     onUpdateThemeMembers={handleUpdateThemeMembers}
                     onApplyBatchThemes={handleApplyBatchThemes}
+                    onSaveThemeExercise={handleSaveThemeExercise}
+                    onDeleteThemeExercise={handleDeleteThemeExercise}
                     onStudyThemeCards={handleStartCustomStudy}
                     onQuizCards={ids => { void handleStartHardQuiz(ids); }}
                     onEditCard={card => { void openCardEditor(card); }}

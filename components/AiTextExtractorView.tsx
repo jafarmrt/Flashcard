@@ -8,7 +8,7 @@ import { extractFromLongText, ExtractionProgress, ExtractionSource } from '../se
 import { DEFAULT_CHUNK_WORDS, splitIntoChunks, wordCount as countWords } from '../services/textChunker';
 import { speakText, stopSpeech, isSpeechSupported, getAvailableVoices } from '../services/ttsService';
 import { readerSection } from '../services/readerText';
-import { piecesOf, type ReadAloudVoice } from '../services/readAloud';
+import { sectionPiecesForVoice, type ReadAloudVoice } from '../services/readAloud';
 import { useReadAloud } from '../hooks/useReadAloud';
 import { fa, Icon } from './common/ui';
 
@@ -216,7 +216,7 @@ export const AiTextExtractorView: React.FC<AiTextExtractorViewProps> = ({
   const spokenText = useDeferredValue(inputText);
   const pieces = useMemo(() => {
     const section = readerSection(spokenText);
-    const cut = voice === 'ai' ? piecesOf(section, 90, 35) : piecesOf(section);
+    const cut = sectionPiecesForVoice(section, voice);
     // A text without English words (Persian, numbers) is read as it is.
     const whole = spokenText.replace(/\s+/g, ' ').trim().slice(0, 600);
     return cut.length || !whole ? cut : [{ text: whole, from: 0, to: 0, paragraph: 0 }];

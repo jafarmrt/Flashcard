@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { Deck, Flashcard, PracticeAnswer } from '../../types';
+import type { Deck, Flashcard, PracticeAnswer, SavedThemeExercise, Settings } from '../../types';
 import type { CardPlace } from '../../services/library';
 import type { AiRequestOptions } from '../../services/geminiService';
 import type { RefreshSource } from '../../services/cardRefresh';
@@ -7,6 +7,7 @@ import {
   cardHasTheme,
   normalizeThemeName,
   sameTheme,
+  savedExercisesForTheme,
   SCENE_ROLE_SHORT,
   type SceneRole,
   STARTER_THEMES,
@@ -22,6 +23,8 @@ interface ThemesShelfProps {
   savedThemes?: string[];
   places?: Map<string, CardPlace[]>;
   practice?: PracticeAnswer[];
+  settings?: Settings;
+  themeExercises?: SavedThemeExercise[];
   aiOptions?: AiRequestOptions;
   aiSources?: RefreshSource[];
   userLevel?: string;
@@ -30,6 +33,8 @@ interface ThemesShelfProps {
   onDeleteTheme: (theme: string) => Promise<void>;
   onUpdateMembers: (theme: string, memberIds: Set<string>) => Promise<void>;
   onApplyBatchThemes: (assignments: Map<string, string[]>, mode: 'merge' | 'replace') => Promise<void>;
+  onSaveThemeExercise?: (exercise: SavedThemeExercise) => Promise<void>;
+  onDeleteThemeExercise?: (exerciseId: string) => Promise<void>;
   onStudyCards: (cards: Flashcard[]) => void;
   onQuizCards: (cardIds: string[]) => void;
   onEditCard: (card: Flashcard) => void;
@@ -44,6 +49,8 @@ export const ThemesShelf: React.FC<ThemesShelfProps> = ({
   savedThemes = [],
   places,
   practice,
+  settings,
+  themeExercises = [],
   aiOptions,
   aiSources = [],
   userLevel,
@@ -52,6 +59,8 @@ export const ThemesShelf: React.FC<ThemesShelfProps> = ({
   onDeleteTheme,
   onUpdateMembers,
   onApplyBatchThemes,
+  onSaveThemeExercise,
+  onDeleteThemeExercise,
   onStudyCards,
   onQuizCards,
   onEditCard,
@@ -102,6 +111,8 @@ export const ThemesShelf: React.FC<ThemesShelfProps> = ({
         decks={decks}
         places={places}
         practice={practice}
+        settings={settings}
+        themeExercises={themeExercises}
         aiOptions={aiOptions}
         userLevel={userLevel}
         onBack={() => setActiveTheme(null)}
@@ -114,6 +125,8 @@ export const ThemesShelf: React.FC<ThemesShelfProps> = ({
           setActiveTheme(null);
         }}
         onUpdateMembers={onUpdateMembers}
+        onSaveThemeExercise={onSaveThemeExercise}
+        onDeleteThemeExercise={onDeleteThemeExercise}
         onStudyCards={onStudyCards}
         onQuizCards={onQuizCards}
         onEditCard={onEditCard}
@@ -320,6 +333,7 @@ export const ThemesShelf: React.FC<ThemesShelfProps> = ({
             const roleParts = ROLE_KEYS.filter(r => summary.roles[r] > 0).map(
               r => `${fa(summary.roles[r])} ${SCENE_ROLE_SHORT[r]}`,
             );
+            const savedCount = savedExercisesForTheme(themeExercises, summary.name).length;
             const dueProgress = summary.cardCount > 0 ? (summary.dueCount / summary.cardCount) * 100 : 0;
             return (
               <div
@@ -334,6 +348,12 @@ export const ThemesShelf: React.FC<ThemesShelfProps> = ({
                       <>
                         <span aria-hidden="true"> · </span>
                         <span>{roleParts.join(' · ')}</span>
+                      </>
+                    )}
+                    {savedCount > 0 && (
+                      <>
+                        <span aria-hidden="true"> · </span>
+                        <span>{fa(savedCount)} تمرین ذخیره‌شده</span>
                       </>
                     )}
                   </p>

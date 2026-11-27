@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Deck, Flashcard, PracticeAnswer } from '../types';
+import { Deck, Flashcard, PracticeAnswer, SavedThemeExercise, Settings } from '../types';
 import type { CardPlace } from '../services/library';
 import type { AiRequestOptions } from '../services/geminiService';
 import type { RefreshSource } from '../services/cardRefresh';
@@ -15,6 +15,8 @@ interface DeckListProps {
     savedThemes?: string[];
     places?: Map<string, CardPlace[]>;
     practice?: PracticeAnswer[];
+    settings?: Settings;
+    themeExercises?: SavedThemeExercise[];
     aiOptions?: AiRequestOptions;
     aiSources?: RefreshSource[];
     userLevel?: string;
@@ -29,6 +31,8 @@ interface DeckListProps {
     onDeleteTheme?: (theme: string) => Promise<void>;
     onUpdateThemeMembers?: (theme: string, memberIds: Set<string>) => Promise<void>;
     onApplyBatchThemes?: (assignments: Map<string, string[]>, mode: 'merge' | 'replace') => Promise<void>;
+    onSaveThemeExercise?: (exercise: SavedThemeExercise) => Promise<void>;
+    onDeleteThemeExercise?: (exerciseId: string) => Promise<void>;
     onStudyThemeCards?: (cards: Flashcard[]) => void;
     onQuizCards?: (cardIds: string[]) => void;
     onEditCard?: (card: Flashcard) => void;
@@ -138,6 +142,8 @@ const DeckList: React.FC<DeckListProps> = ({
     savedThemes = [],
     places,
     practice,
+    settings,
+    themeExercises,
     aiOptions,
     aiSources,
     userLevel,
@@ -152,6 +158,8 @@ const DeckList: React.FC<DeckListProps> = ({
     onDeleteTheme,
     onUpdateThemeMembers,
     onApplyBatchThemes,
+    onSaveThemeExercise,
+    onDeleteThemeExercise,
     onStudyThemeCards,
     onQuizCards,
     onEditCard,
@@ -252,6 +260,8 @@ const DeckList: React.FC<DeckListProps> = ({
                     savedThemes={savedThemes}
                     places={places}
                     practice={practice}
+                    settings={settings}
+                    themeExercises={themeExercises}
                     aiOptions={aiOptions}
                     aiSources={aiSources}
                     userLevel={userLevel}
@@ -260,6 +270,8 @@ const DeckList: React.FC<DeckListProps> = ({
                     onDeleteTheme={onDeleteTheme!}
                     onUpdateMembers={onUpdateThemeMembers!}
                     onApplyBatchThemes={onApplyBatchThemes!}
+                    onSaveThemeExercise={onSaveThemeExercise}
+                    onDeleteThemeExercise={onDeleteThemeExercise}
                     onStudyCards={onStudyThemeCards!}
                     onQuizCards={onQuizCards!}
                     onEditCard={onEditCard!}

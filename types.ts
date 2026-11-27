@@ -187,6 +187,13 @@ export type SourceKind = 'book' | 'article' | 'text';
 // One day of reading a book: active minutes, words and sections finished.
 export interface ReadingDay { ms: number; words: number; sections: number }
 
+export interface AudioPosition {
+  chapterId: string;
+  chunk: number; // section index within the chapter
+  pieceIndex?: number; // piece/sentence index within the section
+  updatedAt: string;
+}
+
 export interface Source {
   id: string;
   kind: SourceKind;
@@ -195,6 +202,7 @@ export interface Source {
   url?: string; // where an article came from
   deckId: string;
   position?: { chapterId: string; chunk: number }; // where reading stopped
+  audioPosition?: AudioPosition; // where audiobook listening stopped (services/drivingMode)
   reading?: Record<string, ReadingDay>; // active reading time per local day (services/readingTime)
   createdAt: string;
   updatedAt: string;
@@ -370,6 +378,71 @@ export interface SpeechAttempt {
   tip?: string; // Persian: the one thing to do on the next try
   by?: string; // the service and model that listened ("Gemini · gemini-2.5-flash")
   compact?: true; // an old try kept without its long texts (services/speechPractice)
+  createdAt: string;
+  updatedAt: string;
+  isDeleted?: boolean;
+}
+
+// Saved AI exercises inside thematic word bundles ("بسته‌های موضوعی") so any
+// generated micro-story or contrastive drill can be replayed at zero AI cost,
+// and new generations avoid repeating previously practised words/plots/sentences.
+export type SavedStorySegment =
+  | { kind: 'text'; text: string }
+  | {
+      kind: 'blank';
+      blankIndex: number;
+      cardId: string;
+      targetWord: string;
+      surface: string;
+      hintFa: string;
+      audioSrc?: string;
+    };
+
+export interface SavedMicroStory {
+  titleFa: string;
+  segments: SavedStorySegment[];
+  blanks: Extract<SavedStorySegment, { kind: 'blank' }>[];
+  wordBank: string[];
+  translationFa?: string;
+  byAi: boolean;
+}
+
+export interface SavedContrastBlank {
+  before: string;
+  after: string;
+  answerWord: string;
+  cardId: string;
+}
+
+export interface SavedContrastUnit {
+  id: string;
+  cardAId: string;
+  cardBId: string;
+  wordA: string;
+  backA: string;
+  posA?: string;
+  regA?: string;
+  wordB: string;
+  backB: string;
+  posB?: string;
+  regB?: string;
+  differenceFa: string;
+  sentence1: SavedContrastBlank;
+  sentence2: SavedContrastBlank;
+  byAi: boolean;
+}
+
+export interface SavedThemeExercise {
+  id: string;
+  themeName: string;
+  kind: 'story' | 'contrast';
+  titleFa: string;
+  cardIds: string[];
+  targetWords: string[];
+  story?: SavedMicroStory;
+  contrastUnits?: SavedContrastUnit[];
+  playCount?: number;
+  lastPlayedAt?: string;
   createdAt: string;
   updatedAt: string;
   isDeleted?: boolean;

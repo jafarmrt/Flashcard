@@ -1,11 +1,13 @@
 // File: /services/drivingMode.ts
 // Pure logic for Hands-Free Driving Mode ("حالت رانندگی"):
-//   1. continuous chapter-and-section progression across a book;
-//   2. eyes-free audio flashcard script generation with Persian voice safety
+//   1. audiobook-style chapter & section selection, progress overview, and
+//      exact listening spot persistence (Source.audioPosition);
+//   2. continuous chapter-and-section progression across a book;
+//   3. eyes-free audio flashcard script generation with Persian voice safety
 //      (never feeding Persian script into an English-only synthesizer);
-//   3. post-drive sentence bookmarks (synced via TextNote with by === 'drive')
+//   4. post-drive sentence bookmarks (synced via TextNote with by === 'drive')
 //      and tappable candidate words for parking review;
-//   4. localized display names for legacy English deck names.
+//   5. localized display names for legacy English deck names.
 
 import type { Chapter, Flashcard, Settings, Source, TextNote } from '../types';
 import { speechProvider } from './aiSpeech';
@@ -28,33 +30,134 @@ export interface BookStepPosition {
   chapterChanged: boolean;
 }
 
+export interface DriveStartPosition {
+  chapter: Chapter;
+  chunk: number;
+  pieceIndex: number;
+  sourceOfSpot: 'audio' | 'reading' | 'unread';
+}
+
+export interface ChapterAudioSummary {
+  chapter: Chapter;
+  orderNumber: number; // 1-based position in the book
+  totalSections: number;
+  completedSections: number;
+  isComplete: boolean;
+}
+
+export interface BookAudioOverview {
+  chapters: ChapterAudioSummary[];
+  totalSections: number;
+  completedSections: number;
+}
+
 export const orderedBookChapters = (sourceId: string, chapters: readonly Chapter[]): Chapter[] =>
   chapters
     .filter(c => !c.isDeleted && c.sourceId === sourceId)
     .sort((a, b) => a.order - b.order || a.createdAt.localeCompare(b.createdAt));
 
-// Resolves where continuous book listening starts for a given source.
-export const resolveDriveStartPosition = (
-  source: Pick<Source, 'id' | 'position'>,
+export const bookAudioOverview = (
+  sourceId: string,
   chapters: readonly Chapter[],
-): { chapter: Chapter; chunk: number } | null => {
+): BookAudioOverview => {
+  const list = orderedBookChapters(sourceId, chapters);
+  let totalSections = 0;
+  let completedSections = 0;
+  const summaries: ChapterAudioSummary[] = list.map((chapter, idx) => {
+    const count = Math.max(1, chapter.chunkCount);
+    const done = chapter.completed.filter(i => i >= 0 && i < count).length;
+    totalSections += count;
+    completedSections += done;
+    return {
+      chapter,
+      orderNumber: idx + 1,
+      totalSections: count,
+      completedSections: done,
+      isComplete: done >= count,
+    };
+  });
+  return { chapters: summaries, totalSections, completedSections };
+};
+
+// Resolves where audiobook listening starts for a given source:
+//   1. `source.audioPosition` (exact chapter, section, and piece where listening stopped);
+//   2. `source.position` (where visual reading last stopped);
+//   3. the first unfinished section in chapter order (or chapter 1, section 1).
+export const resolveDriveStartPosition = (
+  source: Pick<Source, 'id' | 'position' | 'audioPosition'>,
+  chapters: readonly Chapter[],
+): DriveStartPosition | null => {
   const list = orderedBookChapters(source.id, chapters);
   if (list.length === 0) return null;
+
+  if (source.audioPosition) {
+    const found = list.find(c => c.id === source.audioPosition!.chapterId);
+    if (
+      found &&
+      source.audioPosition.chunk >= 0 &&
+      source.audioPosition.chunk < Math.max(1, found.chunkCount)
+    ) {
+      return {
+        chapter: found,
+        chunk: source.audioPosition.chunk,
+        pieceIndex: Math.max(0, Math.floor(source.audioPosition.pieceIndex || 0)),
+        sourceOfSpot: 'audio',
+      };
+    }
+  }
 
   if (source.position) {
     const found = list.find(c => c.id === source.position!.chapterId);
     if (found && source.position.chunk >= 0 && source.position.chunk < Math.max(1, found.chunkCount)) {
-      return { chapter: found, chunk: source.position.chunk };
+      return {
+        chapter: found,
+        chunk: source.position.chunk,
+        pieceIndex: 0,
+        sourceOfSpot: 'reading',
+      };
     }
   }
 
   for (const ch of list) {
     const count = Math.max(1, ch.chunkCount);
     for (let i = 0; i < count; i++) {
-      if (!ch.completed.includes(i)) return { chapter: ch, chunk: i };
+      if (!ch.completed.includes(i)) {
+        return { chapter: ch, chunk: i, pieceIndex: 0, sourceOfSpot: 'unread' };
+      }
     }
   }
-  return { chapter: list[0], chunk: 0 };
+  return { chapter: list[0], chunk: 0, pieceIndex: 0, sourceOfSpot: 'unread' };
+};
+
+// Stamps a new audiobook listening position onto a Source row (no-op if identical).
+export const withSavedAudioPosition = (
+  source: Source,
+  chapterId: string,
+  chunk: number,
+  pieceIndex: number,
+  nowIso: string,
+): Source | null => {
+  const cleanChunk = Math.max(0, Math.floor(chunk));
+  const cleanPiece = Math.max(0, Math.floor(pieceIndex));
+  const prev = source.audioPosition;
+  if (
+    prev &&
+    prev.chapterId === chapterId &&
+    prev.chunk === cleanChunk &&
+    (prev.pieceIndex || 0) === cleanPiece
+  ) {
+    return null;
+  }
+  return {
+    ...source,
+    audioPosition: {
+      chapterId,
+      chunk: cleanChunk,
+      pieceIndex: cleanPiece,
+      updatedAt: nowIso,
+    },
+    updatedAt: nowIso,
+  };
 };
 
 // Advances to the next section within the current chapter, or chunk 0 of the
@@ -138,7 +241,10 @@ export const pickCardSentence = (
 };
 
 export const buildCardAudioScript = (
-  card: Pick<Flashcard, 'front' | 'back' | 'definition' | 'sourceSentence' | 'exampleSentenceTarget' | 'audioSrc'>,
+  card: Pick<
+    Flashcard,
+    'front' | 'back' | 'definition' | 'sourceSentence' | 'exampleSentenceTarget' | 'audioSrc'
+  >,
   places: readonly { sentence?: string }[] | undefined,
   opts: { pauseSeconds: number; canSpeakPersian: boolean },
 ): CardAudioStep[] => {

@@ -1,11 +1,13 @@
 import React, { useMemo, useState } from 'react';
-import type { Deck, Flashcard, PracticeAnswer } from '../../types';
+import type { Deck, Flashcard, PracticeAnswer, SavedThemeExercise, Settings } from '../../types';
 import type { CardPlace } from '../../services/library';
 import type { AiRequestOptions } from '../../services/geminiService';
 import {
   cardHasTheme,
+  markThemeExercisePlayed,
   normalizeThemeName,
   sameTheme,
+  savedExercisesForTheme,
   SCENE_ROLE_LABELS,
   type SceneRole,
   wordRoleOf,
@@ -22,12 +24,16 @@ interface ThemeWorkspaceProps {
   decks: Deck[];
   places?: Map<string, CardPlace[]>;
   practice?: PracticeAnswer[];
+  settings?: Settings;
+  themeExercises?: SavedThemeExercise[];
   aiOptions?: AiRequestOptions;
   userLevel?: string;
   onBack: () => void;
   onRenameTheme: (from: string, to: string) => Promise<void>;
   onDeleteTheme: (theme: string) => Promise<void>;
   onUpdateMembers: (theme: string, memberIds: Set<string>) => Promise<void>;
+  onSaveThemeExercise?: (exercise: SavedThemeExercise) => Promise<void>;
+  onDeleteThemeExercise?: (exerciseId: string) => Promise<void>;
   onStudyCards: (cards: Flashcard[]) => void;
   onQuizCards: (cardIds: string[]) => void;
   onEditCard: (card: Flashcard) => void;
@@ -42,18 +48,24 @@ export const ThemeWorkspace: React.FC<ThemeWorkspaceProps> = ({
   decks,
   places,
   practice,
+  settings,
+  themeExercises = [],
   aiOptions,
   userLevel,
   onBack,
   onRenameTheme,
   onDeleteTheme,
   onUpdateMembers,
+  onSaveThemeExercise,
+  onDeleteThemeExercise,
   onStudyCards,
   onQuizCards,
   onEditCard,
   onPracticeAnswer,
 }) => {
   const [mode, setMode] = useState<'overview' | 'story' | 'contrast' | 'members'>('overview');
+  const [selectedExerciseId, setSelectedExerciseId] = useState<string | null>(null);
+  const [startFreshExercise, setStartFreshExercise] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState(themeName);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -82,16 +94,47 @@ export const ThemeWorkspace: React.FC<ThemeWorkspaceProps> = ({
     return groups;
   }, [bundleCards]);
 
+  const savedExercises = useMemo(
+    () => savedExercisesForTheme(themeExercises, themeName),
+    [themeExercises, themeName],
+  );
+  const savedStories = useMemo(
+    () => savedExercisesForTheme(themeExercises, themeName, 'story'),
+    [themeExercises, themeName],
+  );
+  const savedContrasts = useMemo(
+    () => savedExercisesForTheme(themeExercises, themeName, 'contrast'),
+    [themeExercises, themeName],
+  );
+
+  const openSavedExercise = (ex: SavedThemeExercise) => {
+    setSelectedExerciseId(ex.id);
+    setStartFreshExercise(false);
+    if (onSaveThemeExercise) {
+      void onSaveThemeExercise(markThemeExercisePlayed(ex, new Date().toISOString()));
+    }
+    setMode(ex.kind === 'story' ? 'story' : 'contrast');
+  };
+
   if (mode === 'story') {
     return (
       <MicroStoryPractice
         themeName={themeName}
         cards={bundleCards}
         places={places}
+        settings={settings}
+        savedStories={savedStories}
+        initialExerciseId={selectedExerciseId}
+        startFresh={startFreshExercise}
         aiOptions={aiOptions}
         userLevel={userLevel}
+        onSaveExercise={onSaveThemeExercise}
         onAnswer={onPracticeAnswer}
-        onBack={() => setMode('overview')}
+        onBack={() => {
+          setSelectedExerciseId(null);
+          setStartFreshExercise(false);
+          setMode('overview');
+        }}
       />
     );
   }
@@ -103,9 +146,17 @@ export const ThemeWorkspace: React.FC<ThemeWorkspaceProps> = ({
         cards={bundleCards}
         places={places}
         practice={practice}
+        savedContrasts={savedContrasts}
+        initialExerciseId={selectedExerciseId}
+        startFresh={startFreshExercise}
         aiOptions={aiOptions}
+        onSaveExercise={onSaveThemeExercise}
         onAnswer={onPracticeAnswer}
-        onBack={() => setMode('overview')}
+        onBack={() => {
+          setSelectedExerciseId(null);
+          setStartFreshExercise(false);
+          setMode('overview');
+        }}
       />
     );
   }
@@ -345,7 +396,11 @@ export const ThemeWorkspace: React.FC<ThemeWorkspaceProps> = ({
           <button
             type="button"
             disabled={bundleCards.length === 0}
-            onClick={() => setMode('story')}
+            onClick={() => {
+              setSelectedExerciseId(null);
+              setStartFreshExercise(false);
+              setMode('story');
+            }}
             className="min-h-[48px] px-4 rounded-2xl text-sm font-extrabold text-white bg-brand-500 hover:bg-brand-600 disabled:opacity-40 transition-colors whitespace-nowrap"
           >
             داستانک هم‌بافت
@@ -353,7 +408,11 @@ export const ThemeWorkspace: React.FC<ThemeWorkspaceProps> = ({
           <button
             type="button"
             disabled={bundleCards.length < 2}
-            onClick={() => setMode('contrast')}
+            onClick={() => {
+              setSelectedExerciseId(null);
+              setStartFreshExercise(false);
+              setMode('contrast');
+            }}
             className="min-h-[48px] px-4 rounded-2xl text-sm font-bold text-brand-700 dark:text-brand-200 bg-brand-50 dark:bg-brand-900/40 hover:bg-brand-100 dark:hover:bg-brand-900/60 disabled:opacity-40 transition-colors whitespace-nowrap"
           >
             تفکیک واژه‌های نزدیک
@@ -376,6 +435,104 @@ export const ThemeWorkspace: React.FC<ThemeWorkspaceProps> = ({
           </button>
         </div>
       </section>
+
+      {savedExercises.length > 0 && (
+        <section className="bg-white dark:bg-slate-800 rounded-3xl p-5 sm:p-6 flex flex-col gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-extrabold text-ink dark:text-white">
+                تمرین‌های ذخیره‌شدهٔ این بسته
+              </h3>
+              <p className="text-xs text-ink-muted dark:text-slate-400">
+                <span>قابل تکرار فوری بدون مصرف مجدد هوش مصنوعی</span>
+                <span aria-hidden="true"> · </span>
+                <span>مبنای پرهیز از تمرین‌های تکراری در ساخت‌های بعدی</span>
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {bundleCards.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedExerciseId(null);
+                    setStartFreshExercise(true);
+                    setMode('story');
+                  }}
+                  className="min-h-[40px] px-3.5 rounded-xl text-xs font-bold text-brand-700 dark:text-brand-200 bg-brand-50 dark:bg-brand-900/40 hover:bg-brand-100 dark:hover:bg-brand-900/60 transition-colors whitespace-nowrap"
+                >
+                  + ساخت داستانک تازه
+                </button>
+              )}
+              {bundleCards.length >= 2 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedExerciseId(null);
+                    setStartFreshExercise(true);
+                    setMode('contrast');
+                  }}
+                  className="min-h-[40px] px-3.5 rounded-xl text-xs font-bold text-ink dark:text-slate-200 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors whitespace-nowrap"
+                >
+                  + ساخت تفکیک تازه
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="divide-y divide-slate-100 dark:divide-slate-700/60">
+            {savedExercises.map(ex => (
+              <div
+                key={ex.id}
+                className="py-3 first:pt-1 last:pb-1 flex flex-wrap items-center justify-between gap-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <span className="text-sm font-bold text-ink dark:text-white truncate">
+                      {ex.titleFa}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-xs text-ink-muted dark:text-slate-400 flex flex-wrap items-center gap-1.5 tabular-nums">
+                    <span>{ex.kind === 'story' ? 'داستانک هم‌بافت' : 'تفکیک واژه‌ها'}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>{fa(ex.playCount || 1)} بار تمرین‌شده</span>
+                    {ex.targetWords.length > 0 && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <bdi dir="ltr" className="font-en text-ink dark:text-slate-300">
+                          {ex.targetWords.slice(0, 6).join(' · ')}
+                        </bdi>
+                      </>
+                    )}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => openSavedExercise(ex)}
+                    aria-label={`تکرار تمرین ${ex.titleFa}`}
+                    className="min-h-[40px] px-3.5 rounded-xl text-xs font-bold text-brand-700 dark:text-brand-200 bg-brand-50 dark:bg-brand-900/40 hover:bg-brand-100 dark:hover:bg-brand-900/60 transition-colors whitespace-nowrap"
+                  >
+                    تکرار تمرین
+                  </button>
+                  {onDeleteThemeExercise && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void onDeleteThemeExercise(ex.id);
+                      }}
+                      aria-label={`حذف تمرین ${ex.titleFa}`}
+                      title="حذف تمرین ذخیره‌شده"
+                      className="min-h-[40px] min-w-[40px] rounded-xl flex items-center justify-center text-ink-muted hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40"
+                    >
+                      <Icon.Close size={16} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {bundleCards.length === 0 ? (
         <section className="bg-white dark:bg-slate-800 rounded-3xl p-8 text-center flex flex-col items-center gap-3">

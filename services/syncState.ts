@@ -5,7 +5,7 @@
 //     start a new sync every 2 seconds, forever);
 //   - study logs keyed the same way on every device.
 
-import type { Chapter, Deck, Flashcard, KnownWord, Occurrence, PracticeAnswer, Source, SpeechAttempt, StudyLog, TextDoc, TextNote, UserAchievement, UserProfile } from '../types';
+import type { Chapter, Deck, Flashcard, KnownWord, Occurrence, PracticeAnswer, SavedThemeExercise, Source, SpeechAttempt, StudyLog, TextDoc, TextNote, UserAchievement, UserProfile } from '../types';
 
 type Row = { id: string };
 
@@ -19,6 +19,7 @@ export interface SyncSnapshotInput {
   speechAttempts: SpeechAttempt[];
   notes?: TextNote[];
   practice?: PracticeAnswer[];
+  themeExercises?: SavedThemeExercise[];
   profile: UserProfile | null | undefined;
   achievements: UserAchievement[];
   settingsUpdatedAt?: string;
@@ -27,7 +28,7 @@ export interface SyncSnapshotInput {
 // What identifies one version of a row. Every edit of a card, source,
 // chapter, occurrence, known word or spoken try stamps updatedAt; decks older than
 // updatedAt also count their name and deletion.
-type Dated = Flashcard | TextDoc | Source | Chapter | Occurrence | KnownWord | SpeechAttempt | TextNote | PracticeAnswer;
+type Dated = Flashcard | TextDoc | Source | Chapter | Occurrence | KnownWord | SpeechAttempt | TextNote | PracticeAnswer | SavedThemeExercise;
 export const cardStamp = (c: Dated) => `${c.updatedAt || ''}|${c.isDeleted ? 1 : 0}`;
 export const deckStamp = (d: Deck) => `${d.updatedAt || ''}|${d.name}|${d.isDeleted ? 1 : 0}`;
 export const profileStamp = (p: UserProfile | null | undefined) => (p ? JSON.stringify(p) : '');
@@ -45,6 +46,7 @@ export const syncFingerprint = (s: SyncSnapshotInput): string => [
   stampAll(s.speechAttempts, cardStamp),
   stampAll(s.notes || [], cardStamp),
   stampAll(s.practice || [], cardStamp),
+  stampAll(s.themeExercises || [], cardStamp),
   profileStamp(s.profile),
   s.achievements.map(a => a.achievementId).sort().join(','),
   s.settingsUpdatedAt || '',

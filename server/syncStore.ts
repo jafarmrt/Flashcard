@@ -13,7 +13,7 @@ import { studyLogKey } from '../services/syncState.js';
 import { mergeRow } from '../services/rowMerge.js';
 
 export const STORE_VERSION = 2;
-export const ROW_TABLES = ['decks', 'cards', 'sources', 'chapters', 'occurrences', 'knownWords', 'speechAttempts', 'notes', 'practice'] as const;
+export const ROW_TABLES = ['decks', 'cards', 'sources', 'chapters', 'occurrences', 'knownWords', 'speechAttempts', 'notes', 'practice', 'themeExercises'] as const;
 export type RowTable = (typeof ROW_TABLES)[number];
 
 type Row = { id: string; updatedAt?: string; isDeleted?: boolean; _rev?: number; [key: string]: any };
@@ -31,6 +31,7 @@ export interface StoreData {
   speechAttempts: Row[];
   notes: Row[];
   practice: Row[];
+  themeExercises: Row[];
   studyHistory: any[];
   userProfile: any | null;
   userAchievements: any[];
@@ -48,6 +49,7 @@ export interface SyncChanges {
   speechAttempts?: Row[];
   notes?: Row[];
   practice?: Row[];
+  themeExercises?: Row[];
   studyHistory?: any[];
   userProfile?: any;
   userAchievements?: any[];
@@ -65,7 +67,7 @@ const withoutLocalAudio = (card: Row): Row => {
 
 const emptyStore = (storeId: string): StoreData => ({
   version: STORE_VERSION, storeId, rev: 0,
-  decks: [], cards: [], sources: [], chapters: [], occurrences: [], knownWords: [], speechAttempts: [], notes: [], practice: [],
+  decks: [], cards: [], sources: [], chapters: [], occurrences: [], knownWords: [], speechAttempts: [], notes: [], practice: [], themeExercises: [],
   studyHistory: [], userProfile: null, userAchievements: [],
 });
 

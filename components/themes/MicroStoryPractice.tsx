@@ -1,12 +1,16 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import type { Flashcard } from '../../types';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Flashcard, SavedThemeExercise, Settings } from '../../types';
 import type { CardPlace } from '../../services/library';
 import type { AiRequestOptions } from '../../services/geminiService';
 import {
   generateMicroStory,
+  hasUncoveredStoryWords,
+  makeSavedStoryExercise,
+  markThemeExercisePlayed,
   pickStoryCards,
   type MicroStoryData,
 } from '../../services/wordThemes';
+import { aiSpeechWithMeta } from '../../services/aiSpeech';
 import { isSpeechSupported, speakText, stopSpeech } from '../../services/ttsService';
 import { fa, Icon } from '../common/ui';
 
@@ -14,8 +18,13 @@ interface MicroStoryPracticeProps {
   themeName: string;
   cards: Flashcard[];
   places?: Map<string, CardPlace[]>;
+  settings?: Settings;
+  savedStories?: SavedThemeExercise[];
+  initialExerciseId?: string | null;
+  startFresh?: boolean;
   aiOptions?: AiRequestOptions;
   userLevel?: string;
+  onSaveExercise?: (exercise: SavedThemeExercise) => Promise<void> | void;
   onAnswer?: (cardId: string, right: boolean, chose?: string) => void;
   onBack: () => void;
 }
@@ -26,14 +35,19 @@ export const MicroStoryPractice: React.FC<MicroStoryPracticeProps> = ({
   themeName,
   cards,
   places,
+  settings,
+  savedStories = [],
+  initialExerciseId = null,
+  startFresh = false,
   aiOptions,
   userLevel,
+  onSaveExercise,
   onAnswer,
   onBack,
 }) => {
   const [story, setStory] = useState<MicroStoryData | null>(null);
+  const [currentExerciseId, setCurrentExerciseId] = useState<string | null>(initialExerciseId);
   const [loading, setLoading] = useState(true);
-  const [runNumber, setRunNumber] = useState(0);
   const [excludeIds, setExcludeIds] = useState<Set<string>>(() => new Set());
   const [activeBlank, setActiveBlank] = useState(0);
   const [solved, setSolved] = useState<Map<number, string>>(() => new Map());
@@ -41,44 +55,115 @@ export const MicroStoryPractice: React.FC<MicroStoryPracticeProps> = ({
   const [reported, setReported] = useState<Set<number>>(() => new Set());
   const [firstTryRight, setFirstTryRight] = useState(0);
   const [showTranslation, setShowTranslation] = useState(false);
+  const [speakingStory, setSpeakingStory] = useState(false);
+  const [storyAudioCached, setStoryAudioCached] = useState(false);
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
+  const savedStoriesRef = useRef(savedStories);
+  savedStoriesRef.current = savedStories;
 
   const cardsByLower = useMemo(
     () => new Map(cards.map(c => [c.front.trim().toLowerCase(), c])),
     [cards],
   );
 
-  useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    setStory(null);
+  const resetProgressForStory = useCallback((nextStory: MicroStoryData | null, exId: string | null) => {
+    stopSpeech();
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
+    setStory(nextStory);
+    setCurrentExerciseId(exId);
     setSolved(new Map());
     setWrongTry(null);
     setReported(new Set());
     setFirstTryRight(0);
     setActiveBlank(0);
     setShowTranslation(false);
+    setSpeakingStory(false);
+    setStoryAudioCached(false);
+  }, []);
 
-    const chosen = pickStoryCards(cards, 5, new Date(), excludeIds);
-    generateMicroStory(themeName, chosen, places, aiOptions, userLevel)
-      .then(built => {
-        if (!alive) return;
-        setStory(built);
-        setLoading(false);
-      })
-      .catch(() => {
-        if (!alive) return;
+  const buildFreshStory = useCallback(
+    async (extraExclude: ReadonlySet<string>, aliveCheck: () => boolean) => {
+      setLoading(true);
+      resetProgressForStory(null, null);
+      const history = savedStoriesRef.current;
+      const chosen = pickStoryCards(cards, 5, new Date(), extraExclude, history);
+      try {
+        const built = await generateMicroStory(
+          themeName,
+          chosen,
+          places,
+          aiOptions,
+          userLevel,
+          history,
+        );
+        if (!aliveCheck()) return;
+        if (built && built.blanks.length > 0) {
+          const savedRow = makeSavedStoryExercise(themeName, built, new Date().toISOString());
+          await onSaveExercise?.(savedRow);
+          if (!aliveCheck()) return;
+          resetProgressForStory(built, savedRow.id);
+        } else {
+          setStory(null);
+        }
+      } catch {
+        if (!aliveCheck()) return;
         setStory(null);
+      } finally {
+        if (aliveCheck()) setLoading(false);
+      }
+    },
+    [aiOptions, cards, onSaveExercise, places, resetProgressForStory, themeName, userLevel],
+  );
+
+  useEffect(() => {
+    let alive = true;
+    const history = savedStoriesRef.current;
+
+    if (initialExerciseId) {
+      const wanted = history.find(s => s.id === initialExerciseId && s.story);
+      if (wanted?.story) {
+        resetProgressForStory(wanted.story, wanted.id);
         setLoading(false);
-      });
+        return () => {
+          alive = false;
+          stopSpeech();
+        };
+      }
+    }
+
+    // If not explicitly asking for a fresh generation and existing saved stories
+    // already cover every word in this bundle, open the newest saved story at once
+    // so reopening the bundle does not spend AI tokens or produce duplicate stories.
+    if (!startFresh && history.length > 0 && !hasUncoveredStoryWords(cards, history)) {
+      const latest = history.find(s => s.story);
+      if (latest?.story) {
+        resetProgressForStory(latest.story, latest.id);
+        setLoading(false);
+        return () => {
+          alive = false;
+          stopSpeech();
+        };
+      }
+    }
+
+    void buildFreshStory(excludeIds, () => alive);
 
     return () => {
       alive = false;
       stopSpeech();
+      if (audioRef.current) audioRef.current.pause();
+      if (audioUrlRef.current) {
+        URL.revokeObjectURL(audioUrlRef.current);
+        audioUrlRef.current = null;
+      }
     };
-    // We intentionally trigger a fresh generation only when `runNumber` or `themeName` changes,
-    // so parent card updates caused by `onAnswer` mid-story do not wipe the active passage.
+    // Run once per bundle session mount; subsequent new stories or replays are triggered explicitly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [themeName, runNumber]);
+  }, [themeName]);
 
   const fullStoryText = useMemo(() => {
     if (!story) return '';
@@ -87,23 +172,83 @@ export const MicroStoryPractice: React.FC<MicroStoryPracticeProps> = ({
       .join('');
   }, [story]);
 
-  const startAnotherStory = useCallback(() => {
+  const handleRepeatSameStory = () => {
+    if (!story) return;
+    const existing = currentExerciseId
+      ? savedStories.find(s => s.id === currentExerciseId)
+      : undefined;
+    if (existing && onSaveExercise) {
+      void onSaveExercise(markThemeExercisePlayed(existing, new Date().toISOString()));
+    }
+    resetProgressForStory(story, currentExerciseId);
+  };
+
+  const handleSelectSavedStory = (id: string) => {
+    const picked = savedStories.find(s => s.id === id && s.story);
+    if (!picked?.story) return;
+    if (onSaveExercise) {
+      void onSaveExercise(markThemeExercisePlayed(picked, new Date().toISOString()));
+    }
+    resetProgressForStory(picked.story, picked.id);
+  };
+
+  const startAnotherStory = () => {
+    const nextExclude = new Set(excludeIds);
     if (story) {
-      setExcludeIds(prev => {
-        const next = new Set(prev);
-        story.blanks.forEach(b => next.add(b.cardId));
-        if (next.size >= cards.length) return new Set(story.blanks.map(b => b.cardId));
-        return next;
+      story.blanks.forEach(b => nextExclude.add(b.cardId));
+      if (nextExclude.size >= cards.length) {
+        nextExclude.clear();
+        story.blanks.forEach(b => nextExclude.add(b.cardId));
+      }
+      setExcludeIds(nextExclude);
+    }
+    void buildFreshStory(nextExclude, () => true);
+  };
+
+  const handleListenStory = async () => {
+    if (!fullStoryText.trim()) return;
+    if (speakingStory) {
+      stopSpeech();
+      audioRef.current?.pause();
+      setSpeakingStory(false);
+      return;
+    }
+    const preferAi = settings?.readAloudVoice === 'ai' || settings?.driveVoice === 'ai';
+    if (preferAi && settings) {
+      setSpeakingStory(true);
+      try {
+        const { blob, fromCache } = await aiSpeechWithMeta(fullStoryText, settings);
+        setStoryAudioCached(fromCache);
+        if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+        const url = URL.createObjectURL(blob);
+        audioUrlRef.current = url;
+        const audio = audioRef.current || (audioRef.current = new Audio());
+        audio.onended = () => setSpeakingStory(false);
+        audio.onerror = () => setSpeakingStory(false);
+        audio.src = url;
+        await audio.play();
+        return;
+      } catch {
+        setSpeakingStory(false);
+      }
+    }
+    if (isSpeechSupported()) {
+      setSpeakingStory(true);
+      speakText(fullStoryText, {
+        rate: 0.92,
+        onEnd: () => setSpeakingStory(false),
+        onError: () => setSpeakingStory(false),
       });
     }
-    setRunNumber(n => n + 1);
-  }, [story, cards.length]);
+  };
 
   if (loading) {
     return (
       <section className="bg-white dark:bg-slate-800 rounded-3xl p-6 sm:p-8 flex flex-col items-center gap-3 text-center">
-        <p className="text-base font-bold text-ink dark:text-white">در حال بافتن داستانک برای بستهٔ «{themeName}»…</p>
-        <p className="text-sm text-ink-muted dark:text-slate-400">واژه‌های این بسته در یک صحنهٔ پیوسته کنار هم چیده می‌شوند.</p>
+        <p className="text-base font-bold text-ink dark:text-white">در حال بافتن داستانک تازه برای بستهٔ «{themeName}»…</p>
+        <p className="text-sm text-ink-muted dark:text-slate-400">
+          واژه‌های کم‌تمرین‌تر در یک صحنهٔ غیرتکراری کنار هم چیده و ذخیره می‌شوند.
+        </p>
       </section>
     );
   }
@@ -160,11 +305,15 @@ export const MicroStoryPractice: React.FC<MicroStoryPracticeProps> = ({
   };
 
   const wrongChosenMeaning = wrongTry ? cardsByLower.get(wrongTry.chosenWord.toLowerCase())?.back : undefined;
+  const canListen = Boolean(
+    fullStoryText &&
+      (isSpeechSupported() || settings?.readAloudVoice === 'ai' || settings?.driveVoice === 'ai'),
+  );
 
   return (
     <section className="bg-white dark:bg-slate-800 rounded-3xl p-5 sm:p-8 flex flex-col gap-5">
       <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
           <button
             type="button"
             onClick={onBack}
@@ -180,9 +329,33 @@ export const MicroStoryPractice: React.FC<MicroStoryPracticeProps> = ({
               <span aria-hidden="true"> · </span>
               <span className="tabular-nums">{fa(solved.size)} از {fa(totalBlanks)} جاخالی</span>
               <span aria-hidden="true"> · </span>
-              <span>{story.byAi ? 'داستانک هم‌بافت' : 'ساخته‌شده از جمله‌های کارت‌هایت'}</span>
+              <span>{story.byAi ? 'داستانک ذخیره‌شده' : 'از جمله‌های کارت‌هایت'}</span>
             </p>
           </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {savedStories.length > 1 && (
+            <select
+              aria-label="انتخاب داستانک ذخیره‌شده"
+              value={currentExerciseId || ''}
+              onChange={e => handleSelectSavedStory(e.target.value)}
+              className="min-h-[40px] max-w-[210px] px-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-xs font-bold text-ink dark:text-white truncate"
+            >
+              {savedStories.map((s, idx) => (
+                <option key={s.id} value={s.id}>
+                  {fa(idx + 1)}. {s.titleFa}
+                </option>
+              ))}
+            </select>
+          )}
+          <button
+            type="button"
+            onClick={startAnotherStory}
+            className="min-h-[40px] px-3.5 rounded-xl text-xs font-bold text-brand-700 dark:text-brand-200 bg-brand-50 dark:bg-brand-900/40 hover:bg-brand-100 dark:hover:bg-brand-900/60 transition-colors whitespace-nowrap"
+          >
+            + داستانک تازه
+          </button>
         </div>
       </header>
 
@@ -279,16 +452,23 @@ export const MicroStoryPractice: React.FC<MicroStoryPracticeProps> = ({
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <p className="text-base font-extrabold text-emerald-700 dark:text-emerald-300">
               داستانک کامل شد · <span className="tabular-nums">{fa(firstTryRight)} از {fa(totalBlanks)}</span> بار اول درست
+              {storyAudioCached && (
+                <span className="text-xs font-normal text-ink-muted dark:text-slate-400 ms-2">
+                  · صدای ذخیره‌شده
+                </span>
+              )}
             </p>
             <div className="flex flex-wrap gap-2">
-              {isSpeechSupported() && fullStoryText && (
+              {canListen && (
                 <button
                   type="button"
-                  onClick={() => speakText(fullStoryText, { rate: 0.92 })}
+                  onClick={() => {
+                    void handleListenStory();
+                  }}
                   className="inline-flex items-center gap-1.5 min-h-[44px] px-4 rounded-xl text-sm font-bold text-brand-700 dark:text-brand-200 bg-brand-50 dark:bg-brand-900/40 hover:bg-brand-100 dark:hover:bg-brand-900/60 transition-colors whitespace-nowrap"
                 >
-                  <Icon.Speaker size={18} />
-                  <span>شنیدن داستانک</span>
+                  {speakingStory ? <Icon.Pause size={18} /> : <Icon.Speaker size={18} />}
+                  <span>{speakingStory ? 'توقف صدا' : 'شنیدن داستانک'}</span>
                 </button>
               )}
               {story.translationFa && (
@@ -314,16 +494,23 @@ export const MicroStoryPractice: React.FC<MicroStoryPracticeProps> = ({
             <button
               type="button"
               onClick={onBack}
-              className="min-h-[44px] px-5 rounded-xl text-sm font-bold text-ink dark:text-slate-200 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 whitespace-nowrap"
+              className="min-h-[44px] px-4 rounded-xl text-sm font-bold text-ink dark:text-slate-200 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 whitespace-nowrap"
             >
               بازگشت به بسته
+            </button>
+            <button
+              type="button"
+              onClick={handleRepeatSameStory}
+              className="min-h-[44px] px-4 rounded-xl text-sm font-bold text-brand-700 dark:text-brand-200 bg-brand-50 dark:bg-brand-900/40 hover:bg-brand-100 dark:hover:bg-brand-900/60 whitespace-nowrap"
+            >
+              تکرار همین داستانک
             </button>
             <button
               type="button"
               onClick={startAnotherStory}
               className="min-h-[44px] px-5 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 whitespace-nowrap"
             >
-              داستانک تازه با واژه‌های دیگر
+              ساخت داستانک تازه با واژه‌های دیگر
             </button>
           </div>
         </div>

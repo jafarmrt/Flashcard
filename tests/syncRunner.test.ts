@@ -20,6 +20,7 @@ const emptyLocal = (): LocalData => ({
   speechAttempts: [],
   notes: [],
   practice: [],
+  themeExercises: [],
   logs: [],
   achievements: [],
 });

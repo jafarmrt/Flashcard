@@ -1,8 +1,15 @@
-import React, { useEffect, useState } from 'react';
-import type { Flashcard, PracticeAnswer } from '../../types';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import type { Flashcard, PracticeAnswer, SavedThemeExercise } from '../../types';
 import type { CardPlace } from '../../services/library';
 import type { AiRequestOptions } from '../../services/geminiService';
-import { generateContrastUnits, type ContrastUnit } from '../../services/wordThemes';
+import {
+  generateContrastUnits,
+  hasUncoveredContrastPairs,
+  makeSavedContrastExercise,
+  markThemeExercisePlayed,
+  rehydrateContrastUnits,
+  type ContrastUnit,
+} from '../../services/wordThemes';
 import { fa, Icon } from '../common/ui';
 
 interface ContrastPracticeProps {
@@ -10,7 +17,11 @@ interface ContrastPracticeProps {
   cards: Flashcard[];
   places?: Map<string, CardPlace[]>;
   practice?: PracticeAnswer[];
+  savedContrasts?: SavedThemeExercise[];
+  initialExerciseId?: string | null;
+  startFresh?: boolean;
   aiOptions?: AiRequestOptions;
+  onSaveExercise?: (exercise: SavedThemeExercise) => Promise<void> | void;
   onAnswer?: (cardId: string, right: boolean, chose?: string) => void;
   onBack: () => void;
 }
@@ -22,11 +33,16 @@ export const ContrastPractice: React.FC<ContrastPracticeProps> = ({
   cards,
   places,
   practice = [],
+  savedContrasts = [],
+  initialExerciseId = null,
+  startFresh = false,
   aiOptions,
+  onSaveExercise,
   onAnswer,
   onBack,
 }) => {
   const [units, setUnits] = useState<ContrastUnit[]>([]);
+  const [currentExerciseId, setCurrentExerciseId] = useState<string | null>(initialExerciseId);
   const [loading, setLoading] = useState(true);
   const [index, setIndex] = useState(0);
   const [firstChoice, setFirstChoice] = useState<'A' | 'B' | null>(null);
@@ -34,20 +50,79 @@ export const ContrastPractice: React.FC<ContrastPracticeProps> = ({
   const [rightPairs, setRightPairs] = useState(0);
   const [finished, setFinished] = useState(false);
 
+  const savedContrastsRef = useRef(savedContrasts);
+  savedContrastsRef.current = savedContrasts;
+
+  const resetDrillWithUnits = useCallback((nextUnits: ContrastUnit[], exId: string | null) => {
+    setUnits(nextUnits);
+    setCurrentExerciseId(exId);
+    setIndex(0);
+    setFirstChoice(null);
+    setChecked(false);
+    setRightPairs(0);
+    setFinished(false);
+  }, []);
+
+  const buildFreshContrast = useCallback(
+    async (aliveCheck: () => boolean) => {
+      setLoading(true);
+      resetDrillWithUnits([], null);
+      const history = savedContrastsRef.current;
+      try {
+        const built = await generateContrastUnits(
+          themeName,
+          cards,
+          places,
+          practice,
+          aiOptions,
+          history,
+        );
+        if (!aliveCheck()) return;
+        if (built.length > 0) {
+          const savedRow = makeSavedContrastExercise(themeName, built, new Date().toISOString());
+          await onSaveExercise?.(savedRow);
+          if (!aliveCheck()) return;
+          resetDrillWithUnits(built, savedRow.id);
+        } else {
+          setUnits([]);
+        }
+      } catch {
+        if (!aliveCheck()) return;
+        setUnits([]);
+      } finally {
+        if (aliveCheck()) setLoading(false);
+      }
+    },
+    [aiOptions, cards, onSaveExercise, places, practice, resetDrillWithUnits, themeName],
+  );
+
   useEffect(() => {
     let alive = true;
-    setLoading(true);
-    generateContrastUnits(themeName, cards, places, practice, aiOptions)
-      .then(built => {
-        if (!alive) return;
-        setUnits(built);
+    const history = savedContrastsRef.current;
+
+    if (initialExerciseId) {
+      const wanted = history.find(c => c.id === initialExerciseId && c.contrastUnits?.length);
+      if (wanted?.contrastUnits?.length) {
+        resetDrillWithUnits(rehydrateContrastUnits(wanted.contrastUnits, cards), wanted.id);
         setLoading(false);
-      })
-      .catch(() => {
-        if (!alive) return;
-        setUnits([]);
+        return () => {
+          alive = false;
+        };
+      }
+    }
+
+    if (!startFresh && history.length > 0 && !hasUncoveredContrastPairs(cards, history)) {
+      const latest = history.find(c => c.contrastUnits?.length);
+      if (latest?.contrastUnits?.length) {
+        resetDrillWithUnits(rehydrateContrastUnits(latest.contrastUnits, cards), latest.id);
         setLoading(false);
-      });
+        return () => {
+          alive = false;
+        };
+      }
+    }
+
+    void buildFreshContrast(() => alive);
     return () => {
       alive = false;
     };
@@ -55,11 +130,32 @@ export const ContrastPractice: React.FC<ContrastPracticeProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [themeName]);
 
+  const handleRepeatSameDrill = () => {
+    const existing = currentExerciseId
+      ? savedContrasts.find(s => s.id === currentExerciseId)
+      : undefined;
+    if (existing && onSaveExercise) {
+      void onSaveExercise(markThemeExercisePlayed(existing, new Date().toISOString()));
+    }
+    resetDrillWithUnits(units, currentExerciseId);
+  };
+
+  const handleSelectSavedDrill = (id: string) => {
+    const picked = savedContrasts.find(s => s.id === id && s.contrastUnits?.length);
+    if (!picked?.contrastUnits?.length) return;
+    if (onSaveExercise) {
+      void onSaveExercise(markThemeExercisePlayed(picked, new Date().toISOString()));
+    }
+    resetDrillWithUnits(rehydrateContrastUnits(picked.contrastUnits, cards), picked.id);
+  };
+
   if (loading) {
     return (
       <section className="bg-white dark:bg-slate-800 rounded-3xl p-6 sm:p-8 flex flex-col items-center gap-3 text-center">
-        <p className="text-base font-bold text-ink dark:text-white">در حال آماده‌سازی جفت‌های نزدیک در «{themeName}»…</p>
-        <p className="text-sm text-ink-muted dark:text-slate-400">مرز معنایی و کاربردی واژه‌های شبیه کنار هم بررسی می‌شود.</p>
+        <p className="text-base font-bold text-ink dark:text-white">در حال آماده‌سازی جفت‌های تازه در «{themeName}»…</p>
+        <p className="text-sm text-ink-muted dark:text-slate-400">
+          مرز معنایی جفت‌های کم‌تمرین‌تر در مثال‌های غیرتکراری بررسی و ذخیره می‌شود.
+        </p>
       </section>
     );
   }
@@ -88,15 +184,33 @@ export const ContrastPractice: React.FC<ContrastPracticeProps> = ({
           <span className="text-base text-ink-muted dark:text-slate-400 ms-2">از {fa(units.length)} جفت کاملاً درست</span>
         </p>
         <p className="text-sm text-ink-muted dark:text-slate-400 max-w-md">
-          واژه‌هایی که جابه‌جا زده شد در «اشتباه‌های من» ثبت شدند تا در مرورهای بعدی هم کنار هم یادآوری شوند.
+          این تمرین در بستهٔ «{themeName}» ذخیره شد تا هر زمان خواستی تکرارش کنی و تمرین‌های بعدی هم جفت‌ها و جمله‌های تکراری نسازند.
         </p>
-        <button
-          type="button"
-          onClick={onBack}
-          className="min-h-[48px] px-6 rounded-2xl text-sm font-extrabold text-white bg-brand-500 hover:bg-brand-600"
-        >
-          بازگشت به بسته
-        </button>
+        <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+          <button
+            type="button"
+            onClick={onBack}
+            className="min-h-[44px] px-5 rounded-xl text-sm font-bold text-ink dark:text-slate-200 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 whitespace-nowrap"
+          >
+            بازگشت به بسته
+          </button>
+          <button
+            type="button"
+            onClick={handleRepeatSameDrill}
+            className="min-h-[44px] px-5 rounded-xl text-sm font-bold text-brand-700 dark:text-brand-200 bg-brand-50 dark:bg-brand-900/40 hover:bg-brand-100 dark:hover:bg-brand-900/60 whitespace-nowrap"
+          >
+            تکرار همین تمرین
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void buildFreshContrast(() => true);
+            }}
+            className="min-h-[48px] px-6 rounded-2xl text-sm font-extrabold text-white bg-brand-500 hover:bg-brand-600 whitespace-nowrap"
+          >
+            ساخت تمرین تفکیک تازه
+          </button>
+        </div>
       </section>
     );
   }
@@ -168,8 +282,8 @@ export const ContrastPractice: React.FC<ContrastPracticeProps> = ({
 
   return (
     <section className="bg-white dark:bg-slate-800 rounded-3xl p-5 sm:p-8 flex flex-col gap-5">
-      <header className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 min-w-0">
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
           <button
             type="button"
             onClick={onBack}
@@ -181,9 +295,35 @@ export const ContrastPractice: React.FC<ContrastPracticeProps> = ({
           <div className="min-w-0">
             <h2 className="text-lg sm:text-xl font-extrabold text-ink dark:text-white truncate">تفکیک واژه‌های نزدیک</h2>
             <p className="text-xs text-ink-muted dark:text-slate-400 tabular-nums">
-              بستهٔ {themeName} · جفت {fa(index + 1)} از {fa(units.length)}
+              بستهٔ {themeName} · جفت {fa(index + 1)} از {fa(units.length)} · تمرین ذخیره‌شده
             </p>
           </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {savedContrasts.length > 1 && (
+            <select
+              aria-label="انتخاب تمرین تفکیک ذخیره‌شده"
+              value={currentExerciseId || ''}
+              onChange={e => handleSelectSavedDrill(e.target.value)}
+              className="min-h-[40px] max-w-[210px] px-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-xs font-bold text-ink dark:text-white truncate"
+            >
+              {savedContrasts.map((s, idx) => (
+                <option key={s.id} value={s.id}>
+                  {fa(idx + 1)}. {s.titleFa}
+                </option>
+              ))}
+            </select>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              void buildFreshContrast(() => true);
+            }}
+            className="min-h-[40px] px-3.5 rounded-xl text-xs font-bold text-brand-700 dark:text-brand-200 bg-brand-50 dark:bg-brand-900/40 hover:bg-brand-100 dark:hover:bg-brand-900/60 transition-colors whitespace-nowrap"
+          >
+            + تفکیک تازه
+          </button>
         </div>
       </header>
 

@@ -9,6 +9,11 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.23.0] - 2026-11-27 - Audiobook Chapter Picker, Saved AI Voices, and Saved Bundle Exercises
+- **Audiobook chapter & section picker + exact resume:** In «حالت رانندگی», choose any chapter (such as Chapter 3) and any section directly from an interactive audiobook picker with completion badges, jump chapters or sections mid-playback via «فصل و بخش», and resume next time from the exact chapter, section, and sentence where listening stopped (`Source.audioPosition`, synced across devices and backups).
+- **Persistent AI speech cache without paying twice:** All AI-generated read-aloud audio (OpenRouter and Gemini) is stored in IndexedDB (`LinguaSpeechCache`, up to 5,000 pieces) as universal byte buffers with normalized keys and shared chunk boundaries across Reader, Driving Mode, and Micro-Story playback, alongside one-tap «ذخیرهٔ صدای این بخش» and «ذخیرهٔ صدای کل این فصل» pre-download controls.
+- **Saved thematic bundle exercises & anti-repetition:** Micro-stories (`داستانک هم‌بافت`) and close-word drills (`تفکیک واژه‌های نزدیک`) are automatically saved and synced in `themeExercises` so you can replay any past exercise without calling AI again, while new exercises prioritize unseen words/pairs and exclude previously generated scenes and sentences.
+
 ## [7.22.0] - 2026-11-26 - Driving Mode, Thematic Bundles, and Vazheh-Khwan Identity
 - **«حالت رانندگی»:** Hands-free continuous book listening across section and chapter boundaries plus eyes-free audio vocabulary review (English word and sentence, silent thinking pause, Persian or fallback meaning, and repeat) without altering FSRS schedules, paired with steering-wheel `MediaSession` controls and screen Wake Lock.
 - **One-tap driving bookmarks (`نشان‌های رانندگی`):** A giant one-tap button bookmarks the current book sentence or flags the current card without stopping playback; after driving, Today and Driving Mode show a review tray where any word in a bookmarked sentence can be looked up and turned into a card.

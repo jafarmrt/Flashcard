@@ -4,7 +4,7 @@ import { backupDue, BackupData, BackupError, chapterNeedsRemoteText, makeBackup,
 
 const T = '2026-11-01T00:00:00.000Z';
 const NOW = new Date('2026-11-21T10:00:00.000Z');
-const empty = (): BackupData => ({ decks: [], cards: [], sources: [], chapters: [], occurrences: [], knownWords: [], speechAttempts: [], notes: [], practice: [], studyHistory: [], chapterTexts: [] });
+const empty = (): BackupData => ({ decks: [], cards: [], sources: [], chapters: [], occurrences: [], knownWords: [], speechAttempts: [], notes: [], practice: [], themeExercises: [], studyHistory: [], chapterTexts: [] });
 const account = (): BackupData => ({
   ...empty(),
   decks: [{ id: 'd1', name: 'Book', updatedAt: T } as any],

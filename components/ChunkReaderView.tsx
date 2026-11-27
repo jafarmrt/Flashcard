@@ -25,7 +25,7 @@ import { explainInSentence, ruleCard, ruleIdsWithCards } from '../services/gramm
 import { normalizeTerm } from '../services/vocabMerge';
 import { isBelowLevel } from '../services/wordLevel';
 import { isSpeechSupported, speakText, stopSpeech } from '../services/ttsService';
-import { piecesOf, type ReadAloudVoice } from '../services/readAloud';
+import { sectionPiecesForVoice, type ReadAloudVoice } from '../services/readAloud';
 import { translateText, type Translation } from '../services/translate';
 import { useReadAloud } from '../hooks/useReadAloud';
 import { fa, Icon } from './common/ui';
@@ -120,10 +120,6 @@ const MAX_SECTION_BUTTONS = 12;
 const PRE_READ_WORDS = 8;
 // The longest pick that gets a meaning; a longer one is a sentence.
 const MAX_PHRASE_WORDS = 8;
-// Words an AI voice reads in one request (about 35 s of speech); the first
-// piece is shorter so reading starts sooner.
-const AI_PIECE_WORDS = 90;
-const AI_FIRST_PIECE_WORDS = 35;
 
 // A tap on one of these words inside a grammar structure opens the
 // structure; a tap on any other word of it looks the word up.
@@ -181,7 +177,7 @@ export const ChunkReaderView: React.FC<ChunkReaderViewProps> = ({
   // sentences at a time with an AI voice; a pause goes on from where it was.
   // A device without speech of its own can only use the AI voice.
   const voice: ReadAloudVoice = settings.readAloudVoice === 'ai' || !isSpeechSupported() ? 'ai' : 'device';
-  const pieces = useMemo(() => (voice === 'ai' ? piecesOf(section, AI_PIECE_WORDS, AI_FIRST_PIECE_WORDS) : piecesOf(section)), [section, voice]);
+  const pieces = useMemo(() => sectionPiecesForVoice(section, voice), [section, voice]);
   const readAloud = useReadAloud({
     pieces, textKey: chunk, voice, settings,
     onAiFailed: error => {
