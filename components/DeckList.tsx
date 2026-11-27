@@ -194,7 +194,15 @@ const DeckList: React.FC<DeckListProps> = ({
                         <Icon.List size={16} />همهٔ {fa(totalCards)} کارت
                     </button>
                     {onAiExtract && (
-                      <button type="button" onClick={onAiExtract} className="inline-flex items-center gap-1.5 min-h-[44px] px-4 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 transition-colors whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={onAiExtract}
+                        className={`inline-flex items-center gap-1.5 min-h-[44px] px-4 rounded-xl text-sm font-bold transition-colors whitespace-nowrap ${
+                          tab === 'decks'
+                            ? 'text-white bg-brand-500 hover:bg-brand-600'
+                            : 'text-ink dark:text-slate-200 bg-white dark:bg-slate-800 border border-stone-200 dark:border-slate-700 hover:bg-stone-50 dark:hover:bg-slate-700'
+                        }`}
+                      >
                         <SparkIcon />
                         <span>استخراج واژه از متن</span>
                       </button>

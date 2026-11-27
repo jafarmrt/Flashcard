@@ -384,6 +384,10 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
       const nextPos = nextBookPosition(sourceId, chapters, chapterId, chunk);
       if (!nextPos) {
         haltAudio();
+        setBookPieces(pieces => {
+          setPieceIndex(Math.max(0, pieces.length - 1));
+          return pieces;
+        });
         setPaused(true);
         setStatusMessage('پخش کتاب به پایان رسید.');
         return;
@@ -655,7 +659,7 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
     }
 
     if (mode === 'book') {
-      const piece = bookPieces[pieceIndex];
+      const piece = bookPieces[pieceIndex] || bookPieces[bookPieces.length - 1];
       if (!selectedSource || !bookChapterId || !piece) return;
       const already = drivingBookmarksOf(notes).some(
         n =>
@@ -702,7 +706,8 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
   };
 
   const currentCard = activeCardQueue[cardIndex % Math.max(1, activeCardQueue.length)];
-  const currentPiece = bookPieces[pieceIndex];
+  const currentPiece = bookPieces[pieceIndex] || bookPieces[bookPieces.length - 1];
+  const shownPieceNumber = bookPieces.length > 0 ? Math.min(pieceIndex + 1, bookPieces.length) : 0;
   const speechCacheHint = `${speechProvider(settings)} · ${speechModel(settings)}${speechVoice(settings) ? ` · ${speechVoice(settings)}` : ''}`;
 
   // --- ACTIVE HANDS-FREE AUTOMOTIVE VIEW ---
@@ -743,7 +748,7 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
                 <span dir="auto" className="font-read font-semibold text-slate-200">
                   {selectedSource?.title}
                 </span>
-                {activeChapter && (
+                {activeChapter && activeChapter.title !== selectedSource?.title && (
                   <>
                     <span aria-hidden="true">·</span>
                     <span dir="auto">{activeChapter.title}</span>
@@ -755,20 +760,24 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
                   <>
                     <span aria-hidden="true">·</span>
                     <span className="tabular-nums">
-                      جمله {fa(Math.min(pieceIndex + 1, bookPieces.length))} از {fa(bookPieces.length)}
+                      جمله {fa(shownPieceNumber)} از {fa(bookPieces.length)}
                     </span>
                   </>
                 )}
               </div>
 
-              <p
-                dir="ltr"
-                className="font-read text-2xl sm:text-3xl lg:text-4xl leading-relaxed text-slate-50 max-w-3xl"
-              >
-                {loadingBook
-                  ? 'Loading section…'
-                  : currentPiece?.text || 'Preparing next section…'}
-              </p>
+              {loadingBook || !currentPiece ? (
+                <p dir="rtl" className="text-lg sm:text-xl text-slate-400 max-w-2xl">
+                  {loadingBook ? 'در حال بارگذاری بخش…' : 'در حال آماده‌سازی بخش…'}
+                </p>
+              ) : (
+                <p
+                  dir="ltr"
+                  className="font-read text-2xl sm:text-3xl lg:text-4xl leading-relaxed text-slate-50 max-w-3xl"
+                >
+                  {currentPiece.text}
+                </p>
+              )}
             </>
           ) : (
             currentCard && (

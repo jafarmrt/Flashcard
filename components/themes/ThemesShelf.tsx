@@ -363,6 +363,7 @@ export const ThemesShelf: React.FC<ThemesShelfProps> = ({
                   <div className="flex gap-2">
                     <button
                       type="button"
+                      aria-label={`باز کردن و تمرین بستهٔ ${summary.name}`}
                       onClick={() => setActiveTheme(summary.name)}
                       className="flex-1 min-h-[44px] px-4 rounded-xl text-sm font-bold text-white bg-brand-500 hover:bg-brand-600 transition-colors whitespace-nowrap"
                     >
@@ -370,6 +371,7 @@ export const ThemesShelf: React.FC<ThemesShelfProps> = ({
                     </button>
                     <button
                       type="button"
+                      aria-label={`مرور بستهٔ ${summary.name}`}
                       disabled={summary.cardCount === 0}
                       onClick={() => onStudyCards(liveVocab.filter(c => cardHasTheme(c, summary.name)))}
                       className="min-h-[44px] px-3.5 rounded-xl text-sm font-bold text-ink dark:text-slate-200 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-40 whitespace-nowrap"

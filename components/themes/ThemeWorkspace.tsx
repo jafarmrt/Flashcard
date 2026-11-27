@@ -11,6 +11,7 @@ import {
   wordRoleOf,
 } from '../../services/wordThemes';
 import { isDue } from '../../services/srsService';
+import { displayDeckName } from '../../services/drivingMode';
 import { fa, Icon } from '../common/ui';
 import { MicroStoryPractice } from './MicroStoryPractice';
 import { ContrastPractice } from './ContrastPractice';
@@ -71,7 +72,7 @@ export const ThemeWorkspace: React.FC<ThemeWorkspaceProps> = ({
   );
 
   const dueCount = useMemo(() => bundleCards.filter(c => isDue(c)).length, [bundleCards]);
-  const decksById = useMemo(() => new Map(decks.map(d => [d.id, d.name])), [decks]);
+  const decksById = useMemo(() => new Map(decks.map(d => [d.id, displayDeckName(d.name)])), [decks]);
 
   const byRole = useMemo(() => {
     const groups: Record<SceneRole, Flashcard[]> = { nouns: [], verbs: [], modifiers: [], phrases: [] };

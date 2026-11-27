@@ -243,8 +243,9 @@ const FlashcardList: React.FC<FlashcardListProps> = ({ cards, decks, savedThemes
                 </button>
                 {onApplyImprovements && aiSources && aiSources.length > 0 && (
                     <button onClick={() => setImproving(true)} disabled={!!autoFixProgress || !!extrasProgress} title="بخش‌هایی را که انتخاب می‌کنی، برای کارت‌های همین فهرست با هوش مصنوعی بهبود بده"
-                        className="inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold text-brand-700 dark:text-brand-200 bg-white dark:bg-slate-800 border border-brand-200 dark:border-brand-700 hover:bg-brand-50 dark:hover:bg-slate-700 transition-colors shrink-0 disabled:opacity-50">
-                        <MagicWandIcon /> بهبود<span className="hidden sm:inline">&nbsp;با هوش مصنوعی</span>
+                        className="inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-xl text-sm font-bold text-brand-700 dark:text-brand-200 bg-white dark:bg-slate-800 border border-brand-200 dark:border-brand-700 hover:bg-brand-50 dark:hover:bg-slate-700 transition-colors shrink-0 disabled:opacity-50 whitespace-nowrap">
+                        <MagicWandIcon />
+                        <span>بهبود<span className="hidden sm:inline"> با هوش مصنوعی</span></span>
                     </button>
                 )}
                 {autoFixProgress ? (

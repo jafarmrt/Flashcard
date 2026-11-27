@@ -87,13 +87,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ view, dueCount, userProfile, u
           </span>
         </span>
       </button>
-      <button type="button" onClick={() => onNavigate('DIAGNOSTICS')} dir="ltr" title="وضعیت و عیب‌یابی"
-        className="flex justify-center items-center gap-3 min-h-[36px] rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 text-[11px] text-slate-400 transition-colors">
-        {health.map(h => (
-          <span key={h.label} className="flex items-center gap-1" title={`${h.label}: ${h.status}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${h.status === 'ok' ? 'bg-emerald-500' : h.status === 'error' ? 'bg-red-500' : 'bg-amber-500'}`} />{h.label}
-          </span>
-        ))}
+      <button type="button" onClick={() => onNavigate('DIAGNOSTICS')} aria-label="وضعیت سرویس‌ها و عیب‌یابی" title="وضعیت و عیب‌یابی"
+        className="flex flex-wrap justify-center items-center gap-2.5 min-h-[36px] rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 text-[11px] text-ink-muted dark:text-slate-400 transition-colors">
+        {health.map(h => {
+          const shown = ({ DB: 'داده', AI: 'هوش', 'Free Dict.': 'واژه‌نامه', MW: 'وبستر' } as Record<string, string>)[h.label] || h.label;
+          return (
+            <span key={h.label} className="flex items-center gap-1 whitespace-nowrap">
+              <span className={`w-1.5 h-1.5 rounded-full ${h.status === 'ok' ? 'bg-emerald-600' : h.status === 'error' ? 'bg-red-500' : 'bg-amber-500'}`} aria-hidden="true" />
+              <span>{shown}</span>
+            </span>
+          );
+        })}
       </button>
       {health.some(h => h.label === 'DB' && h.status === 'error') && <DbRepair />}
     </aside>
