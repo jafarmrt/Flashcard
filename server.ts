@@ -22,6 +22,18 @@ app.set('trust proxy', 'loopback');
 // Vercel refuses bodies over 4.5 MB; a VPS takes a little more (a long
 // chapter's text), not 50 MB that is parsed before anyone signs in.
 app.use(express.json({ limit: '10mb' }));
+// The same headers as vercel.json: no framing by other sites (clickjacking),
+// no content-type guessing, no full URLs sent to other sites, and only
+// the microphone among the device's sensors. (No full script CSP yet: the
+// AI services, dictionaries and audio would need their own list.)
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Content-Security-Policy', "frame-ancestors 'none'; object-src 'none'; base-uri 'self'");
+  res.setHeader('Permissions-Policy', 'microphone=(self), camera=(), geolocation=(), payment=()');
+  next();
+});
 
 app.post('/api/proxy', (req, res) => handleProxy(req, res));
 // Telegram's updates (webhook) and a cron, as on Vercel (api/telegram.ts).

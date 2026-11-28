@@ -414,3 +414,27 @@ test('a failed sign-in with a name that has no account leaves nothing in the sto
   const long = await call({ action: 'auth-login', username: 'x'.repeat(5000), password: 'wrong-password-1' });
   assert.equal(long.status, 400);
 });
+
+const loginAs = async (username: string, password: string, ip: string, cookie?: string) => {
+  const out: { status: number; cookies: string[] } = { status: 0, cookies: [] };
+  const res: ProxyResponse = {
+    status(c) { out.status = c; return res; }, json(b) { return b; }, send(b) { return b; },
+    setHeader(name, value) { if (name === 'Set-Cookie') out.cookies = ([] as string[]).concat(value as any); return undefined; },
+  };
+  await (handleProxy as any)({ body: { action: 'auth-login', username, password }, headers: { 'x-forwarded-for': ip, ...(cookie ? { cookie } : {}) }, socket: { remoteAddress: ip } }, res);
+  return out;
+};
+
+test('a locked account still lets a browser that signed in before sign in with the right password, and only that one', async () => {
+  setupServer();
+  await call({ action: 'auth-register', username: 'mina', password: 'long-enough-password' });
+  const first = await loginAs('mina', 'long-enough-password', '10.2.0.1');
+  const device = first.cookies.find(c => c.startsWith('lc_device='))!.split(';')[0];
+  assert.ok(device, 'a successful sign-in marks the browser');
+
+  // Someone guesses from many addresses, all at once.
+  await Promise.all(Array.from({ length: 25 }, (_, i) => loginAs('mina', `wrong-password-${i}`, `10.3.0.${i}`)));
+  assert.equal((await loginAs('mina', 'long-enough-password', '10.4.0.1')).status, 429, 'a new browser is held by the lock');
+  assert.equal((await loginAs('mina', 'long-enough-password', '10.4.0.2', device)).status, 200, "the owner's browser signs in");
+  assert.equal((await loginAs('mina', 'wrong-password-x', '10.4.0.3', device)).status, 401, 'the mark is not a password');
+});

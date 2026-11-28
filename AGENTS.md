@@ -319,13 +319,17 @@ The user asked for a strict review and agreed to stabilize before new
 features. Phase 0 (CI, storage.persist, these notes) and phase 1 (data
 safety, 7.24.1) are done. Still open:
 
-- Phase 1 leftovers: per-account login lock lets anyone lock the owner out
-  for 15 minutes (lock should slow unknown addresses, not refuse the right
-  password); login-fail count is read-modify-write (use INCR); the Redis
-  sync lock (20 s) can expire during a long sync; `tg:code:*` and
-  `keys:<u>:unreadable:*` keep forever; the account is one Redis value
-  that grows forever (studyHistory, practice, tombstones); security
-  headers in vercel.json; undoing a review leaves its log on the server.
+- Phase 1 leftovers done in 7.24.4: a known-device cookie (`lc_device`,
+  server/auth `isKnownDevice`) lets the owner's browser past the account
+  lock; failures counted atomically (`countLoginFailure`: Redis EVAL
+  INCR+PEXPIRE, key `login-fails:<user>`; the old `login-fail:` JSON keys
+  are no longer read); sync lock 65 s and KV requests time out at 15 s;
+  TTLs on `tg:code:*` and `keys:<u>:unreadable:*`; security headers in
+  vercel.json and server.ts (no script CSP yet). Still open: the account
+  is one Redis value that grows (studyHistory, practice, tombstones): ask
+  the user for the sizes on the usage page before changing the layout;
+  undoing a review after a sync leaves its log on the server (minor: stats
+  only, and rare since the app syncs on leaving).
 - Phase 2: done in 7.24.3: e2e flows (sign in, read and make a card,
   review, lesson pause/resume, two devices). They found that a review's
   ratings synced only at the session's end: the app now syncs when it goes

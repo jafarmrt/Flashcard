@@ -53,7 +53,7 @@ type Row = Record<string, any>;
 
 export interface TgDeps {
   get(key: string): Promise<any | null>;
-  set(key: string, value: unknown): Promise<void>;
+  set(key: string, value: unknown, keepMs?: number): Promise<void>; // keepMs: the store may forget it after that
   del(key: string): Promise<void>;
   keys(prefix: string): Promise<string[]>;
   readData(username: string): Promise<StoreData | null>;
@@ -163,7 +163,7 @@ const rateButtons = (card: Flashcard, now: Date) => {
 
 export const newLinkCode = async (deps: TgDeps, username: string, tz: number): Promise<{ code: string; link: string; bot: string }> => {
   const code = randomBytes(9).toString('base64url');
-  await deps.set(codeKey(code), { username: username.toLowerCase(), tz: cleanTz(tz), exp: deps.now().getTime() + CODE_MINUTES * 60_000 });
+  await deps.set(codeKey(code), { username: username.toLowerCase(), tz: cleanTz(tz), exp: deps.now().getTime() + CODE_MINUTES * 60_000 }, CODE_MINUTES * 60_000);
   const bot = await deps.botName();
   return { code, link: `https://t.me/${bot}?start=${code}`, bot };
 };
