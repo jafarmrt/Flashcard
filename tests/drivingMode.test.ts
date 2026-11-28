@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Chapter, Flashcard, Source, TextNote } from '../types';
 import {
+  utteranceWays,
   DRIVE_NOTE_BY,
   bookAudioOverview,
   bookmarkCandidateWords,
@@ -268,4 +269,12 @@ test('saving the listening spot does not bring back an older reading position fr
   const merged = mergeRow('sources', phone, tablet);
   assert.deepEqual(merged.position, phone.position, 'the newer reading position stays');
   assert.equal(merged.audioPosition?.pieceIndex, 4, 'the listening spot is kept too');
+});
+
+test('an utterance is spoken by a recording, the AI voice or the device, in that order, as each applies', () => {
+  assert.deepEqual(utteranceWays({ voice: 'device', lang: 'en-US', hasRecording: true, provider: 'gemini' }), ['recorded', 'device']);
+  assert.deepEqual(utteranceWays({ voice: 'ai', lang: 'en-US', hasRecording: true, provider: 'openrouter' }), ['ai', 'device'], 'the AI voice reads even a recorded word');
+  assert.deepEqual(utteranceWays({ voice: 'ai', lang: 'fa-IR', hasRecording: false, provider: 'openrouter' }), ['device'], 'OpenRouter does not speak Persian');
+  assert.deepEqual(utteranceWays({ voice: 'ai', lang: 'fa-IR', hasRecording: false, provider: 'gemini' }), ['ai', 'device']);
+  assert.deepEqual(utteranceWays({ voice: 'device', lang: 'fa-IR', hasRecording: true, provider: 'gemini' }), ['device']);
 });

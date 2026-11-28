@@ -295,6 +295,34 @@ export const withLessonRating = (
     ? null
     : { ...lesson, ratings: { ...lesson.ratings, [cardId]: rating }, updatedAt: nowIso };
 
+// The lesson without `cardId`'s rating (its review was undone).
+export const withoutLessonRating = (
+  lesson: SavedStudyLesson,
+  cardId: string,
+  nowIso: string = new Date().toISOString(),
+): SavedStudyLesson => {
+  if (!lesson.ratings?.[cardId]) return lesson;
+  const { [cardId]: _undone, ...rest } = lesson.ratings;
+  return { ...lesson, ratings: rest, updatedAt: nowIso };
+};
+
+// The cards of a stage still to be rated in this lesson.
+export const unratedCardIds = (cardIds: string[], ratings: SavedStudyLesson['ratings']): string[] =>
+  cardIds.filter(id => !ratings?.[id]);
+
+// A review stage's result from the lesson's ratings: Good and Easy count as
+// right, Again and Hard make the card one to come back to in the last stage.
+export const reviewStageResult = (cardIds: string[], ratings: SavedStudyLesson['ratings']) => {
+  let rightCount = 0;
+  const hardIds: string[] = [];
+  for (const id of cardIds) {
+    const r = ratings?.[id];
+    if (r === 'GOOD' || r === 'EASY') rightCount++;
+    if (r === 'AGAIN' || r === 'HARD') hardIds.push(id);
+  }
+  return { rightCount, totalCount: cardIds.length, hardIds };
+};
+
 export const completeLessonStage = (
   lesson: SavedStudyLesson,
   stageIndex: number,

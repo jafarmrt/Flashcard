@@ -551,8 +551,13 @@ export const useAppLogic = () => {
         };
         try {
             const { username } = await callProxy('auth-session', {});
-            if (username) await startSignedIn(username);
-            else localStorage.removeItem(LAST_USER_KEY);
+            if (username) {
+                await startSignedIn(username);
+                // Pull what other devices changed at once: the automatic
+                // sync waits two seconds after the data loads, and a review
+                // started in those seconds asked cards from the old schedule.
+                handleSync();
+            } else localStorage.removeItem(LAST_USER_KEY);
         } catch (e) {
             console.error('Could not check the session:', e);
             // No connection (common on a filtered or cut network): open this

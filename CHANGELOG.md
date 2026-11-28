@@ -9,6 +9,14 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.25.0] - 2026-11-28 - One Review, Wherever You Review
+- **The lesson's review is the review you know:** A timed lesson's review step is now the app's own review screen, with all its rules: a card you missed comes back after ten others, a new card is asked twice, a typed meaning is checked, «واگرد» undoes the last answer, and the review modes are there. The lesson had a simpler copy of its own without any of them. Its end screen has «ادامهٔ جلسه», which goes on to the lesson's quiz; a lesson left in the middle still asks only the cards not answered yet.
+- **More room on a phone during a lesson:** The list of the lesson's steps is left out on a small screen (the line at the top names the step you are on), so the card and its button are in view.
+- **Driving mode, sturdier:** Its audio is now one piece of its own, and a pause or a skip no longer leaves the cut-off sentence waiting in the background.
+- **Today for a new account:** With no cards yet, Today says where cards come from, instead of a review box with sizes and modes for zero cards.
+- **Up to date at once:** Opening the app now fetches what your other devices changed right away, instead of two seconds after the app has loaded.
+- **For development:** A sixth check runs driving mode in the browser with the device's voice replaced, and the lesson check goes through the review, a pause and on to the quiz.
+
 ## [7.24.4] - 2026-11-28 - No One Can Lock You Out
 - **Your own browser is not locked out:** Twenty wrong passwords lock an account's sign-in for fifteen minutes, and until now that kept the owner out as well: anyone who knew the account name could do it again and again. A browser that has signed in to the account before now keeps a mark of it and may still sign in with the right password while the lock lasts; other browsers wait.
 - **Guesses sent all at once are all counted:** Failed sign-ins sent at the same moment were counted as one. They are now counted one by one, so the lock comes after twenty, however they arrive.

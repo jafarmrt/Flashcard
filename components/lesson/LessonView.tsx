@@ -26,12 +26,16 @@ import {
   LESSON_BLUEPRINTS,
   LESSON_DURATIONS,
   lessonsByDay,
+  reviewStageResult,
   todayOpenLesson,
+  unratedCardIds,
   withLessonRating,
+  withoutLessonRating,
   type LessonClozeItem,
 } from '../../services/studyLesson';
 import { isSpeechSupported, speakText } from '../../services/ttsService';
 import { QuizPractice, type QuizFirstAnswer } from '../practice/QuizPractice';
+import { StudyView } from '../StudyView';
 import { fa, Icon } from '../common/ui';
 
 interface LessonViewProps {
@@ -76,226 +80,50 @@ const playWordAudio = async (word: string, audioSrc?: string) => {
   speakText(clean, { rate: 0.92 });
 };
 
-// Stage 1 / 2: Active Flashcard Review inside a Timed Lesson
+// Stage 1 / 2: the lesson's review is the app's own review (StudyView) with
+// its rules: a card missed comes back after ten others, a new card is asked
+// twice, typed meanings are checked, a rating can be undone. It had its own
+// simpler copy, without any of them. Each card's first rating in the lesson
+// is kept (SavedStudyLesson.ratings), so a resumed stage asks only the rest.
 const LessonReviewStage: React.FC<{
   cardIds: string[];
   cardsById: Map<string, Flashcard>;
   lesson: SavedStudyLesson;
-  onRateCard: (cardId: string, rating: PerformanceRating) => Promise<Flashcard | null>;
-  onFinishStage: (result: { rightCount: number; totalCount: number; hardIds: string[] }) => void;
-}> = ({ cardIds, cardsById, lesson, onRateCard, onFinishStage }) => {
-  // A resumed stage asks only the cards not rated yet in this lesson: asking
-  // the rest again rated them a second time (AGAIN and HARD twice in FSRS).
-  const [queue, setQueue] = useState<{ cardId: string; repeat: boolean }[]>(() =>
-    cardIds.filter(cardId => !lesson.ratings?.[cardId]).map(cardId => ({ cardId, repeat: false })),
+  places: Map<string, CardPlace[]>;
+  allCards: Flashcard[];
+  aiOptions?: AiRequestOptions;
+  onRated: (cardId: string, rating: PerformanceRating) => void;
+  onUndone: (cardId: string) => void;
+  onExit: () => void; // the review ended or was left: the parent decides which
+}> = ({ cardIds, cardsById, lesson, places, allCards, aiOptions, onRated, onUndone, onExit }) => {
+  // Fixed when the stage opens: StudyView starts its session over whenever
+  // its cards change, and every rating's sync hands back new card objects.
+  const [cards] = useState(() =>
+    unratedCardIds(cardIds, lesson.ratings).map(id => cardsById.get(id)).filter((c): c is Flashcard => !!c),
   );
-  const [index, setIndex] = useState(0);
-  const [revealed, setRevealed] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const firstRatingsRef = useRef<Map<string, PerformanceRating>>(
-    new Map(cardIds.flatMap(id => (lesson.ratings?.[id] ? [[id, lesson.ratings[id]] as const] : []))),
-  );
-
-  const finish = useCallback(() => {
-    const ratings = firstRatingsRef.current;
-    let rightCount = 0;
-    const hardIds: string[] = [];
-    for (const id of cardIds) {
-      const r = ratings.get(id);
-      if (r === 'GOOD' || r === 'EASY') rightCount++;
-      if (r === 'AGAIN' || r === 'HARD') hardIds.push(id);
-    }
-    onFinishStage({ rightCount, totalCount: cardIds.length, hardIds });
-  }, [cardIds, onFinishStage]);
 
   // Every card was rated before the pause: the stage is done.
-  const finishedOnArrival = useRef(queue.length === 0);
+  const finishedOnArrival = useRef(cards.length === 0);
   useEffect(() => {
     if (finishedOnArrival.current) {
       finishedOnArrival.current = false;
-      finish();
+      onExit();
     }
-  }, [finish]);
-
-  const currentItem = queue[index];
-  const liveCard = currentItem ? cardsById.get(currentItem.cardId) : undefined;
-  const snap = useMemo(
-    () => (currentItem ? lesson.words.find(w => w.cardId === currentItem.cardId) : undefined),
-    [currentItem, lesson.words],
-  );
-
-  const front = liveCard?.front || snap?.front || '';
-  const back = liveCard?.back || snap?.back || '';
-  const pos = liveCard?.partOfSpeech || snap?.partOfSpeech || '';
-  const sentence =
-    liveCard?.sourceSentence ||
-    liveCard?.exampleSentenceTarget?.[0] ||
-    snap?.sentence ||
-    '';
-
-  const handleRate = useCallback(
-    async (rating: PerformanceRating) => {
-      if (!currentItem || busy) return;
-      setBusy(true);
-      try {
-        if (!currentItem.repeat) {
-          firstRatingsRef.current.set(currentItem.cardId, rating);
-          await onRateCard(currentItem.cardId, rating);
-        }
-
-        const shouldRepeat = !currentItem.repeat && rating === 'AGAIN';
-        const nextQueue = shouldRepeat
-          ? [...queue, { cardId: currentItem.cardId, repeat: true }]
-          : queue;
-
-        if (shouldRepeat) {
-          setQueue(nextQueue);
-        }
-
-        if (index + 1 < nextQueue.length) {
-          setIndex(i => i + 1);
-          setRevealed(false);
-        } else {
-          finish();
-        }
-      } finally {
-        setBusy(false);
-      }
-    },
-    [busy, currentItem, finish, index, onRateCard, queue],
-  );
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target?.closest('input, textarea, select, [contenteditable]')) return;
-      if (!revealed && (e.code === 'Space' || e.code === 'Enter')) {
-        e.preventDefault();
-        setRevealed(true);
-        return;
-      }
-      if (revealed) {
-        if (e.key === '1') void handleRate('AGAIN');
-        else if (e.key === '2') void handleRate('HARD');
-        else if (e.key === '3') void handleRate('GOOD');
-        else if (e.key === '4') void handleRate('EASY');
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [revealed, handleRate]);
-
-  if (!currentItem) return null;
+  }, [onExit]);
+  if (cards.length === 0) return null;
 
   return (
-    <section className="bg-white dark:bg-slate-800 rounded-3xl p-5 sm:p-8 border border-stone-200/80 dark:border-slate-700 flex flex-col gap-6">
-      <div className="flex items-center gap-3">
-        <div className="flex-1 h-2 rounded-full bg-stone-200 dark:bg-slate-700 overflow-hidden">
-          <div
-            className="h-full bg-brand-500 rounded-full transition-opacity duration-200"
-            style={{ width: `${Math.min(100, ((index + (revealed ? 0.5 : 0)) / queue.length) * 100)}%` }}
-          />
-        </div>
-        <span className="text-xs text-ink-muted dark:text-slate-400 whitespace-nowrap tabular-nums">
-          واژهٔ {fa(index + 1)} از {fa(queue.length)}
-          {currentItem.repeat ? ' · تکرار در همین نوبت' : ''}
-        </span>
-      </div>
-
-      <div className="flex flex-col items-center text-center gap-3 py-3">
-        <div className="flex items-center justify-center gap-2">
-          <h3 dir="ltr" className="font-read text-3xl sm:text-4xl font-bold text-ink dark:text-white">
-            {front}
-          </h3>
-          <button
-            type="button"
-            onClick={() => {
-              void playWordAudio(front, liveCard?.audioSrc);
-            }}
-            aria-label="پخش تلفظ واژه"
-            className="min-h-[44px] min-w-[44px] rounded-full text-slate-500 hover:text-brand-600 hover:bg-brand-50 dark:text-slate-300 dark:hover:bg-slate-700 flex items-center justify-center transition-colors"
-          >
-            <Icon.Speaker size={20} />
-          </button>
-        </div>
-        {pos && (
-          <p dir="ltr" className="font-en text-xs text-ink-muted dark:text-slate-400">
-            {pos}
-          </p>
-        )}
-        {sentence && (
-          <p
-            dir="ltr"
-            className="font-read text-base sm:text-lg italic leading-relaxed text-slate-700 dark:text-slate-200 max-w-2xl"
-          >
-            “{sentence}”
-          </p>
-        )}
-      </div>
-
-      {!revealed ? (
-        <div className="flex flex-col items-center gap-2 pt-2">
-          <p className="text-xs text-ink-muted dark:text-slate-400">
-            اول معنی واژه را در ذهن بیاور، سپس کارت را برگردان.
-          </p>
-          <button
-            type="button"
-            onClick={() => setRevealed(true)}
-            className="min-h-[52px] px-8 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold text-base whitespace-nowrap transition-colors"
-          >
-            نمایش معنی
-          </button>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-5 pt-2 border-t border-stone-200/80 dark:border-slate-700">
-          <div className="text-center flex flex-col gap-2">
-            <p className="text-2xl sm:text-3xl font-extrabold text-brand-700 dark:text-brand-300">
-              {back}
-            </p>
-            {liveCard?.notes && (
-              <p className="text-sm text-ink-muted dark:text-slate-300 max-w-xl mx-auto leading-relaxed">
-                {liveCard.notes}
-              </p>
-            )}
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void handleRate('AGAIN')}
-              className="min-h-[52px] px-3 rounded-2xl bg-red-50 hover:bg-red-100 dark:bg-red-900/30 dark:hover:bg-red-900/50 border border-red-200 dark:border-red-800 text-red-900 dark:text-red-200 font-bold text-sm whitespace-nowrap transition-colors"
-            >
-              یادم نبود
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void handleRate('HARD')}
-              className="min-h-[52px] px-3 rounded-2xl bg-amber-50 hover:bg-amber-100 dark:bg-amber-900/30 dark:hover:bg-amber-900/50 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 font-bold text-sm whitespace-nowrap transition-colors"
-            >
-              سخت بود
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void handleRate('GOOD')}
-              className="min-h-[52px] px-3 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold text-sm whitespace-nowrap transition-colors"
-            >
-              خوب یادم بود
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void handleRate('EASY')}
-              className="min-h-[52px] px-3 rounded-2xl bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-900/30 dark:hover:bg-emerald-900/50 border border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200 font-bold text-sm whitespace-nowrap transition-colors"
-            >
-              کاملاً آسان
-            </button>
-          </div>
-        </div>
-      )}
-    </section>
+    <StudyView
+      cards={cards}
+      initialMode="auto"
+      places={places}
+      allCards={allCards}
+      aiOptions={aiOptions}
+      onRated={(id, rating, first) => { if (first) onRated(id, rating); }}
+      onUndone={(id, first) => { if (first) onUndone(id); }}
+      onExit={() => onExit()}
+      finishLabel="ادامهٔ جلسه"
+    />
   );
 };
 
@@ -572,6 +400,25 @@ export const LessonView: React.FC<LessonViewProps> = ({
     return () => window.clearInterval(id);
   }, [mode, activeLessonId, stageIndex]);
 
+  // The review stage (StudyView) has rated the card already; the lesson
+  // only keeps the rating. Read and written through the ref, so answers in
+  // quick succession each add to the latest lesson.
+  const recordRating = useCallback((cardId: string, rating: PerformanceRating) => {
+    const lesson = activeLessonRef.current;
+    const next = lesson && withLessonRating(lesson, cardId, rating);
+    if (!next) return;
+    activeLessonRef.current = next;
+    void onSaveLesson(next);
+  }, [onSaveLesson]);
+
+  const forgetRating = useCallback((cardId: string) => {
+    const lesson = activeLessonRef.current;
+    if (!lesson) return;
+    const next = withoutLessonRating(lesson, cardId);
+    activeLessonRef.current = next;
+    void onSaveLesson(next);
+  }, [onSaveLesson]);
+
   // Rates a card once per lesson (see SavedStudyLesson.ratings).
   const rateInLesson = useCallback(async (cardId: string, rating: PerformanceRating) => {
     const lesson = activeLessonRef.current;
@@ -639,6 +486,19 @@ export const LessonView: React.FC<LessonViewProps> = ({
     if (updated.status === 'completed') {
       setMode('summary');
     }
+  };
+
+  // The review stage ended or was left. Every card of the stage rated: the
+  // stage is complete. Left early: the lesson is paused, and the cards not
+  // rated yet are asked when it resumes. (A card deleted meanwhile is not
+  // waited for.)
+  const endReviewStage = () => {
+    const lesson = activeLessonRef.current;
+    const stage = lesson?.stages[lesson.currentStageIndex];
+    if (!lesson || stage?.kind !== 'review') return;
+    const left = unratedCardIds(stage.cardIds, lesson.ratings).filter(id => cardsById.has(id));
+    if (left.length === 0) void handleStageComplete(reviewStageResult(stage.cardIds, lesson.ratings));
+    else void pauseAndExitRunner();
   };
 
   const currentStage = activeLesson?.stages[activeLesson.currentStageIndex];
@@ -754,8 +614,10 @@ export const LessonView: React.FC<LessonViewProps> = ({
             </span>
           </div>
 
+          {/* On a phone the steps are left out: the line above names the
+              current one, and the list pushed the card below the fold. */}
           <ol
-            className={`grid grid-cols-1 gap-2 text-xs ${
+            className={`hidden sm:grid grid-cols-1 gap-2 text-xs ${
               activeLesson.stages.length >= 4 ? 'sm:grid-cols-4' : 'sm:grid-cols-3'
             }`}
           >
@@ -786,8 +648,12 @@ export const LessonView: React.FC<LessonViewProps> = ({
             cardIds={currentStage.cardIds}
             cardsById={cardsById}
             lesson={activeLesson}
-            onRateCard={rateInLesson}
-            onFinishStage={res => void handleStageComplete(res)}
+            places={places}
+            allCards={cards}
+            aiOptions={aiOptions}
+            onRated={recordRating}
+            onUndone={forgetRating}
+            onExit={endReviewStage}
           />
         )}
 
