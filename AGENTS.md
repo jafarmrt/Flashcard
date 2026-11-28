@@ -323,9 +323,10 @@ safety, 7.24.1) are done. Still open:
   card, review, lesson pause/resume, two devices syncing); move logic out
   of DrivingView (a `useDriveAudio` hook) and LessonView into services.
 - Phase 3: one review engine (LessonView re-implements StudyView without
-  its rules); ask the user which of lessons / driving / themes they use
-  and drop the rest; the sync loop out of hooks/useAppLogic.ts; a
-  persistent error log on the diagnostics page.
+  its rules); the sync loop out of hooks/useAppLogic.ts; a persistent
+  error log on the diagnostics page. The user uses lessons, driving mode
+  and thematic bundles every day (2026-11-28): keep all three, make them
+  sturdy rather than remove any.
 - Smaller bugs found: MicroStory AI audio keeps playing after leaving;
   driving's "today" queue reshuffles on every sync (App.tsx `dailyQueue`
   with Math.random), so the bookmark can flag the wrong card; «تازه‌سازی
