@@ -9,6 +9,10 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.26.0] - 2026-11-28 - Errors You Can Send
+- **«گزارش خطاهای برنامه»:** Every error the app runs into on this device (a failed sync or save, an AI or dictionary call that went wrong, anything unexpected) is now kept, up to 100, newest first, a repeated one counted instead of listed again. They are on «وضعیت و عیب‌یابی», and «کپی گزارش برای ارسال» copies them as one plain-text report to paste in a message. They stay on this device unless you send them; «پاک کردن فهرست» clears them.
+- **For development:** The browser's side of the sync (reading this device's rows, writing what the server sends) moved out of the app's main logic into a module of its own, unchanged.
+
 ## [7.25.0] - 2026-11-28 - One Review, Wherever You Review
 - **The lesson's review is the review you know:** A timed lesson's review step is now the app's own review screen, with all its rules: a card you missed comes back after ten others, a new card is asked twice, a typed meaning is checked, «واگرد» undoes the last answer, and the review modes are there. The lesson had a simpler copy of its own without any of them. Its end screen has «ادامهٔ جلسه», which goes on to the lesson's quiz; a lesson left in the middle still asks only the cards not answered yet.
 - **More room on a phone during a lesson:** The list of the lesson's steps is left out on a small screen (the line at the top names the step you are on), so the card and its button are in view.

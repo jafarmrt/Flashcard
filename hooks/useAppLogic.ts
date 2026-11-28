@@ -16,15 +16,12 @@ import { forgetRows, newKnownWord } from '../services/knownWords';
 import { compactAttempts } from '../services/speechPractice';
 import { aiRequestOptions } from '../services/aiSettings';
 import { AUTH_REQUIRED_EVENT, callProxy } from '../services/apiService';
-import { newStudyLogs, profileStamp, syncFingerprint } from '../services/syncState';
+import { syncFingerprint } from '../services/syncState';
+import { hasUnsentChanges, LocalData, SyncState, SYNC_TABLES } from '../services/syncClient';
 import {
-  confirmReceived, hasUnsentChanges, LocalData,
-  SyncState, SYNC_TABLES, SyncTable, withLocalAudio,
-  takeIncoming,
-} from '../services/syncClient';
-import {
-  isNetworkError, pendingChapterTexts, prefetchChapterTexts as runPrefetchChapters, runAccountSync, type SyncRoundApplyArgs,
+  isNetworkError, pendingChapterTexts, prefetchChapterTexts as runPrefetchChapters, runAccountSync,
 } from '../services/syncRunner';
+import { deviceSyncDeps, readLocalRows, SYNC_DB_TABLES } from '../services/localSync';
 import { answerCard, isDue, isNewCard } from '../services/srsService';
 import { applyIncomingSettings, toSyncedSettings } from '../services/settingsSync';
 import { applyServerKeys, localKeyEntries, markKeyChanges, withoutKeys } from '../services/keySync';
@@ -396,28 +393,9 @@ export const useAppLogic = () => {
     });
   };
 
-  const readLocal = async (): Promise<LocalData> => ({
-    decks: await db.decks.toArray(),
-    cards: await db.flashcards.toArray(),
-    sources: await db.sources.toArray(),
-    chapters: await db.chapters.toArray(),
-    occurrences: await db.occurrences.toArray(),
-    knownWords: await db.knownWords.toArray(),
-    speechAttempts: await db.speechAttempts.toArray(),
-    notes: await db.notes.toArray(),
-    practice: await db.practice.toArray(),
-    themeExercises: await db.themeExercises.toArray(),
-    studyLessons: await db.studyLessons.toArray(),
-    logs: await db.studyHistory.toArray(),
-    profile: await db.userProfile.get(1),
-    achievements: await db.userAchievements.toArray(),
-    settings: toSyncedSettings(readSavedSettings()),
-  });
+  // This device's synced rows, with the settings that sync (no keys).
+  const readLocal = (): Promise<LocalData> => readLocalRows(toSyncedSettings(readSavedSettings()));
 
-  const SYNC_DB_TABLES: Record<SyncTable, any> = {
-    decks: db.decks, cards: db.flashcards, sources: db.sources, chapters: db.chapters, occurrences: db.occurrences,
-    knownWords: db.knownWords, speechAttempts: db.speechAttempts, notes: db.notes, practice: db.practice, themeExercises: db.themeExercises, studyLessons: db.studyLessons,
-  };
 
   // After a sync, missing or remotely-edited chapter texts are prefetched in
   // the background so books added or edited on another device open offline.
@@ -445,53 +423,15 @@ export const useAppLogic = () => {
     syncInFlight.current = true;
     setSyncStatus('syncing');
     try {
-      await runAccountSync({
-        readMetaSync: async () => (await db.meta.get('sync'))?.value,
-        writeMetaSync: async state => { await db.meta.put({ key: 'sync', value: state }); },
-        readLocal,
-        readChapters: () => db.chapters.toArray(),
-        readChapterTexts: () => db.chapterTexts.toArray(),
-        markChapterUploaded: async id => { await db.chapterTexts.update(id, { uploaded: true }); },
+      await runAccountSync(deviceSyncDeps({
+        readSettings: () => toSyncedSettings(readSavedSettings()),
         loadChapterText,
         syncKeys,
-        callSync: payload => callProxy('sync', payload),
-        callChapterPut: payload => callProxy('chapter-put', payload),
-        applyRound: async ({ changes, before, profileBefore, state: roundState }: SyncRoundApplyArgs) => {
-          let nextState = roundState;
-          let maxBefore = 0;
-          let maxAfter = 0;
-          await (db as any).transaction('rw', [db.decks, db.flashcards, db.sources, db.chapters, db.occurrences, db.knownWords, db.speechAttempts, db.notes, db.practice, db.themeExercises, db.studyLessons, db.studyHistory, db.userProfile, db.userAchievements], async () => {
-            for (const table of SYNC_TABLES) {
-              const incoming = changes[table];
-              if (!Array.isArray(incoming) || incoming.length === 0) continue;
-              const current = await SYNC_DB_TABLES[table].toArray();
-              const taken = takeIncoming<any>(table, incoming, current, before[table], nextState.stamps[table] || {});
-              let rows = taken.write;
-              if (table === 'cards') {
-                const byId = new Map<string, Flashcard>(current.map((c: Flashcard) => [c.id, c]));
-                rows = rows.map((c: Flashcard) => withLocalAudio(c, byId.get(c.id)));
-              }
-              if (rows.length) await SYNC_DB_TABLES[table].bulkPut(rows);
-              nextState = confirmReceived(nextState, table, taken.confirm);
-            }
-            const logs = await db.studyHistory.toArray();
-            maxBefore = logs.reduce((m, l) => Math.max(m, l.id || 0), 0);
-            const newLogs = newStudyLogs(logs, changes.studyHistory);
-            if (newLogs.length) await db.studyHistory.bulkAdd(newLogs);
-            maxAfter = newLogs.length ? (await db.studyHistory.toArray()).reduce((m, l) => Math.max(m, l.id || 0), 0) : maxBefore;
-            if (changes.userProfile && profileStamp(await db.userProfile.get(1)) === profileBefore) {
-              await db.userProfile.put(changes.userProfile);
-              nextState = { ...nextState, profile: profileStamp(changes.userProfile) };
-            }
-            if (Array.isArray(changes.userAchievements) && changes.userAchievements.length) await db.userAchievements.bulkPut(changes.userAchievements);
-          });
-          return { state: nextState, maxBefore, maxAfter };
-        },
         adoptSettings: incoming => {
           adoptCloudSettings(incoming);
           return readSavedSettings().updatedAt;
         },
-      }, user, options);
+      }), user, options);
 
       rememberSynced(await fetchData());
       const nowMs = Date.now();
