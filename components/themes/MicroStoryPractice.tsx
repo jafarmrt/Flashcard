@@ -119,6 +119,18 @@ export const MicroStoryPractice: React.FC<MicroStoryPracticeProps> = ({
     [aiOptions, cards, onSaveExercise, places, resetProgressForStory, themeName, userLevel],
   );
 
+  // Leaving the exercise stops the story's AI audio whichever way it was
+  // opened: the saved-story branches below only stopped device speech, so
+  // the story kept playing after going back, its URL never revoked.
+  useEffect(() => () => {
+    stopSpeech();
+    audioRef.current?.pause();
+    if (audioUrlRef.current) {
+      URL.revokeObjectURL(audioUrlRef.current);
+      audioUrlRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     let alive = true;
     const history = savedStoriesRef.current;
