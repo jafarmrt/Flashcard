@@ -39,6 +39,15 @@ export async function verifyPassword(password: string, stored: string | undefine
   return { ok, needsRehash: ok };
 }
 
+// A sign-in for a name that has no account takes as long as one that has
+// (scrypt against a made-up hash), so timing does not tell which names exist.
+let dummyHash: Promise<string> | null = null;
+export const passwordForUnknownUser = (): Promise<string> => (dummyHash ||= hashPassword(crypto.randomBytes(16).toString('hex')));
+
+// Longer than any real sign-in: refused before the store or scrypt is touched.
+export const MAX_USERNAME_LENGTH = 64; // older accounts may predate USERNAME_PATTERN
+export const MAX_PASSWORD_LENGTH = 1024;
+
 export const USERNAME_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 export const MIN_PASSWORD_LENGTH = 8;
 
@@ -166,7 +175,13 @@ export function loginLockMinutes(ip: string, username: string, now = Date.now())
   return Math.ceil((entry.lockedUntil - now) / 60000);
 }
 
+// Pairs a long-running server has not heard from in LOCK_MS are dropped once
+// the map grows, so made-up names do not fill its memory.
+const MAX_TRACKED = 10_000;
 export function recordLoginFailure(ip: string, username: string, now = Date.now()): void {
+  if (failures.size >= MAX_TRACKED) {
+    for (const [k, e] of failures) if (now - e.first > LOCK_MS && e.lockedUntil <= now) failures.delete(k);
+  }
   const key = limitKey(ip, username);
   const entry = failures.get(key);
   if (!entry || now - entry.first > LOCK_MS) {
@@ -188,6 +203,10 @@ export interface FailureRecord { count: number; first: number; lockedUntil: numb
 
 export const accountLockMinutes = (record: FailureRecord | null | undefined, now = Date.now()): number =>
   record && record.lockedUntil > now ? Math.ceil((record.lockedUntil - now) / 60000) : 0;
+
+// How long a failure record matters: after this it is neither a lock nor
+// part of a count, and the store may forget it.
+export const FAILURE_RECORD_MS = 2 * LOCK_MS;
 
 export const nextFailureRecord = (record: FailureRecord | null | undefined, now = Date.now()): FailureRecord => {
   if (!record || now - record.first > LOCK_MS) return { count: 1, first: now, lockedUntil: 0 };

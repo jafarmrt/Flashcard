@@ -23,7 +23,7 @@ import {
   takeIncoming,
 } from '../services/syncClient';
 import {
-  isNetworkError, prefetchChapterTexts as runPrefetchChapters, runAccountSync, type SyncRoundApplyArgs,
+  isNetworkError, pendingChapterTexts, prefetchChapterTexts as runPrefetchChapters, runAccountSync, type SyncRoundApplyArgs,
 } from '../services/syncRunner';
 import { answerCard, isDue, isNewCard } from '../services/srsService';
 import { applyIncomingSettings, toSyncedSettings } from '../services/settingsSync';
@@ -1230,7 +1230,8 @@ export const useAppLogic = () => {
     setView('READER');
     const source = await db.sources.get(chapter.sourceId);
     if (source && (source.position?.chapterId !== chapter.id || source.position?.chunk !== index)) {
-      const updated: Source = { ...source, position: { chapterId: chapter.id, chunk: index }, updatedAt: new Date().toISOString() };
+      const now = new Date().toISOString();
+      const updated: Source = { ...source, position: { chapterId: chapter.id, chunk: index, at: now }, updatedAt: now };
       await db.sources.put(updated);
       setSources(prev => prev.map(s => (s.id === updated.id ? updated : s)));
     }
@@ -1877,7 +1878,8 @@ export const useAppLogic = () => {
             await mergeWithCloud();
             const user = signedInUser.current;
             const saved = (await db.meta.get('sync'))?.value as SyncState | undefined;
-            const unsent = hasUnsentChanges(await readLocal(), saved?.user === user ? saved : undefined);
+            const unsent = hasUnsentChanges(await readLocal(), saved?.user === user ? saved : undefined)
+                || pendingChapterTexts(await db.chapterTexts.toArray(), await db.chapters.toArray()).length > 0;
             if (unsent && !confirm('بخشی از تغییرات این مرورگر هنوز به سرور نرسیده (شاید اینترنت قطع است). اگر بعد از خروج حساب دیگری این‌جا وارد شود، این تغییرات پاک می‌شوند. باز هم خارج می‌شوی؟')) return;
         }
         // A key typed here that the server does not have yet goes up first.

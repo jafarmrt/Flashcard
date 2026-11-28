@@ -8,7 +8,7 @@ import { startFresh } from './services/freshStart';
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker
-      .register('/service-worker.js', { type: 'module', updateViaCache: 'none' })
+      .register('/service-worker.js', { updateViaCache: 'none' })
       .then(registration => {
         const checkUpdate = () => {
           if (document.visibilityState === 'visible') {
@@ -22,6 +22,11 @@ if ('serviceWorker' in navigator) {
       });
   });
 }
+
+// Ask the browser to keep this site's storage under pressure. Without it a
+// phone low on space may evict IndexedDB as a whole, unsynced cards included.
+// Browsers that decide on their own (Chrome by engagement) simply answer no.
+navigator.storage?.persist?.().catch(() => undefined);
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

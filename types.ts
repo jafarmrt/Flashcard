@@ -202,7 +202,7 @@ export interface Source {
   author?: string;
   url?: string; // where an article came from
   deckId: string;
-  position?: { chapterId: string; chunk: number }; // where reading stopped
+  position?: { chapterId: string; chunk: number; at?: string }; // where reading stopped; `at` (when) lets it merge on its own
   audioPosition?: AudioPosition; // where audiobook listening stopped (services/drivingMode)
   reading?: Record<string, ReadingDay>; // active reading time per local day (services/readingTime)
   createdAt: string;
@@ -492,6 +492,10 @@ export interface SavedStudyLesson {
   clozeRight: number;
   clozeTotal: number;
   hardCardIds: string[];
+  // The rating each card got in this lesson. A card is rated (FSRS and the
+  // study log) once per lesson: a resumed review does not ask it again and a
+  // miss in the lesson's quiz does not rate it a second time.
+  ratings?: Record<string, PerformanceRating>;
   elapsedSeconds: number;
   startedAt: string;
   completedAt?: string;

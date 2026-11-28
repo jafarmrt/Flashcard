@@ -19,7 +19,9 @@ const HOST = process.env.HOST || '0.0.0.0';
 // sites cannot call the API from a browser. Behind nginx, trust its
 // X-Forwarded-* headers so req.secure and req.ip are right.
 app.set('trust proxy', 'loopback');
-app.use(express.json({ limit: '50mb' }));
+// Vercel refuses bodies over 4.5 MB; a VPS takes a little more (a long
+// chapter's text), not 50 MB that is parsed before anyone signs in.
+app.use(express.json({ limit: '10mb' }));
 
 app.post('/api/proxy', (req, res) => handleProxy(req, res));
 // Telegram's updates (webhook) and a cron, as on Vercel (api/telegram.ts).

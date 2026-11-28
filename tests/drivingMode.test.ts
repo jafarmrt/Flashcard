@@ -257,3 +257,15 @@ test('drivingBookmarksOf and bookmarkCandidateWords filter drive notes and candi
     ],
   );
 });
+
+test('saving the listening spot does not bring back an older reading position from another device', () => {
+  // The phone moved on to chapter 2 at 10:05; the tablet, not yet synced,
+  // still holds chapter 1 and saves its listening spot at 10:10.
+  const base = { id: 's', kind: 'book', title: 'B', deckId: 'd', createdAt: '2026-11-01T00:00:00Z' } as any;
+  const phone = { ...base, position: { chapterId: 'c2', chunk: 0, at: '2026-11-20T10:05:00Z' }, updatedAt: '2026-11-20T10:05:00Z' };
+  const tabletBefore = { ...base, position: { chapterId: 'c1', chunk: 3, at: '2026-11-19T09:00:00Z' }, updatedAt: '2026-11-19T09:00:00Z' };
+  const tablet = withSavedAudioPosition(tabletBefore, 'c1', 3, 4, '2026-11-20T10:10:00Z')!;
+  const merged = mergeRow('sources', phone, tablet);
+  assert.deepEqual(merged.position, phone.position, 'the newer reading position stays');
+  assert.equal(merged.audioPosition?.pieceIndex, 4, 'the listening spot is kept too');
+});

@@ -211,6 +211,17 @@ export const nextLogCursor = (state: SyncState, out: Outgoing, maxIdBeforeAdding
 //     device had reviewed;
 //   - any other row is the server's and is taken as it is.
 // `confirm` are the rows the server is now known to have.
+// Two versions of a row hold the same data (key order and this device's own
+// sound aside).
+const sorted = (value: unknown): string => JSON.stringify(value, (_key, v) =>
+  v && typeof v === 'object' && !Array.isArray(v)
+    ? Object.keys(v).sort().reduce((o, k) => { o[k] = v[k]; return o; }, {} as Record<string, unknown>)
+    : v);
+const sameRow = (table: SyncTable, a: Stamped, b: Stamped): boolean => {
+  const plain = (r: Stamped) => (table === 'cards' ? outgoingCard(r as Flashcard) : r);
+  return rowStamp(table, a) === rowStamp(table, b) && sorted(plain(a)) === sorted(plain(b));
+};
+
 export const takeIncoming = <T extends Stamped>(
   table: SyncTable,
   incoming: T[] | undefined,
@@ -229,7 +240,11 @@ export const takeIncoming = <T extends Stamped>(
     if (mine && now !== known[row.id]) {
       const merged = mergeRow(table, row, mine) as T;
       write.push(merged);
-      if (rowStamp(table, merged) === rowStamp(table, row)) confirm.push(merged);
+      // Confirmed only when the merge is the server's copy itself. A merge
+      // can carry the server's stamp and still hold something of this
+      // device's (finished sections, minutes read, a listening spot): that
+      // row has to be sent, or the server never gets it.
+      if (sameRow(table, merged, row)) confirm.push(merged);
       continue;
     }
     write.push(row);

@@ -7,6 +7,7 @@ import {
   lessonsByDay,
   pickLessonCards,
   todayOpenLesson,
+  withLessonRating,
 } from '../services/studyLesson';
 import type { Flashcard, PracticeAnswer } from '../types';
 
@@ -125,4 +126,21 @@ test('createStudyLesson builds 30, 45, and 60 minute lessons (splitting 60-min r
   assert.equal(todayOpenLesson([l60, cur], TODAY)?.id, 'les-60');
   const groups = lessonsByDay([cur, { ...l60, day: '2026-11-26' }]);
   assert.deepEqual(groups.map(g => g.day), ['2026-11-27', '2026-11-26']);
+});
+
+test('a lesson starts new cards only within the day\'s cap, and leaves grammar cards out', () => {
+  const fresh = Array.from({ length: 6 }, (_, i) =>
+    makeCard(`n${i}`, `word${i}`, `معنی${i}`, { repetition: 0, interval: 0, stability: undefined, dueDate: NOW.toISOString() }),
+  );
+  const grammar = makeCard('g', 'past perfect', 'ماضی بعید', { kind: 'grammar' } as Partial<Flashcard>);
+  const picked = pickLessonCards([...fresh, grammar], [], 20, 10, NOW, 2);
+  assert.deepEqual(picked.map(c => c.id).filter(id => id.startsWith('n')).length, 2);
+  assert.ok(!picked.some(c => c.id === 'g'), 'no grammar card');
+});
+
+test('a card is rated once per lesson', () => {
+  const lesson = createStudyLesson({ durationMinutes: 30, cards: [makeCard('a', 'harbor', 'بندر')], practice: [], today: TODAY, now: NOW })!;
+  const rated = withLessonRating(lesson, 'a', 'GOOD', NOW.toISOString());
+  assert.equal(rated?.ratings?.a, 'GOOD');
+  assert.equal(withLessonRating(rated!, 'a', 'AGAIN'), null, 'a second rating of the same card is refused');
 });

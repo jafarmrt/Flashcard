@@ -6,6 +6,7 @@ import {
   prefetchChapterTexts,
   runAccountSync,
   type SyncRunnerDeps,
+  pendingChapterTexts, uploadChapterTexts,
 } from '../services/syncRunner';
 import { freshSyncState, rowStamp, type LocalData, type SyncState } from '../services/syncClient';
 import type { Chapter, ChapterText } from '../types';
@@ -186,4 +187,19 @@ test('classifyErrorReason distinguishes network, region sanctions, auth, quota, 
   assert.equal(classifyErrorReason('401 Unauthorized: API key is wrong').category, 'auth');
   assert.equal(classifyErrorReason('429 Too Many Requests: quota exceeded').category, 'quota');
   assert.equal(classifyErrorReason('502 Bad Gateway').category, 'server');
+});
+
+test('a long book sends all its chapter texts in one sync, and only texts of live chapters count as unsent', async () => {
+  const chapters = Array.from({ length: 50 }, (_, i) => ({ id: `c${i}`, sourceId: 's', order: i + 1, title: `${i}`, chunkCount: 1, wordCount: 10, completed: [], createdAt: '', updatedAt: '', isDeleted: i === 49 }) as Chapter);
+  const texts = chapters.map(c => ({ id: c.id, sourceId: 's', chunks: ['text'], uploaded: false }) as ChapterText);
+  assert.equal(pendingChapterTexts(texts, chapters).length, 49, 'a deleted chapter is not waited for');
+  const sent: string[] = [];
+  const n = await uploadChapterTexts({
+    readChapters: async () => chapters,
+    readChapterTexts: async () => texts,
+    callChapterPut: async ({ id }) => { sent.push(id); return {}; },
+    markChapterUploaded: async id => { texts.find(t => t.id === id)!.uploaded = true; },
+  });
+  assert.equal(n, 49);
+  assert.equal(pendingChapterTexts(texts, chapters).length, 0);
 });
