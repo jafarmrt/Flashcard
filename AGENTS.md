@@ -46,6 +46,13 @@ imports this file, MCP in `.mcp.json`). Keep both MCP lists alike.
 - Do not rewrite files with `Set-Content`/`Out-File` (they add a BOM / break
   Persian text). Use the Edit/Write tools. Files use LF line endings.
 - `package-lock.json` is local only (the repo uses `bun.lock`): never commit it.
+- `npm run e2e`: Playwright checks of the main paths at phone size
+  (e2e/*.spec.ts, playwright.config.ts). It builds the app and starts the
+  server on port 3100 with a temp data folder and empty KV/AI/Telegram env
+  (a local .env is never used for it). Once per machine:
+  `npx playwright install chromium`. @playwright/test is pinned (1.63.0);
+  the dictionaries are faked with `page.route` (e2e/reading.spec.ts), and
+  `seedDueCards` puts cards in through the sync API. CI runs it too.
 
 ## Rules of the codebase
 
@@ -319,19 +326,23 @@ safety, 7.24.1) are done. Still open:
   `keys:<u>:unreadable:*` keep forever; the account is one Redis value
   that grows forever (studyHistory, practice, tombstones); security
   headers in vercel.json; undoing a review leaves its log on the server.
-- Phase 2: Playwright flows at phone size (sign in, read a section, make a
-  card, review, lesson pause/resume, two devices syncing); move logic out
-  of DrivingView (a `useDriveAudio` hook) and LessonView into services.
+- Phase 2: done in 7.24.3: e2e flows (sign in, read and make a card,
+  review, lesson pause/resume, two devices). They found that a review's
+  ratings synced only at the session's end: the app now syncs when it goes
+  to the background (useAppLogic `syncWhenLeaving`). Still open: move
+  logic out of DrivingView (a `useDriveAudio` hook) and LessonView into
+  services; e2e for driving (needs faked speech) and themes.
 - Phase 3: one review engine (LessonView re-implements StudyView without
   its rules); the sync loop out of hooks/useAppLogic.ts; a persistent
   error log on the diagnostics page. The user uses lessons, driving mode
   and thematic bundles every day (2026-11-28): keep all three, make them
   sturdy rather than remove any.
-- Smaller bugs found: MicroStory AI audio keeps playing after leaving;
-  driving's "today" queue reshuffles on every sync (App.tsx `dailyQueue`
-  with Math.random), so the bookmark can flag the wrong card; «تازه‌سازی
-  کش برنامه» works offline and leaves the app unable to start; lesson
-  cloze options reshuffle on sync; MediaSession left set after stopping.
+- Smaller bugs found in the review were fixed in 7.24.3 (MicroStory audio,
+  driving card order `driveCardIds`, cache refresh offline guard, lesson
+  cloze items fixed per stage, MediaSession cleared). Seen while testing:
+  a new account's Today shows the review box (with batch sizes) with zero
+  cards; the welcome toast and the bottom bar cover the library's paste
+  box on a phone; opening the app pulls only ~2 s after start.
 
 ## Open ideas (ask the user before starting)
 

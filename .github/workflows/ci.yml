@@ -27,3 +27,30 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+
+  # The main paths at phone size in a real browser (e2e/*.spec.ts), against
+  # the built app and the server with a throwaway data folder.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@v2
+      - name: Install (from bun.lock)
+        run: bun install --frozen-lockfile
+      - name: Browser
+        run: npx playwright install --with-deps chromium
+      - name: End-to-end
+        run: npm run e2e
+      - name: Report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7

@@ -26,3 +26,7 @@ dist-ssr
 .data_store.json
 .lookup_cache.json
 *.tmp
+
+# Playwright
+playwright-report
+test-results

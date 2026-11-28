@@ -9,6 +9,14 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.24.3] - 2026-11-28 - Reviews Reach Your Other Devices Sooner
+- **A review in progress is sent when you leave the app:** Ratings made in a review were sent to the server only when the review ended. A phone locked or closed in the middle of a review kept them until it was opened again, and another device meanwhile asked the same cards from the old schedule. What changed is now sent as soon as the app goes to the background.
+- **Driving mode keeps its cards in order:** The order of a drive's cards is fixed when it starts. After a sync it could repeat or skip cards, and the bookmark button could flag a word other than the one being spoken. When the drive stops, the lock screen and the car's display no longer show it as playing.
+- **The micro-story stops when you leave it:** Its AI audio went on playing after going back, when the story was a saved one.
+- **«تازه‌سازی کش برنامه» only when the server answers:** Offline, or on a network that blocks the site, it removed the files the app opens with, and the app could not start until the connection came back. It now leaves them and says why.
+- **Lesson sentences hold still:** The choices of a lesson's fill-in sentences no longer reshuffle while you answer, and a lesson whose words have no sentence to fill in can still be finished.
+- **For development:** Five checks run the app in a phone-sized browser on every push (sign-in, reading and making a card, a review, a paused lesson, two devices on one account).
+
 ## [7.24.2] - 2026-11-28 - Room for More Saved Speech
 - **2 GB of saved AI speech:** Read-aloud audio kept on this device may now take up to 2 GB (about 11 hours), instead of 300 MB. The pieces played least recently still go first when it is full.
 
