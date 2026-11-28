@@ -9,6 +9,11 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.24.4] - 2026-11-28 - No One Can Lock You Out
+- **Your own browser is not locked out:** Twenty wrong passwords lock an account's sign-in for fifteen minutes, and until now that kept the owner out as well: anyone who knew the account name could do it again and again. A browser that has signed in to the account before now keeps a mark of it and may still sign in with the right password while the lock lasts; other browsers wait.
+- **Guesses sent all at once are all counted:** Failed sign-ins sent at the same moment were counted as one. They are now counted one by one, so the lock comes after twenty, however they arrive.
+- **For the server:** A sync's lock on the account outlasts the longest a function may run, and every request to the cloud store gives up after 15 seconds; Telegram link codes and keys kept aside after a change of secret now expire on their own; every page carries headers that keep other sites from framing the app and limit what it may use of the device (only the microphone).
+
 ## [7.24.3] - 2026-11-28 - Reviews Reach Your Other Devices Sooner
 - **A review in progress is sent when you leave the app:** Ratings made in a review were sent to the server only when the review ended. A phone locked or closed in the middle of a review kept them until it was opened again, and another device meanwhile asked the same cards from the old schedule. What changed is now sent as soon as the app goes to the background.
 - **Driving mode keeps its cards in order:** The order of a drive's cards is fixed when it starts. After a sync it could repeat or skip cards, and the bookmark button could flag a word other than the one being spoken. When the drive stops, the lock screen and the car's display no longer show it as playing.

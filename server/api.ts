@@ -19,8 +19,8 @@ import {
   PUBLIC_ACTIONS, USERNAME_PATTERN, MIN_PASSWORD_LENGTH, registrationAllowed,
   hashPassword, verifyPassword, getSessionSecret, createSessionToken, sessionOf,
   sessionCookieHeader, clearSessionCookieHeader, loginLockMinutes, recordLoginFailure,
-  clearLoginFailures, isAllowedAudioUrl, accountLockMinutes, nextFailureRecord, FailureRecord,
-  FAILURE_RECORD_MS, MAX_PASSWORD_LENGTH, MAX_USERNAME_LENGTH, passwordForUnknownUser,
+  clearLoginFailures, isAllowedAudioUrl, ACCOUNT_FAILURE_WINDOW_MS, ACCOUNT_MAX_FAILURES,
+  deviceCookieHeader, isKnownDevice, MAX_PASSWORD_LENGTH, MAX_USERNAME_LENGTH, passwordForUnknownUser,
 } from './auth.js';
 
 // The parts of Express's and Vercel's request/response objects the API uses.
@@ -107,7 +107,8 @@ const accountKeysKey = (username: string) => `keys:${username.toLowerCase()}`;
 const chapterKey = (username: string, chapterId: string) => `chapter:${username.toLowerCase()}:${chapterId}`;
 // Small records of their own, so checking them does not read the account.
 const sessionVersionKey = (username: string) => `session:${username.toLowerCase()}`;
-const loginFailKey = (username: string) => `login-fail:${username.toLowerCase()}`;
+// (`login-fail:<name>` held a JSON record before 7.24.4 and is no longer read.)
+const loginFailsKey = (username: string) => `login-fails:${username.toLowerCase()}`;
 const SESSION_CHECKED = new Set([
   'auth-session', 'sync', 'keys-sync', 'chapter-put', 'chapter-get',
   'telegram-status', 'telegram-link', 'telegram-update', 'telegram-send', 'telegram-unlink',
@@ -120,12 +121,16 @@ const sessionVersion = async (username: string): Promise<number> => {
 const CHAPTER_ID = /^[A-Za-z0-9_-]{1,100}$/;
 const MAX_CHAPTER_CHARS = 2_000_000; // under Vercel's 4.5 MB request limit
 
+const KV_TIMEOUT_MS = 15_000;
+
 // One Redis command through Upstash's REST API.
 async function kvCommand(kv: { url: string; token: string }, command: (string | number)[]): Promise<any> {
+  // A request that hangs must not hold a sync past its lock (LOCK_MS).
   const kvResponse = await fetch(kv.url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${kv.token}` },
     body: JSON.stringify(command),
+    signal: AbortSignal.timeout(KV_TIMEOUT_MS),
   });
   if (!kvResponse.ok) throw new Error(`Cloud storage request failed (${kvResponse.status}).`);
   return (await kvResponse.json()).result;
@@ -184,6 +189,42 @@ export async function delKey(key: string): Promise<void> {
     store.set(key, previous);
     throw e;
   }
+}
+
+// Failed sign-ins of an account within ACCOUNT_FAILURE_WINDOW_MS of the
+// first. Redis counts in one script (INCR, and the expiry on the first), so
+// parallel attempts cannot each read the same count and add one: reading,
+// then writing, let batches of guesses count as a single failure.
+export async function countLoginFailure(username: string): Promise<number> {
+  const key = loginFailsKey(username);
+  const kv = kvConfig();
+  if (kv) {
+    const script = "local n = redis.call('INCR', KEYS[1]) if n == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end return n";
+    return Number(await kvCommand(kv, ['EVAL', script, 1, key, ACCOUNT_FAILURE_WINDOW_MS])) || 0;
+  }
+  // One process holds the file store; reading and writing it here without
+  // an await between keeps another request from slipping in.
+  const now = Date.now();
+  const store = loadFileStore();
+  const entry = store.get(key) as { count: number; until: number } | undefined;
+  const next = entry && entry.until > now ? { count: entry.count + 1, until: entry.until } : { count: 1, until: now + ACCOUNT_FAILURE_WINDOW_MS };
+  store.set(key, next);
+  persistStore(store);
+  return next.count;
+}
+
+// Minutes the account's sign-in stays locked; 0 when it is not.
+async function loginLockedMinutes(username: string): Promise<number> {
+  const key = loginFailsKey(username);
+  const kv = kvConfig();
+  if (kv) {
+    if ((Number(await kvCommand(kv, ['GET', key])) || 0) < ACCOUNT_MAX_FAILURES) return 0;
+    const ms = Number(await kvCommand(kv, ['PTTL', key]));
+    return ms > 0 ? Math.ceil(ms / 60_000) : 0;
+  }
+  const entry = (await getKey(key)) as { count: number; until: number } | null;
+  const left = entry ? entry.until - Date.now() : 0;
+  return entry && left > 0 && entry.count >= ACCOUNT_MAX_FAILURES ? Math.ceil(left / 60_000) : 0;
 }
 
 // Every key that starts with `prefix` (a few dozen at most: used for the
@@ -274,7 +315,10 @@ const setUser = (userData: any): Promise<void> => setKey(getUserKey(userData.use
 // Syncs of one account run one at a time: two devices merging into the same
 // record at once would each save over the other's changes. On Vercel
 // (several instances) the lock is a Redis key that expires by itself.
-const LOCK_MS = 20_000;
+// Longer than a function may run on Vercel (60 s, vercel.json), so a lock
+// cannot expire while its sync is still writing; one left by a crashed
+// function blocks the account's syncs for at most this long.
+const LOCK_MS = 65_000;
 const localLocks = new Map<string, Promise<unknown>>();
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -897,7 +941,7 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         };
 
         await setUser(newUser);
-        res.setHeader('Set-Cookie', sessionCookieHeader(createSessionToken(username, secret), secure));
+        res.setHeader('Set-Cookie', [sessionCookieHeader(createSessionToken(username, secret), secure), deviceCookieHeader(username, secret, secure)]);
         return res.status(201).json({ message: 'User registered successfully.', username: username.toLowerCase() });
       }
 
@@ -915,10 +959,13 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         if (ipLocked > 0) {
           return res.status(429).json({ error: `Too many failed attempts. Try again in ${ipLocked} minute(s).` });
         }
-        const failed = (await getKey(loginFailKey(username))) as FailureRecord | null;
-        const lockedMinutes = accountLockMinutes(failed);
-        if (lockedMinutes > 0) {
-          return res.status(429).json({ error: `Too many failed attempts. Try again in ${lockedMinutes} minute(s).` });
+        // A browser that signed in to this account before is not held by its lock.
+        const cookieHeader = Array.isArray(req.headers.cookie) ? req.headers.cookie.join('; ') : req.headers.cookie;
+        if (!isKnownDevice(cookieHeader, username, secret)) {
+          const lockedMinutes = await loginLockedMinutes(username);
+          if (lockedMinutes > 0) {
+            return res.status(429).json({ error: `Too many failed attempts. Try again in ${lockedMinutes} minute(s).` });
+          }
         }
 
         // Failures are kept in the store only for accounts that exist, and
@@ -928,17 +975,20 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         const check = await verifyPassword(password, user?.password ?? await passwordForUnknownUser());
         if (!user || !check.ok) {
           recordLoginFailure(ip, username);
-          if (user) await setKey(loginFailKey(username), nextFailureRecord(failed), FAILURE_RECORD_MS);
+          if (user) await countLoginFailure(username);
           return res.status(401).json({ error: 'Invalid username or password.' });
         }
         clearLoginFailures(ip, username);
-        if (failed) await delKey(loginFailKey(username));
+        await delKey(loginFailsKey(username));
         if (check.needsRehash) {
           user.password = await hashPassword(password); // replace a legacy plain-text password
           await setUser(user);
         }
 
-        res.setHeader('Set-Cookie', sessionCookieHeader(createSessionToken(username, secret, Date.now(), await sessionVersion(username)), secure));
+        res.setHeader('Set-Cookie', [
+          sessionCookieHeader(createSessionToken(username, secret, Date.now(), await sessionVersion(username)), secure),
+          deviceCookieHeader(username, secret, secure),
+        ]);
         return res.status(200).json({ message: 'Login successful.', username: username.toLowerCase() });
       }
 
@@ -1002,7 +1052,7 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
           if (!stored) {
             // Sealed with another secret: kept aside, never overwritten.
             console.warn(`The saved keys of ${signedInUser} do not open with this server's secret; they are kept aside and the devices send theirs again.`);
-            await setKey(`${accountKeysKey(signedInUser!)}:unreadable:${Date.now()}`, record);
+            await setKey(`${accountKeysKey(signedInUser!)}:unreadable:${Date.now()}`, record, 90 * 24 * 60 * 60 * 1000); // long enough to bring the old secret back
             stored = {};
           }
           const { merged, changed } = mergeKeyEntries(stored, incoming);

@@ -1,7 +1,7 @@
 {
   "name": "lingua-cards",
   "private": true,
-  "version": "7.24.3",
+  "version": "7.24.4",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",

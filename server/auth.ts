@@ -194,25 +194,33 @@ export function recordLoginFailure(ip: string, username: string, now = Date.now(
 
 export const clearLoginFailures = (ip: string, username: string) => failures.delete(limitKey(ip, username));
 
-// Failed sign-ins per account, kept in the store: the counts above live in
-// one server's memory, and every Vercel instance (and every cold start)
-// began again from zero. Twenty failures in fifteen minutes, from any
-// address, lock the account's sign-in for fifteen minutes.
+// Failed sign-ins per account, counted in the store: the counts above live
+// in one server's memory, and every Vercel instance (and every cold start)
+// began again from zero. Twenty failures within fifteen minutes of the
+// first, from any address, lock the account's sign-in until the fifteen
+// minutes are over (server/api.ts `countLoginFailure`, an atomic count).
 export const ACCOUNT_MAX_FAILURES = 20;
-export interface FailureRecord { count: number; first: number; lockedUntil: number }
+export const ACCOUNT_FAILURE_WINDOW_MS = LOCK_MS;
 
-export const accountLockMinutes = (record: FailureRecord | null | undefined, now = Date.now()): number =>
-  record && record.lockedUntil > now ? Math.ceil((record.lockedUntil - now) / 60000) : 0;
+// --- Known device -----------------------------------------------------------
 
-// How long a failure record matters: after this it is neither a lock nor
-// part of a count, and the store may forget it.
-export const FAILURE_RECORD_MS = 2 * LOCK_MS;
+// A browser that signed in to an account keeps a mark of it for a year (an
+// HMAC of the account's name, not a session). A locked account still lets a
+// browser with the mark sign in, with the right password: the lock is
+// against guessing, and anyone who failed twenty times could otherwise keep
+// the owner out of their own account, fifteen minutes at a time.
+export const DEVICE_COOKIE = 'lc_device';
+const DEVICE_DAYS = 365;
+const deviceMark = (username: string, secret: string) => sign(`device:${username.toLowerCase()}`, secret);
 
-export const nextFailureRecord = (record: FailureRecord | null | undefined, now = Date.now()): FailureRecord => {
-  if (!record || now - record.first > LOCK_MS) return { count: 1, first: now, lockedUntil: 0 };
-  const count = record.count + 1;
-  return { count, first: record.first, lockedUntil: count >= ACCOUNT_MAX_FAILURES ? now + LOCK_MS : record.lockedUntil };
-};
+export const deviceCookieHeader = (username: string, secret: string, secure: boolean): string =>
+  [`${DEVICE_COOKIE}=${deviceMark(username, secret)}`, 'Path=/', 'HttpOnly', 'SameSite=Strict',
+    `Max-Age=${DEVICE_DAYS * 24 * 60 * 60}`, ...(secure ? ['Secure'] : [])].join('; ');
+
+export function isKnownDevice(cookieHeader: string | undefined, username: string, secret: string): boolean {
+  const mark = readCookie(cookieHeader, DEVICE_COOKIE);
+  return !!mark && safeEqual(Buffer.from(mark), Buffer.from(deviceMark(username, secret)));
+}
 
 // --- Audio proxy allow-list -------------------------------------------------
 
