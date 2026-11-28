@@ -1,0 +1,29 @@
+name: CI
+
+# Vercel deploys main on every push; this runs the same checks a person would
+# run by hand, so a broken type, test or build shows on the commit first.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@v2
+      - name: Install (from bun.lock)
+        run: bun install --frozen-lockfile
+      - name: Type-check
+        run: npx tsc --noEmit
+      - name: Hooks lint
+        run: npm run lint:hooks
+      - name: Tests
+        run: npm test
+      - name: Build
+        run: npm run build
