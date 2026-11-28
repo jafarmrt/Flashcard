@@ -7,13 +7,13 @@
 
 import Dexie, { type Table } from 'dexie';
 
-// Kept within both a number of pieces and a total size. A piece of AI
-// speech is WAV (about 48 kB a second, up to 1.5 MB for a long sentence), so
-// pieces alone allowed gigabytes, and a phone short of space may then clear
-// all of this site's storage, unsent cards included. 300 MB is about an hour
-// and a half of WAV; the least recently played pieces go first.
-export const MAX_PIECES = 5000;
-export const MAX_BYTES = 300 * 1024 * 1024;
+// Kept within both a number of pieces and a total size, the least recently
+// played pieces going first. A piece of AI speech is WAV (about 48 kB a
+// second), so a number of pieces alone allowed any size. The user asked for
+// 2 GB (about 11 hours of WAV, 2026-11-28); storage.persist() is asked for
+// in index.tsx so a phone short of space does not clear it all.
+export const MAX_PIECES = 50000;
+export const MAX_BYTES = 2 * 1024 * 1024 * 1024;
 
 interface SpeechRow {
   key: string;

@@ -9,6 +9,9 @@ users gets an entry here in the same commit, as
 `## [x.y.z] - YYYY-MM-DD - Title` with `- **Label:** text` items: a new
 feature raises the middle number, fixes alone raise the last one.
 
+## [7.24.2] - 2026-11-28 - Room for More Saved Speech
+- **2 GB of saved AI speech:** Read-aloud audio kept on this device may now take up to 2 GB (about 11 hours), instead of 300 MB. The pieces played least recently still go first when it is full.
+
 ## [7.24.1] - 2026-11-28 - Safer Sync, Lighter Driving, Honest Lessons
 - **A review that lost on the server comes back:** When the same card was changed on two devices and the server kept the other one (a phone whose clock runs a little slow, for one), the device that lost kept its own version for good, and the card had two different schedules. It now gets the server's version on the same sync.
 - **Finished sections and listening spots reach the server:** A chapter's finished sections, minutes read or listening spot that met a newer copy from another device stayed on this device only. They are now sent.

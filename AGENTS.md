@@ -184,7 +184,7 @@ Do not bring these back without the user asking.
   counts unsent ones (`pendingChapterTexts`); `Source.position.at` merges
   the reading position on its own (services/rowMerge); driving saves the
   listening spot per section / 30 s / pause, and revokes each piece's URL;
-  speech cache capped at 300 MB (`sizes` table, `piecesToDrop`);
+  speech cache capped by size (`sizes` table, `piecesToDrop`; 300 MB, then 2 GB in 7.24.2 at the user's request);
   `navigator.storage.persist()`; lessons rate a card once
   (`withLessonRating`), keep the new-card cap, skip grammar cards, and the
   clock survives syncs; sign-in failures stored only for real accounts,
