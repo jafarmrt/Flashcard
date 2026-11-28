@@ -333,20 +333,24 @@ safety, 7.24.1) are done. Still open:
 - Phase 2: done in 7.24.3: e2e flows (sign in, read and make a card,
   review, lesson pause/resume, two devices). They found that a review's
   ratings synced only at the session's end: the app now syncs when it goes
-  to the background (useAppLogic `syncWhenLeaving`). Still open: move
-  logic out of DrivingView (a `useDriveAudio` hook) and LessonView into
-  services; e2e for driving (needs faked speech) and themes.
-- Phase 3: one review engine (LessonView re-implements StudyView without
-  its rules); the sync loop out of hooks/useAppLogic.ts; a persistent
-  error log on the diagnostics page. The user uses lessons, driving mode
+  to the background (useAppLogic `syncWhenLeaving`). 7.25.0: driving's
+  audio engine is components/driving/useDriveAudio.ts (`useDriveAudio`,
+  `useWakeLock`; the order of ways is services/drivingMode
+  `utteranceWays`); e2e/driving.spec.ts fakes `speechSynthesis`. Still
+  open: e2e for themes (needs faked AI).
+- Phase 3: one review engine done in 7.25.0: the lesson's review stage
+  renders StudyView (`onRated`/`onUndone` keep `SavedStudyLesson.ratings`,
+  `finishLabel` «ادامهٔ جلسه»; studyLesson `unratedCardIds`,
+  `reviewStageResult`, `withoutLessonRating`). StudyView restarts its
+  session when its `cards` prop changes: keep that array fixed. Still
+  open: the sync loop out of hooks/useAppLogic.ts; a persistent error log
+  on the diagnostics page. The user uses lessons, driving mode
   and thematic bundles every day (2026-11-28): keep all three, make them
   sturdy rather than remove any.
 - Smaller bugs found in the review were fixed in 7.24.3 (MicroStory audio,
   driving card order `driveCardIds`, cache refresh offline guard, lesson
-  cloze items fixed per stage, MediaSession cleared). Seen while testing:
-  a new account's Today shows the review box (with batch sizes) with zero
-  cards; the welcome toast and the bottom bar cover the library's paste
-  box on a phone; opening the app pulls only ~2 s after start.
+  cloze items fixed per stage, MediaSession cleared). 7.25.0: Today for
+  an account with no cards, a sync right after the session check at start.
 
 ## Open ideas (ask the user before starting)
 

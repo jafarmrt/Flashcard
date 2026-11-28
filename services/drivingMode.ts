@@ -339,3 +339,21 @@ export const bookmarkCandidateWords = (
   }
   return out;
 };
+
+// The ways driving mode may speak one utterance, in the order tried: a
+// recorded dictionary sound (an English headword, device voice), the AI
+// voice (English; Persian only with Gemini, the one AI service that speaks
+// it), then the device's speech. A way that fails falls to the next.
+export type UtteranceWay = 'recorded' | 'ai' | 'device';
+export const utteranceWays = (opts: {
+  voice: 'ai' | 'device';
+  lang: 'en-US' | 'fa-IR';
+  hasRecording: boolean;
+  provider: string;
+}): UtteranceWay[] => {
+  const ways: UtteranceWay[] = [];
+  if (opts.hasRecording && opts.voice === 'device' && opts.lang === 'en-US') ways.push('recorded');
+  if (opts.voice === 'ai' && (opts.lang === 'en-US' || opts.provider === 'gemini')) ways.push('ai');
+  ways.push('device');
+  return ways;
+};

@@ -52,6 +52,14 @@ interface StudyViewProps {
   onSaveCard?: (card: Flashcard) => Promise<Flashcard>; // a changed card's content (a stubborn card's new memory aid)
   allCards?: Flashcard[]; // every card, so a word of a sentence that has its own card shows its meaning
   onQuizHard?: (cardIds: string[]) => void; // starts a four-choice quiz of the review's missed words
+  // Told of each rating once it is saved (`first`: the card's first answer
+  // in this session) and of each undone one: a timed lesson keeps them, so
+  // a resumed lesson does not ask a card again.
+  onRated?: (cardId: string, rating: PerformanceRating, first: boolean) => void;
+  onUndone?: (cardId: string, first: boolean) => void;
+  // Inside a lesson the end screen has one button, with this label, and no
+  // «۱۰ کارت دیگر» (the lesson decides what comes next).
+  finishLabel?: string;
 }
 
 // Reads a word, phrase or sentence aloud with the browser's speech synthesis.
@@ -317,7 +325,7 @@ interface Snapshot {
   card?: Flashcard; // the card as it was before this answer
 }
 
-export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit, places, sourceId, aiOptions, onEditCard, onSaveCard, allCards, onQuizHard }) => {
+export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit, places, sourceId, aiOptions, onEditCard, onSaveCard, allCards, onQuizHard, onRated, onUndone, finishLabel }) => {
   const [queue, setQueue] = useState<Flashcard[]>([]);
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
@@ -428,6 +436,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
     setUpdated(prev => new Map(prev).set(next.id, next));
     setReviews(v => v + 1);
     if (!firstAnswers.has(card.id)) setFirstAnswers(prev => new Map(prev).set(card.id, rating !== 'AGAIN'));
+    onRated?.(card.id, rating, !firstAnswers.has(card.id));
 
     // "Again" comes back later in the session; so does a new card answered
     // right the first time, once, to be sure it was learned and not just seen.
@@ -469,6 +478,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
       busy.current = false;
     }
     setSaveError('');
+    if (last.card) onUndone?.(last.card.id, !last.firstAnswers.has(last.card.id));
     confirmed.current = new Set(last.confirmed);
     setHistory(h => h.slice(0, -1));
     setQueue(last.queue);
@@ -604,8 +614,14 @@ export const StudyView: React.FC<StudyViewProps> = ({ cards, initialMode, onExit
           </div>
         )}
         <div className="flex flex-col gap-2 pt-1">
-          <button type="button" onClick={() => finish('more')} className="min-h-[52px] rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold">۱۰ کارت دیگر</button>
-          <button type="button" onClick={() => finish('home')} className="min-h-[48px] rounded-2xl font-bold text-ink dark:text-white hover:bg-slate-100 dark:hover:bg-slate-700">برگشت</button>
+          {finishLabel ? (
+            <button type="button" onClick={() => finish('home')} className="min-h-[52px] rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold">{finishLabel}</button>
+          ) : (
+            <>
+              <button type="button" onClick={() => finish('more')} className="min-h-[52px] rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold">۱۰ کارت دیگر</button>
+              <button type="button" onClick={() => finish('home')} className="min-h-[48px] rounded-2xl font-bold text-ink dark:text-white hover:bg-slate-100 dark:hover:bg-slate-700">برگشت</button>
+            </>
+          )}
           {history.length > 0 && <button type="button" onClick={undo} className="text-sm text-ink-muted dark:text-slate-400 hover:underline">واگرد آخرین پاسخ</button>}
           {saveError && <p role="alert" className="text-center text-sm text-red-700 dark:text-red-300">{saveError}</p>}
         </div>

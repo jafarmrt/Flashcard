@@ -288,6 +288,14 @@ export const TodayView: React.FC<TodayViewProps> = ({
       )}
 
       <div className="grid gap-5 md:grid-cols-2">
+        {totalWords === 0 ? (
+          // A new account: no batch sizes and no review modes for zero cards,
+          // only where cards come from.
+          <section className="md:col-span-2 bg-white dark:bg-slate-800 rounded-3xl p-5 md:p-7 flex flex-col gap-2 border border-stone-200/80 dark:border-slate-700">
+            <h2 className="text-lg font-extrabold text-ink dark:text-white">مرور واژه‌ها</h2>
+            <p className="text-sm text-ink-muted dark:text-slate-300 leading-relaxed">هنوز کارتی نداری. هنگام خواندن روی هر واژه‌ای که نمی‌دانی بزن و «+ کارت» را بزن؛ مرورش از همین‌جا شروع می‌شود.</p>
+          </section>
+        ) : (
         <section className="md:col-span-2 bg-brand-500 text-white rounded-3xl p-5 md:p-7 flex flex-col gap-4">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex-1 min-w-[15rem]">
@@ -392,6 +400,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
             </button>
           </div>
         </section>
+        )}
 
         {totalWords > 0 && onOpenLesson && (
           <section

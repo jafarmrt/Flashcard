@@ -29,7 +29,6 @@ import { newNote } from '../../services/notes';
 import { readerSection } from '../../services/readerText';
 import { sectionPiecesForVoice, type Piece, type ReadAloudVoice } from '../../services/readAloud';
 import {
-  aiSpeechWithMeta,
   countCachedSpeechForSettings,
   prefetchSpeechTexts,
   speechModel,
@@ -37,13 +36,11 @@ import {
   speechVoice,
 } from '../../services/aiSpeech';
 import { speechCacheSize } from '../../services/speechCache';
-import { hasPersianDeviceVoice, isSpeechSupported, speakText, stopSpeech } from '../../services/ttsService';
+import { hasPersianDeviceVoice, isSpeechSupported } from '../../services/ttsService';
 import { cardHasTheme, themeSummaries } from '../../services/wordThemes';
 import { DriveBookmarksTray } from './DriveBookmarksTray';
+import { useDriveAudio, useWakeLock } from './useDriveAudio';
 import { fa, Icon } from '../common/ui';
-
-const SILENCE_WAV =
-  'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=';
 
 export interface DrivingViewProps {
   sources: Source[];
@@ -373,13 +370,7 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
   const [cardIndex, setCardIndex] = useState<number>(0);
   const [cardPhase, setCardPhase] = useState<CardAudioPhase>('listen');
 
-  // Mutable refs for async audio loop cancellation and MediaSession handlers
-  const runIdRef = useRef(0);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const audioUnlockedRef = useRef(false);
-  const objectUrlsRef = useRef<string[]>([]);
   const chunkStartedAtRef = useRef<number>(Date.now());
-  const wakeLockRef = useRef<any>(null);
 
   // Latest values read inside playback loops so saving audioPosition, bookmarking,
   // or background account sync never re-triggers the active sentence mid-playback.
@@ -412,35 +403,16 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
     loadChapterText,
   };
 
+  // The audio engine (components/driving/useDriveAudio): `runIdRef` cuts
+  // off whatever plays when a skip, pause or stop starts a new run.
+  const getAudioConfig = useCallback(() => latestRef.current, []);
+  const { runIdRef, haltAudio, revokeUrls, unlockAudio, playUtterance } = useDriveAudio(getAudioConfig, setCurrentPieceFromCache);
+  useWakeLock(active && !paused);
+
   const activeChapter = useMemo(
     () => chapters.find(c => c.id === bookChapterId),
     [chapters, bookChapterId],
   );
-
-  const revokeUrls = useCallback(() => {
-    for (const u of objectUrlsRef.current) {
-      try {
-        URL.revokeObjectURL(u);
-      } catch {
-        // ignore
-      }
-    }
-    objectUrlsRef.current = [];
-  }, []);
-
-  const haltAudio = useCallback(() => {
-    runIdRef.current += 1;
-    stopSpeech();
-    if (audioRef.current) {
-      try {
-        audioRef.current.onended = null;
-        audioRef.current.onerror = null;
-        audioRef.current.pause();
-      } catch {
-        // ignore
-      }
-    }
-  }, []);
 
   // Where the audiobook listening stopped (chapter, section, sentence). Each
   // save makes the source newer and starts a sync, so it is not saved for
@@ -486,43 +458,6 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
     };
   }, [flushSpot]);
 
-  // Screen Wake Lock while actively playing
-  useEffect(() => {
-    const shouldLock = active && !paused;
-    const nav = navigator as any;
-    if (!shouldLock || !nav?.wakeLock?.request) {
-      if (wakeLockRef.current) {
-        wakeLockRef.current.release?.().catch(() => undefined);
-        wakeLockRef.current = null;
-      }
-      return;
-    }
-    let cancelled = false;
-    const acquire = () => {
-      if (cancelled || document.visibilityState !== 'visible') return;
-      nav.wakeLock
-        .request('screen')
-        .then((sentinel: any) => {
-          if (cancelled) sentinel.release?.().catch(() => undefined);
-          else wakeLockRef.current = sentinel;
-        })
-        .catch(() => undefined);
-    };
-    acquire();
-    const onVis = () => {
-      if (document.visibilityState === 'visible') acquire();
-    };
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      cancelled = true;
-      document.removeEventListener('visibilitychange', onVis);
-      if (wakeLockRef.current) {
-        wakeLockRef.current.release?.().catch(() => undefined);
-        wakeLockRef.current = null;
-      }
-    };
-  }, [active, paused]);
-
   useEffect(() => {
     return () => {
       prefetchAbortRef.current?.abort();
@@ -530,123 +465,6 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
       revokeUrls();
     };
   }, [haltAudio, revokeUrls]);
-
-  const ensureAudioElement = useCallback((): HTMLAudioElement => {
-    if (!audioRef.current) {
-      audioRef.current = new Audio();
-    }
-    return audioRef.current;
-  }, []);
-
-  const unlockAudio = useCallback(() => {
-    if (audioUnlockedRef.current) return;
-    try {
-      const a = ensureAudioElement();
-      audioUnlockedRef.current = true;
-      a.src = SILENCE_WAV;
-      a.play().catch(() => undefined);
-    } catch {
-      // ignore
-    }
-  }, [ensureAudioElement]);
-
-  // Speaks one utterance (AI or device voice) and resolves when done or cancelled.
-  // Stable callback: reads `settings`, `rate`, and `voice` from `latestRef` so
-  // React state updates never recreate `playUtterance` mid-sentence.
-  const playUtterance = useCallback(
-    async (
-      text: string,
-      opts: { lang: 'en-US' | 'fa-IR'; audioSrc?: string; slow?: boolean; prefetchNext?: string },
-      expectedRun: number,
-    ): Promise<boolean> => {
-      if (runIdRef.current !== expectedRun || !text.trim()) return false;
-      const curRate = latestRef.current.rate;
-      const curVoice = latestRef.current.voice;
-      const curSettings = latestRef.current.settings;
-      const effectiveRate = opts.slow ? Math.max(0.7, curRate * 0.85) : curRate;
-
-      // Prefer recorded dictionary audio for single English headwords in device mode
-      if (opts.audioSrc && curVoice === 'device' && opts.lang === 'en-US') {
-        setCurrentPieceFromCache(false);
-        const played = await new Promise<boolean>(resolve => {
-          const audio = ensureAudioElement();
-          audio.onended = null;
-          audio.onerror = null;
-          audio.pause();
-          audio.onended = () => resolve(true);
-          audio.onerror = () => resolve(false);
-          audio.src = opts.audioSrc!;
-          audio.playbackRate = effectiveRate;
-          audioUnlockedRef.current = true;
-          audio.play().catch(() => resolve(false));
-        });
-        if (played || runIdRef.current !== expectedRun) return runIdRef.current === expectedRun;
-      }
-
-      // AI voice path (Gemini speaks both English & Persian; OpenRouter speaks English).
-      // `aiSpeechWithMeta` persists every generated clip in IndexedDB (`LinguaSpeechCache`)
-      // so replaying a section or card never calls the API twice.
-      if (curVoice === 'ai' && (opts.lang === 'en-US' || speechProvider(curSettings) === 'gemini')) {
-        try {
-          const { blob, fromCache } = await aiSpeechWithMeta(text, curSettings);
-          if (runIdRef.current !== expectedRun) return false;
-          setCurrentPieceFromCache(fromCache);
-          if (opts.prefetchNext?.trim()) {
-            aiSpeechWithMeta(opts.prefetchNext, curSettings).catch(() => undefined);
-          }
-          // The piece before has ended or been cut off; its URL kept its
-          // sound in memory for the whole drive (over 150 MB in an hour).
-          revokeUrls();
-          const url = URL.createObjectURL(blob);
-          objectUrlsRef.current.push(url);
-          const ok = await new Promise<boolean>(resolve => {
-            if (runIdRef.current !== expectedRun) {
-              resolve(false);
-              return;
-            }
-            const audio = ensureAudioElement();
-            audio.onended = null;
-            audio.onerror = null;
-            audio.pause();
-            audio.onended = () => resolve(true);
-            audio.onerror = () => resolve(false);
-            audio.src = url;
-            audio.playbackRate = effectiveRate;
-            audioUnlockedRef.current = true;
-            audio.play().catch(() => resolve(false));
-          });
-          if (ok) return runIdRef.current === expectedRun;
-        } catch {
-          setCurrentPieceFromCache(false);
-          // Fall through to device speech synthesis
-        }
-      } else {
-        setCurrentPieceFromCache(false);
-      }
-
-      if (runIdRef.current !== expectedRun) return false;
-      if (!isSpeechSupported()) {
-        await new Promise<void>(r => setTimeout(r, 1200));
-        return runIdRef.current === expectedRun;
-      }
-
-      return new Promise<boolean>(resolve => {
-        let settled = false;
-        const done = (ok: boolean) => {
-          if (settled) return;
-          settled = true;
-          resolve(ok && runIdRef.current === expectedRun);
-        };
-        speakText(text, {
-          lang: opts.lang,
-          rate: effectiveRate,
-          onEnd: () => done(true),
-          onError: () => done(true),
-        });
-      });
-    },
-    [ensureAudioElement, revokeUrls],
-  );
 
   // Loads a section's pieces using the exact same piece boundaries as ChunkReaderView
   const loadSectionPieces = useCallback(async (chapterId: string, chunk: number): Promise<Piece[]> => {
@@ -771,6 +589,7 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
     pieceIndex,
     advanceBookSection,
     playUtterance,
+    runIdRef,
   ]);
 
   // Eyes-Free Audio Flashcard Loop Effect — depends strictly on cardIndex & play state
@@ -815,7 +634,7 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
       if (runIdRef.current !== expectedRun) return;
       setCardIndex(i => (i + 1) % Math.max(1, latestRef.current.activeCardQueue.length));
     })();
-  }, [active, paused, mode, cardIndex, cardQueueLength, playUtterance]);
+  }, [active, paused, mode, cardIndex, cardQueueLength, playUtterance, runIdRef]);
 
   const startSession = async () => {
     setStatusMessage(null);
