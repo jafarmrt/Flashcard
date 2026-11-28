@@ -42,14 +42,27 @@ export interface SyncRunnerDeps {
   adoptSettings?: (incoming: Partial<Settings>) => string | undefined;
 }
 
-// Uploads live chapter texts not yet sent to the server, up to 20 per sync.
-// A chapter the server refuses stays local and is retried on the next sync.
-export const uploadChapterTexts = async (deps: Pick<SyncRunnerDeps, 'readChapters' | 'readChapterTexts' | 'callChapterPut' | 'markChapterUploaded'>): Promise<number> => {
-  const pending = (await deps.readChapterTexts()).filter(t => !t.uploaded);
-  if (pending.length === 0) return 0;
-  const live = new Set((await deps.readChapters()).filter(c => !c.isDeleted).map(c => c.id));
+// Chapter texts of live chapters that the server does not have yet.
+export const pendingChapterTexts = (texts: ChapterText[], chapters: Chapter[]): ChapterText[] => {
+  const live = new Set(chapters.filter(c => !c.isDeleted).map(c => c.id));
+  return texts.filter(t => !t.uploaded && live.has(t.id));
+};
+
+// Uploads the chapter texts not yet sent. The cap is high enough for a whole
+// book: at 20 a sync, chapters 21 and on of a long book stayed on this
+// device until some unrelated change started another sync, and were lost if
+// another account then signed in here. A chapter the server refuses stays
+// local and is retried on the next sync.
+export const CHAPTER_UPLOADS_PER_SYNC = 200;
+export const uploadChapterTexts = async (
+  deps: Pick<SyncRunnerDeps, 'readChapters' | 'readChapterTexts' | 'callChapterPut' | 'markChapterUploaded'>,
+  limit = CHAPTER_UPLOADS_PER_SYNC,
+): Promise<number> => {
+  const texts = (await deps.readChapterTexts()).filter(t => !t.uploaded);
+  if (texts.length === 0) return 0;
+  const pending = pendingChapterTexts(texts, await deps.readChapters());
   let uploaded = 0;
-  for (const text of pending.filter(t => live.has(t.id)).slice(0, 20)) {
+  for (const text of pending.slice(0, limit)) {
     try {
       await deps.callChapterPut({ id: text.id, sourceId: text.sourceId, chunks: text.chunks, ...(text.editedAt ? { editedAt: text.editedAt } : {}) });
       await deps.markChapterUploaded(text.id);

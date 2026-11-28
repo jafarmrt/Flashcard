@@ -27,6 +27,7 @@ import {
   LESSON_DURATIONS,
   lessonsByDay,
   todayOpenLesson,
+  withLessonRating,
   type LessonClozeItem,
 } from '../../services/studyLesson';
 import { isSpeechSupported, speakText } from '../../services/ttsService';
@@ -45,6 +46,8 @@ interface LessonViewProps {
   onDeleteLesson: (lessonId: string) => Promise<void> | void;
   onRateCard: (cardId: string, rating: PerformanceRating) => Promise<Flashcard | null>;
   onPracticeAnswer: (cardId: string, right: boolean, chose?: string) => void;
+  onQuizMiss: (cardId: string) => void; // a miss in a replayed quiz counts as forgetting, as in any quiz
+  newCardsLeft?: number; // new cards the daily cap still allows today
   onReviewLessonCards: (cardIds: string[]) => void;
   onBackToToday: () => void;
 }
@@ -81,13 +84,38 @@ const LessonReviewStage: React.FC<{
   onRateCard: (cardId: string, rating: PerformanceRating) => Promise<Flashcard | null>;
   onFinishStage: (result: { rightCount: number; totalCount: number; hardIds: string[] }) => void;
 }> = ({ cardIds, cardsById, lesson, onRateCard, onFinishStage }) => {
+  // A resumed stage asks only the cards not rated yet in this lesson: asking
+  // the rest again rated them a second time (AGAIN and HARD twice in FSRS).
   const [queue, setQueue] = useState<{ cardId: string; repeat: boolean }[]>(() =>
-    cardIds.map(cardId => ({ cardId, repeat: false })),
+    cardIds.filter(cardId => !lesson.ratings?.[cardId]).map(cardId => ({ cardId, repeat: false })),
   );
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
   const [busy, setBusy] = useState(false);
-  const firstRatingsRef = useRef<Map<string, PerformanceRating>>(new Map());
+  const firstRatingsRef = useRef<Map<string, PerformanceRating>>(
+    new Map(cardIds.flatMap(id => (lesson.ratings?.[id] ? [[id, lesson.ratings[id]] as const] : []))),
+  );
+
+  const finish = useCallback(() => {
+    const ratings = firstRatingsRef.current;
+    let rightCount = 0;
+    const hardIds: string[] = [];
+    for (const id of cardIds) {
+      const r = ratings.get(id);
+      if (r === 'GOOD' || r === 'EASY') rightCount++;
+      if (r === 'AGAIN' || r === 'HARD') hardIds.push(id);
+    }
+    onFinishStage({ rightCount, totalCount: cardIds.length, hardIds });
+  }, [cardIds, onFinishStage]);
+
+  // Every card was rated before the pause: the stage is done.
+  const finishedOnArrival = useRef(queue.length === 0);
+  useEffect(() => {
+    if (finishedOnArrival.current) {
+      finishedOnArrival.current = false;
+      finish();
+    }
+  }, [finish]);
 
   const currentItem = queue[index];
   const liveCard = currentItem ? cardsById.get(currentItem.cardId) : undefined;
@@ -128,25 +156,13 @@ const LessonReviewStage: React.FC<{
           setIndex(i => i + 1);
           setRevealed(false);
         } else {
-          const ratings = firstRatingsRef.current;
-          let rightCount = 0;
-          const hardIds: string[] = [];
-          for (const id of cardIds) {
-            const r = ratings.get(id);
-            if (r === 'GOOD' || r === 'EASY') rightCount++;
-            if (r === 'AGAIN' || r === 'HARD') hardIds.push(id);
-          }
-          onFinishStage({
-            rightCount,
-            totalCount: cardIds.length,
-            hardIds,
-          });
+          finish();
         }
       } finally {
         setBusy(false);
       }
     },
-    [busy, cardIds, currentItem, index, onFinishStage, onRateCard, queue],
+    [busy, currentItem, finish, index, onRateCard, queue],
   );
 
   useEffect(() => {
@@ -472,6 +488,8 @@ export const LessonView: React.FC<LessonViewProps> = ({
   onDeleteLesson,
   onRateCard,
   onPracticeAnswer,
+  onQuizMiss,
+  newCardsLeft,
   onReviewLessonCards,
   onBackToToday,
 }) => {
@@ -511,17 +529,39 @@ export const LessonView: React.FC<LessonViewProps> = ({
     onConsumeInitialDuration?.();
   }, [initialDuration, onConsumeInitialDuration]);
 
-  // Live elapsed timer while inside the active lesson runner.
+  // The lesson as it is now, for handlers that run after an await: the
+  // object a render closed over may lack a rating saved since.
+  const activeLessonRef = useRef(activeLesson);
+  activeLessonRef.current = activeLesson;
+  const stageIndex = activeLesson?.currentStageIndex;
+
+  // Live elapsed timer while inside the active lesson runner. It restarts
+  // only when the lesson or its stage changes: every rating syncs and the
+  // sync hands back a new lesson object, and restarting on that set the
+  // clock back each time, so the time kept was only that since the last sync.
   useEffect(() => {
-    if (mode !== 'runner' || !activeLesson) return;
+    if (mode !== 'runner' || !activeLessonId || stageIndex === undefined) return;
+    const base = activeLessonRef.current?.elapsedSeconds || 0;
     stageStartedAtRef.current = Date.now();
-    setLiveSeconds(activeLesson.elapsedSeconds);
+    setLiveSeconds(base);
     const id = window.setInterval(() => {
       const delta = Math.floor((Date.now() - stageStartedAtRef.current) / 1000);
-      setLiveSeconds(activeLesson.elapsedSeconds + Math.max(0, delta));
+      setLiveSeconds(base + Math.max(0, delta));
     }, 1000);
     return () => window.clearInterval(id);
-  }, [mode, activeLesson]);
+  }, [mode, activeLessonId, stageIndex]);
+
+  // Rates a card once per lesson (see SavedStudyLesson.ratings).
+  const rateInLesson = useCallback(async (cardId: string, rating: PerformanceRating) => {
+    const lesson = activeLessonRef.current;
+    if (!lesson) return null;
+    const next = withLessonRating(lesson, cardId, rating);
+    if (!next) return null;
+    activeLessonRef.current = next;
+    const rated = await onRateCard(cardId, rating);
+    await onSaveLesson(next);
+    return rated;
+  }, [onRateCard, onSaveLesson]);
 
   const startNewLesson = async (duration: LessonDuration) => {
     const created = createStudyLesson({
@@ -530,6 +570,7 @@ export const LessonView: React.FC<LessonViewProps> = ({
       practice,
       places,
       today,
+      newLeft: newCardsLeft,
     });
     if (!created) return;
     await onSaveLesson(created);
@@ -545,6 +586,7 @@ export const LessonView: React.FC<LessonViewProps> = ({
   };
 
   const pauseAndExitRunner = async () => {
+    const activeLesson = activeLessonRef.current;
     if (activeLesson && activeLesson.status === 'in_progress') {
       const added = Math.max(0, Math.floor((Date.now() - stageStartedAtRef.current) / 1000));
       if (added > 0) {
@@ -563,6 +605,7 @@ export const LessonView: React.FC<LessonViewProps> = ({
     totalCount: number;
     hardIds: string[];
   }) => {
+    const activeLesson = activeLessonRef.current;
     if (!activeLesson) return;
     const addedSeconds = Math.max(1, Math.floor((Date.now() - stageStartedAtRef.current) / 1000));
     const updated = completeLessonStage(activeLesson, activeLesson.currentStageIndex, {
@@ -630,7 +673,10 @@ export const LessonView: React.FC<LessonViewProps> = ({
             key={replayQuizLesson.cardIds.join(',')}
             questions={replayQuestions}
             aiOptions={aiOptions}
-            onAnswer={(ans: QuizFirstAnswer) => onPracticeAnswer(ans.cardId, ans.right, ans.chose)}
+            onAnswer={(ans: QuizFirstAnswer) => {
+              onPracticeAnswer(ans.cardId, ans.right, ans.chose);
+              if (!ans.right) onQuizMiss(ans.cardId);
+            }}
             onRetry={ids =>
               setReplayQuizLesson({
                 title: 'تکرار واژه‌های دشوار همین آزمون',
@@ -719,7 +765,7 @@ export const LessonView: React.FC<LessonViewProps> = ({
             cardIds={currentStage.cardIds}
             cardsById={cardsById}
             lesson={activeLesson}
-            onRateCard={onRateCard}
+            onRateCard={rateInLesson}
             onFinishStage={res => void handleStageComplete(res)}
           />
         )}
@@ -736,6 +782,9 @@ export const LessonView: React.FC<LessonViewProps> = ({
                 if (ans.right) quizStatsRef.current.right += 1;
                 else quizStatsRef.current.missed.add(ans.cardId);
                 onPracticeAnswer(ans.cardId, ans.right, ans.chose);
+                // Rated already in this lesson's review: a miss marks it hard
+                // for the last stage, it is not rated AGAIN a second time.
+                if (!ans.right) void rateInLesson(ans.cardId, 'AGAIN');
               }}
               onRetry={() => {
                 // Handled in the final consolidation stage immediately next.

@@ -85,6 +85,8 @@ export interface DrivingViewProps {
 
 type DriveMode = 'book' | 'cards';
 
+const POSITION_SAVE_MS = 30_000;
+
 const PHASE_LABELS: Record<CardAudioPhase, string> = {
   listen: 'گوش بده',
   think: 'فکر کن…',
@@ -428,17 +430,49 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
     }
   }, []);
 
-  // Persist exact audiobook listening spot (chapter, section, sentence) whenever it moves.
-  // Reads `selectedSource` & `onSaveAudioPosition` from `latestRef` so updating `sources`
-  // state never causes a re-save or playback restart loop.
+  // Where the audiobook listening stopped (chapter, section, sentence). Each
+  // save makes the source newer and starts a sync, so it is not saved for
+  // every sentence (that was a server round and a full reload of the app's
+  // data every few seconds, on mobile data, while driving): at once when
+  // the section changes, else at most every POSITION_SAVE_MS, and the last
+  // spot when playback pauses or stops, the page is hidden or the screen
+  // closes. Reads `selectedSource` & `onSaveAudioPosition` from `latestRef`
+  // so updating `sources` state never causes a re-save or playback restart.
+  const pendingSpotRef = useRef<{ sourceId: string; chapterId: string; chunk: number; piece: number } | null>(null);
+  const lastSpotSaveRef = useRef({ at: 0, section: '' });
+  const flushSpot = useCallback(() => {
+    const spot = pendingSpotRef.current;
+    if (!spot) return;
+    pendingSpotRef.current = null;
+    lastSpotSaveRef.current = { at: Date.now(), section: `${spot.sourceId}|${spot.chapterId}|${spot.chunk}` };
+    void latestRef.current.onSaveAudioPosition?.(spot.sourceId, spot.chapterId, spot.chunk, spot.piece);
+  }, []);
+
   useEffect(() => {
     if (!active || mode !== 'book' || loadingBook) return;
     const src = latestRef.current.selectedSource;
     if (!src || !bookChapterId) return;
     const clampedPiece =
       bookPieces.length > 0 ? Math.max(0, Math.min(pieceIndex, bookPieces.length - 1)) : 0;
-    void latestRef.current.onSaveAudioPosition?.(src.id, bookChapterId, bookChunk, clampedPiece);
-  }, [active, mode, loadingBook, bookChapterId, bookChunk, pieceIndex, bookPieces.length]);
+    pendingSpotRef.current = { sourceId: src.id, chapterId: bookChapterId, chunk: bookChunk, piece: clampedPiece };
+    const last = lastSpotSaveRef.current;
+    if (last.section !== `${src.id}|${bookChapterId}|${bookChunk}` || Date.now() - last.at >= POSITION_SAVE_MS) flushSpot();
+  }, [active, mode, loadingBook, bookChapterId, bookChunk, pieceIndex, bookPieces.length, flushSpot]);
+
+  useEffect(() => {
+    if (!active || paused) flushSpot();
+  }, [active, paused, flushSpot]);
+
+  useEffect(() => {
+    const onHide = () => { if (document.visibilityState === 'hidden') flushSpot(); };
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', flushSpot);
+    return () => {
+      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('pagehide', flushSpot);
+      flushSpot();
+    };
+  }, [flushSpot]);
 
   // Screen Wake Lock while actively playing
   useEffect(() => {
@@ -548,6 +582,9 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
           if (opts.prefetchNext?.trim()) {
             aiSpeechWithMeta(opts.prefetchNext, curSettings).catch(() => undefined);
           }
+          // The piece before has ended or been cut off; its URL kept its
+          // sound in memory for the whole drive (over 150 MB in an hour).
+          revokeUrls();
           const url = URL.createObjectURL(blob);
           objectUrlsRef.current.push(url);
           const ok = await new Promise<boolean>(resolve => {
@@ -596,7 +633,7 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
         });
       });
     },
-    [ensureAudioElement],
+    [ensureAudioElement, revokeUrls],
   );
 
   // Loads a section's pieces using the exact same piece boundaries as ChunkReaderView

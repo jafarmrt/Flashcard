@@ -20,6 +20,7 @@ import {
   hashPassword, verifyPassword, getSessionSecret, createSessionToken, sessionOf,
   sessionCookieHeader, clearSessionCookieHeader, loginLockMinutes, recordLoginFailure,
   clearLoginFailures, isAllowedAudioUrl, accountLockMinutes, nextFailureRecord, FailureRecord,
+  FAILURE_RECORD_MS, MAX_PASSWORD_LENGTH, MAX_USERNAME_LENGTH, passwordForUnknownUser,
 } from './auth.js';
 
 // The parts of Express's and Vercel's request/response objects the API uses.
@@ -147,10 +148,12 @@ export async function getKey(key: string): Promise<any | null> {
   return copyOf(loadFileStore().get(key)) ?? null;
 }
 
-export async function setKey(key: string, value: unknown): Promise<void> {
+// `keepMs`: Redis forgets the key after that long (the file store keeps it;
+// it only ever holds a handful of such keys).
+export async function setKey(key: string, value: unknown, keepMs?: number): Promise<void> {
   const kv = kvConfig();
   if (kv) {
-    await kvCommand(kv, ['SET', key, JSON.stringify(value)]);
+    await kvCommand(kv, keepMs ? ['SET', key, JSON.stringify(value), 'PX', Math.round(keepMs)] : ['SET', key, JSON.stringify(value)]);
     return;
   }
   const store = loadFileStore();
@@ -880,6 +883,7 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         if (typeof username !== 'string' || typeof password !== 'string') return res.status(400).json({ error: 'Username and password are required.' });
         if (!USERNAME_PATTERN.test(username)) return res.status(400).json({ error: 'Username must be 3-32 letters, digits, dots, dashes or underscores.' });
         if (password.length < MIN_PASSWORD_LENGTH) return res.status(400).json({ error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` });
+        if (password.length > MAX_PASSWORD_LENGTH) return res.status(400).json({ error: `Password must be at most ${MAX_PASSWORD_LENGTH} characters.` });
 
         const existingUser = await getUser(username);
         if (existingUser) {
@@ -902,18 +906,29 @@ export async function handleProxy(req: ProxyRequest, res: ProxyResponse) {
         if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
           return res.status(400).json({ error: 'Username and password are required.' });
         }
+        if (username.length > MAX_USERNAME_LENGTH || password.length > MAX_PASSWORD_LENGTH) {
+          return res.status(400).json({ error: 'Invalid username or password.' });
+        }
         const ip = clientIp(req);
+        // An address locked out is refused before anything is read.
+        const ipLocked = loginLockMinutes(ip, username);
+        if (ipLocked > 0) {
+          return res.status(429).json({ error: `Too many failed attempts. Try again in ${ipLocked} minute(s).` });
+        }
         const failed = (await getKey(loginFailKey(username))) as FailureRecord | null;
-        const lockedMinutes = Math.max(loginLockMinutes(ip, username), accountLockMinutes(failed));
+        const lockedMinutes = accountLockMinutes(failed);
         if (lockedMinutes > 0) {
           return res.status(429).json({ error: `Too many failed attempts. Try again in ${lockedMinutes} minute(s).` });
         }
 
+        // Failures are kept in the store only for accounts that exist, and
+        // expire: every made-up name used to leave a key there for good, so
+        // anyone could fill the store until the owner's sync failed.
         const user = await getUser(username);
-        const check = await verifyPassword(password, user?.password);
+        const check = await verifyPassword(password, user?.password ?? await passwordForUnknownUser());
         if (!user || !check.ok) {
           recordLoginFailure(ip, username);
-          await setKey(loginFailKey(username), nextFailureRecord(failed));
+          if (user) await setKey(loginFailKey(username), nextFailureRecord(failed), FAILURE_RECORD_MS);
           return res.status(401).json({ error: 'Invalid username or password.' });
         }
         clearLoginFailures(ip, username);

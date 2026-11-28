@@ -9,6 +9,7 @@ import type {
   LessonDuration,
   LessonStageSpec,
   LessonWordSnapshot,
+  PerformanceRating,
   PracticeAnswer,
   SavedStudyLesson,
 } from '../types';
@@ -82,8 +83,9 @@ export const pickLessonCards = (
   targetCount: number,
   maxNewShare: number,
   now: Date = new Date(),
+  newLeft: number = Infinity, // new cards the daily cap still allows today
 ): Flashcard[] => {
-  const live = cards.filter(c => !c.isDeleted && c.front.trim() && c.back.trim());
+  const live = cards.filter(c => !c.isDeleted && c.kind !== 'grammar' && c.front.trim() && c.back.trim());
   if (live.length === 0 || targetCount <= 0) return [];
 
   const picked: Flashcard[] = [];
@@ -109,9 +111,11 @@ export const pickLessonCards = (
     });
   for (const c of dueReviews) add(c);
 
+  // A lesson starts new cards like a review does: within the day's cap.
   const newCandidates = live
     .filter(c => !taken.has(c.id) && isNewCard(c))
-    .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+    .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''))
+    .slice(0, Math.max(0, newLeft));
   for (const c of newCandidates.slice(0, maxNewShare)) add(c);
 
   const learnedRest = live
@@ -150,6 +154,7 @@ export interface CreateLessonInput {
   places?: Map<string, CardPlace[]>;
   today: string;
   now?: Date;
+  newLeft?: number; // new cards the daily cap still allows today
 }
 
 export const createStudyLesson = ({
@@ -160,6 +165,7 @@ export const createStudyLesson = ({
   places,
   today,
   now = new Date(),
+  newLeft,
 }: CreateLessonInput): SavedStudyLesson | null => {
   const blueprint = LESSON_BLUEPRINTS[durationMinutes];
   const chosen = pickLessonCards(
@@ -168,6 +174,7 @@ export const createStudyLesson = ({
     blueprint.wordCount,
     blueprint.maxNewShare,
     now,
+    newLeft,
   );
   if (chosen.length === 0) return null;
 
@@ -275,6 +282,18 @@ export interface StageCompletionInput {
   hardIds?: string[];
   addedSeconds?: number;
 }
+
+// The lesson with `cardId`'s rating recorded, or null when the card was
+// already rated in it (the caller then leaves its schedule alone).
+export const withLessonRating = (
+  lesson: SavedStudyLesson,
+  cardId: string,
+  rating: PerformanceRating,
+  nowIso: string = new Date().toISOString(),
+): SavedStudyLesson | null =>
+  lesson.ratings?.[cardId]
+    ? null
+    : { ...lesson, ratings: { ...lesson.ratings, [cardId]: rating }, updatedAt: nowIso };
 
 export const completeLessonStage = (
   lesson: SavedStudyLesson,

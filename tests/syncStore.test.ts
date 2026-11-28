@@ -387,3 +387,30 @@ test('failed sign-ins are counted per account in the store, whatever the address
   }
   assert.equal(last, 429);
 });
+
+test('an edit that loses on the server goes back to the device that sent it, even when the server copy did not change', () => {
+  const store = fresh();
+  applyChanges(store, { cards: [card('a', { back: 'phone', updatedAt: T2 })] });
+  const since = store.rev;
+  // A device with a slow clock reviews the card it pulled at T2 and stamps T1.
+  const echo = applyChanges(store, { cards: [card('a', { back: 'laptop', updatedAt: T1 })] });
+  assert.equal(store.cards[0].back, 'phone', 'the newer edit is kept');
+  const back = changesSince(store, since, echo);
+  assert.equal(back.changes.cards?.[0]?.back, 'phone', 'the device is told what the server kept');
+});
+
+test('a failed sign-in with a name that has no account leaves nothing in the store, and an overlong one is refused', async () => {
+  const dir = setupServer();
+  await call({ action: 'auth-register', username: 'sara', password: 'long-enough-password' });
+  const file = path.join(dir, '.data_store.json');
+  const before = fs.readFileSync(file, 'utf-8');
+  for (let i = 0; i < 3; i++) {
+    const out: { status: number } = { status: 0 };
+    const res: ProxyResponse = { status(c) { out.status = c; return res; }, json(b) { return b; }, send(b) { return b; }, setHeader() { return undefined; } };
+    await (handleProxy as any)({ body: { action: 'auth-login', username: `nobody-${i}`, password: 'wrong-password-1' }, headers: {}, socket: { remoteAddress: '10.1.0.1' } }, res);
+    assert.equal(out.status, 401);
+  }
+  assert.equal(fs.readFileSync(file, 'utf-8'), before, 'no key per made-up name');
+  const long = await call({ action: 'auth-login', username: 'x'.repeat(5000), password: 'wrong-password-1' });
+  assert.equal(long.status, 400);
+});

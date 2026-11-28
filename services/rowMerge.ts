@@ -24,6 +24,15 @@ export const mergeRow = (table: string, cloud: Row | undefined, client: Row): Ro
   }
   if (table === 'sources') {
     if (cloud.reading || client.reading) merged.reading = mergeReading(cloud.reading, client.reading);
+    // Where reading stopped goes by its own time: saving the listening spot
+    // in driving mode makes a row newer, and the whole row winning brought
+    // back an older reading position from a device that had not pulled yet.
+    // A position saved before it had a time counts from its row's edit.
+    if (cloud.position || client.position) {
+      const at = (r: Row) => time(r.position?.at || r.updatedAt);
+      merged.position = !cloud.position ? client.position : !client.position ? cloud.position
+        : at(client) >= at(cloud) ? client.position : cloud.position;
+    }
     if (cloud.audioPosition || client.audioPosition) {
       const ca = cloud.audioPosition;
       const cla = client.audioPosition;

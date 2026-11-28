@@ -12,7 +12,7 @@ import { TodayView } from './components/TodayView';
 import { MeView } from './components/MeView';
 import { chaptersOf, currentChunkOf, currentReading, placesByCard } from './services/library';
 import { knownTermSet } from './services/knownWords';
-import { clampReviewBatch, dailyQueue, DEFAULT_NEW_PER_DAY } from './services/dailyQueue';
+import { clampReviewBatch, dailyQueue, DEFAULT_NEW_PER_DAY, newCardsStartedToday } from './services/dailyQueue';
 import { dayString } from './services/calendar';
 import { newPracticeAnswer } from './services/practiceLog';
 import { themeSummaries } from './services/wordThemes';
@@ -230,8 +230,9 @@ const App: React.FC = () => {
                     onRateCard={handleRateCardInLesson}
                     onPracticeAnswer={(cardId, right, chose) => {
                         void handleSavePractice([newPracticeAnswer({ cardId, kind: 'quiz', right, ...(chose ? { chose } : {}) })]);
-                        if (!right) void handleQuizMiss(cardId);
                     }}
+                    onQuizMiss={cardId => { void handleQuizMiss(cardId); }}
+                    newCardsLeft={Math.max(0, (settings.newCardsPerDay ?? DEFAULT_NEW_PER_DAY) - newCardsStartedToday(studyLogs, today))}
                     onReviewLessonCards={ids => handleReviewCards(ids, 'LESSON')}
                     onBackToToday={() => handleNavigate('TODAY')}
                 />;

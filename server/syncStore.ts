@@ -178,12 +178,17 @@ export const applyChanges = (store: StoreData, changes: SyncChanges | undefined,
       const cloud = i === undefined ? undefined : rows[i];
       const merged = mergeRow(table, cloud && strip(cloud), client);
       const same = cloud !== undefined && canonical(merged) === canonical(cloud);
-      if (!same) {
+      // Only a row the device holds as it is now needs no answer.
+      const held = canonical(merged) === canonical(sent);
+      // A row whose edit lost to the stored copy must still go back to the
+      // device: it already counts what it sent as confirmed, and the stored
+      // copy's old rev lies before its `since`, so without a new rev the two
+      // ends would disagree for good (a slow clock losing a review, say).
+      if (!same || !held) {
         merged._rev = ++store.rev;
         if (i === undefined) { at.set(client.id, rows.length); rows.push(merged); } else rows[i] = merged;
       }
-      // Only a row the device holds as it is now needs no answer.
-      if (canonical(merged) === canonical(sent)) echo.rows.add(`${table}:${client.id}`);
+      if (held) echo.rows.add(`${table}:${client.id}`);
     }
   }
 

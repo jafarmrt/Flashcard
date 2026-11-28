@@ -57,13 +57,21 @@ imports this file, MCP in `.mcp.json`). Keep both MCP lists alike.
 - Comments explain *why*, in plain English, in the style of the existing code.
 - Pure logic goes in `services/*.ts` with tests in `tests/*.test.ts`.
 - Synced tables: decks, cards, sources, chapters, occurrences, knownWords,
-  speechAttempts, notes, practice (services/syncClient.ts SYNC_TABLES and
+  speechAttempts, notes, practice, themeExercises, studyLessons
+  (services/syncClient.ts SYNC_TABLES and
   server/syncStore.ts ROW_TABLES must list the same). A new synced table also
   needs: types.ts, a Dexie version in services/localDBService.ts, readLocal /
   SYNC_DB_TABLES / the sync transaction / fingerprint in hooks/useAppLogic.ts,
   and syncState.ts; also `BackupData` in services/backup.ts and the fakes
-  in tests/backup.test.ts and tests/library.test.ts (7.20.0 `practice` is
-  the latest example).
+  in tests/backup.test.ts, tests/library.test.ts and tests/syncRunner.test.ts
+  (7.24.0 `studyLessons` is the latest example).
+- Every FSRS rating goes through `answerCard` and writes one studyHistory
+  row. A screen that rates cards must not rate the same card twice in one
+  sitting (7.24.1: a resumed lesson did; `SavedStudyLesson.ratings`).
+- A change that starts a sync (any synced row's `updatedAt`) must not run
+  per sentence or per second: throttle it (7.24.1 driving `POSITION_SAVE_MS`).
+- CI (.github/workflows/ci.yml) runs tsc, lint:hooks, tests and build on
+  every push; keep it green before merging to `main`.
 - Chapter text lives apart from the sync (`chapter-put`/`chapter-get`);
   edits carry `editedAt`, and `Chapter.textEditedAt` makes other devices
   fetch the new text.
@@ -168,6 +176,32 @@ Do not bring these back without the user asking.
 
 ## What is done (latest first)
 
+- 7.24.1 (stabilization after the review of 2026-11-28, see the plan
+  below): sync answers a row whose edit lost on the server
+  (server/syncStore `applyChanges` gives it a new rev); `takeIncoming`
+  confirms a merged row only when it equals the server's; all chapter
+  texts upload in one sync (`CHAPTER_UPLOADS_PER_SYNC`) and sign-out
+  counts unsent ones (`pendingChapterTexts`); `Source.position.at` merges
+  the reading position on its own (services/rowMerge); driving saves the
+  listening spot per section / 30 s / pause, and revokes each piece's URL;
+  speech cache capped at 300 MB (`sizes` table, `piecesToDrop`);
+  `navigator.storage.persist()`; lessons rate a card once
+  (`withLessonRating`), keep the new-card cap, skip grammar cards, and the
+  clock survives syncs; sign-in failures stored only for real accounts,
+  with a TTL (`setKey` keepMs), length limits, Express body 10 MB.
+
+- 7.21.0–7.24.0 (written in one day with another tool; AGENTS.md was not
+  updated then): mixed quiz question types and a quiz of «هنوز سخت» words;
+  components/DiagnosticsView.tsx «وضعیت و عیب‌یابی»; driving mode
+  (components/driving/DrivingView.tsx, services/drivingMode.ts: book
+  listening with `Source.audioPosition`, audio card review, bookmarks as
+  `notes` with `by:'drive'`, MediaSession, wake lock); thematic bundles
+  (services/wordThemes.ts, components/themes/*, synced `themeExercises`);
+  AI speech cache (services/speechCache.ts, services/aiSpeech.ts); timed
+  lessons of 30/45/60 minutes (components/lesson/LessonView.tsx,
+  services/studyLesson.ts, synced `studyLessons`); a per-session review
+  size (`Settings.reviewBatchSize`, services/dailyQueue `capStudyBatch`).
+
 - 7.20.0 (the user likes the four-choice quiz and found its feedback and
   record-keeping weak): components/practice/QuizPractice.tsx (hint and a
   second try, both words with their meanings, «چرا؟» through
@@ -271,6 +305,33 @@ the book, progress that means something) shipped in 7.8.0.
 Done in 7.11.0–7.17.0 (above). Not done from the review: a hard limit on
 the server's own GEMINI_API_KEY per account, a separate secret for the key
 vault, and moving the sync loop out of hooks/useAppLogic.ts.
+
+## Stabilization plan (review of 2026-11-28)
+
+The user asked for a strict review and agreed to stabilize before new
+features. Phase 0 (CI, storage.persist, these notes) and phase 1 (data
+safety, 7.24.1) are done. Still open:
+
+- Phase 1 leftovers: per-account login lock lets anyone lock the owner out
+  for 15 minutes (lock should slow unknown addresses, not refuse the right
+  password); login-fail count is read-modify-write (use INCR); the Redis
+  sync lock (20 s) can expire during a long sync; `tg:code:*` and
+  `keys:<u>:unreadable:*` keep forever; the account is one Redis value
+  that grows forever (studyHistory, practice, tombstones); security
+  headers in vercel.json; undoing a review leaves its log on the server.
+- Phase 2: Playwright flows at phone size (sign in, read a section, make a
+  card, review, lesson pause/resume, two devices syncing); move logic out
+  of DrivingView (a `useDriveAudio` hook) and LessonView into services.
+- Phase 3: one review engine (LessonView re-implements StudyView without
+  its rules); the sync loop out of hooks/useAppLogic.ts; a persistent
+  error log on the diagnostics page. The user uses lessons, driving mode
+  and thematic bundles every day (2026-11-28): keep all three, make them
+  sturdy rather than remove any.
+- Smaller bugs found: MicroStory AI audio keeps playing after leaving;
+  driving's "today" queue reshuffles on every sync (App.tsx `dailyQueue`
+  with Math.random), so the bookmark can flag the wrong card; «تازه‌سازی
+  کش برنامه» works offline and leaves the app unable to start; lesson
+  cloze options reshuffle on sync; MediaSession left set after stopping.
 
 ## Open ideas (ask the user before starting)
 

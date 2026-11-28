@@ -57,3 +57,13 @@ test('a row new to this browser is taken', () => {
   const r = takeIncoming('cards', [theirs], [], new Map(), {});
   assert.deepEqual(r.confirm, [theirs]);
 });
+
+test('a local row merged with a newer server copy is not confirmed when the merge kept something of its own', () => {
+  // Sections 1 and 2 finished here, not sent yet; the server copy is newer and has only section 0.
+  const mine = { id: 'c', sourceId: 's', index: 0, title: 't', completed: [0, 1, 2], updatedAt: '2026-11-10T00:00:00Z' } as any;
+  const theirs = { id: 'c', sourceId: 's', index: 0, title: 't', completed: [0], updatedAt: '2026-11-12T00:00:00Z' } as any;
+  const known = { c: rowStamp('chapters', { ...mine, updatedAt: '2026-11-01T00:00:00Z' }) };
+  const r = takeIncoming('chapters', [theirs], [mine], new Map([['c', rowStamp('chapters', mine)]]), known);
+  assert.deepEqual(r.write[0].completed, [0, 1, 2], 'finished sections are kept');
+  assert.equal(r.confirm.length, 0, 'not confirmed: the next round sends the merged row');
+});
