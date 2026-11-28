@@ -10,6 +10,7 @@ import type { SyncState } from '../services/syncClient';
 import { classifyErrorReason, pendingSyncSummary, type PendingSyncSummary } from '../services/syncRunner';
 import { readUsage, recentErrors, type UsageRow } from '../services/usageLog';
 import { APP_VERSION } from '../services/appVersion';
+import { clearErrors, errorReport, readErrors, type ErrorEntry } from '../services/errorLog';
 import { DbRepair } from './layout/DbRepair';
 import { SYNC_LABEL } from './layout/Navigation';
 import { fa, Icon } from './common/ui';
@@ -497,7 +498,65 @@ export const DiagnosticsView: React.FC<DiagnosticsViewProps> = ({
           </ul>
         )}
       </section>
+
+      <AppErrorLog />
     </div>
+  );
+};
+
+// Everything the app reported as an error on this device (services/errorLog),
+// with a report to copy into a message: a phone shows no console, so this is
+// where "it did not work" can be traced from.
+const SHOWN_ERRORS = 20;
+const localStore = () => { try { return window.localStorage; } catch { return undefined; } };
+const AppErrorLog: React.FC = () => {
+  const [list, setList] = useState<ErrorEntry[]>(() => readErrors(localStore()));
+  const [note, setNote] = useState('');
+  const button = 'min-h-[44px] px-4 rounded-xl text-sm font-bold border border-slate-200 dark:border-slate-600 text-ink dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50';
+
+  const copy = async () => {
+    const text = errorReport(readErrors(localStore()), { version: APP_VERSION, userAgent: navigator.userAgent });
+    try {
+      await navigator.clipboard.writeText(text);
+      setNote('گزارش کپی شد؛ در پیامت بچسبانش.');
+    } catch {
+      setNote('کپی نشد؛ مرورگر اجازه نداد.');
+    }
+  };
+  const clear = () => {
+    clearErrors(localStore());
+    setList([]);
+    setNote('فهرست خطاها پاک شد.');
+  };
+
+  return (
+    <section className="bg-white dark:bg-slate-800 rounded-3xl p-5 flex flex-col gap-3">
+      <div>
+        <h2 className="text-lg font-extrabold text-ink dark:text-white">گزارش خطاهای برنامه</h2>
+        <p className="text-sm text-ink-muted dark:text-slate-400 mt-0.5">
+          هر خطایی که برنامه روی این دستگاه دیده (تا {fa(100)} مورد، جدیدترین اول). فقط روی همین دستگاه می‌ماند، مگر آن را کپی کنی و بفرستی.
+        </p>
+      </div>
+      {list.length === 0 ? (
+        <p className="text-sm text-ink-muted dark:text-slate-400">خطایی ثبت نشده است.</p>
+      ) : (
+        <ul className="divide-y divide-slate-100 dark:divide-slate-700 text-sm">
+          {list.slice(0, SHOWN_ERRORS).map((e, idx) => (
+            <li key={`${e.at}-${idx}`} className="py-2.5 flex flex-col gap-0.5">
+              <span className="text-xs text-ink-muted dark:text-slate-400 tabular-nums">
+                {new Date(e.at).toLocaleString('fa-IR')}{e.count > 1 ? ` · ${fa(e.count)} بار` : ''}
+              </span>
+              <p dir="ltr" className="font-en text-xs text-ink dark:text-slate-200 break-words">{e.message}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" onClick={() => void copy()} disabled={list.length === 0} className={button}>کپی گزارش برای ارسال</button>
+        <button type="button" onClick={clear} disabled={list.length === 0} className={button}>پاک کردن فهرست</button>
+        {note && <span role="status" className="text-sm text-ink-muted dark:text-slate-300">{note}</span>}
+      </div>
+    </section>
   );
 };
 

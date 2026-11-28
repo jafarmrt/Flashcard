@@ -3,6 +3,11 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
 import { startFresh } from './services/freshStart';
+import { installErrorLog } from './services/errorLog';
+import { APP_VERSION } from './services/appVersion';
+
+// Every error from here on is kept on the device («وضعیت و عیب‌یابی»).
+installErrorLog(APP_VERSION);
 
 // Register Service Worker for PWA (bypass HTTP cache on SW checks and re-check on foreground)
 if ('serviceWorker' in navigator) {

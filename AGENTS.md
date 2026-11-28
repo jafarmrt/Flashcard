@@ -67,8 +67,9 @@ imports this file, MCP in `.mcp.json`). Keep both MCP lists alike.
   speechAttempts, notes, practice, themeExercises, studyLessons
   (services/syncClient.ts SYNC_TABLES and
   server/syncStore.ts ROW_TABLES must list the same). A new synced table also
-  needs: types.ts, a Dexie version in services/localDBService.ts, readLocal /
-  SYNC_DB_TABLES / the sync transaction / fingerprint in hooks/useAppLogic.ts,
+  needs: types.ts, a Dexie version in services/localDBService.ts,
+  `readLocalRows` / `SYNC_DB_TABLES` in services/localSync.ts, the
+  fingerprint and fetchData in hooks/useAppLogic.ts,
   and syncState.ts; also `BackupData` in services/backup.ts and the fakes
   in tests/backup.test.ts, tests/library.test.ts and tests/syncRunner.test.ts
   (7.24.0 `studyLessons` is the latest example).
@@ -344,9 +345,14 @@ safety, 7.24.1) are done. Still open:
   renders StudyView (`onRated`/`onUndone` keep `SavedStudyLesson.ratings`,
   `finishLabel` «ادامهٔ جلسه»; studyLesson `unratedCardIds`,
   `reviewStageResult`, `withoutLessonRating`). StudyView restarts its
-  session when its `cards` prop changes: keep that array fixed. Still
-  open: the sync loop out of hooks/useAppLogic.ts; a persistent error log
-  on the diagnostics page. The user uses lessons, driving mode
+  session when its `cards` prop changes: keep that array fixed. 7.26.0:
+  the device side of the sync is services/localSync.ts (`readLocalRows`,
+  `applySyncRound`, `deviceSyncDeps`, `SYNC_DB_TABLES`); useAppLogic keeps
+  only when to sync and the screen state. Errors are kept on the device
+  (services/errorLog.ts, localStorage `lc_error_log`, installed in
+  index.tsx; console.error is wrapped) and shown on DiagnosticsView
+  «گزارش خطاهای برنامه» with a report to copy: when the user reports a
+  problem, ask for that report. The user uses lessons, driving mode
   and thematic bundles every day (2026-11-28): keep all three, make them
   sturdy rather than remove any.
 - Smaller bugs found in the review were fixed in 7.24.3 (MicroStory audio,
