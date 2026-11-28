@@ -598,6 +598,20 @@ export const useAppLogic = () => {
     };
     document.addEventListener('visibilitychange', syncWhenBack);
     window.addEventListener('online', syncWhenBack);
+    // And send what changed here when the app goes to the background. A
+    // review writes its ratings to this device at once but the app's state,
+    // which starts the automatic sync, only when the session ends: a phone
+    // closed in the middle of a review kept them until it was opened again,
+    // and another device meanwhile reviewed the same cards from the old
+    // schedule. The sync reads the database, so it sends them.
+    let lastLeave = 0;
+    const syncWhenLeaving = () => {
+        if (document.visibilityState !== 'hidden' || !signedInUser.current) return;
+        if (Date.now() - lastLeave < 15_000) return;
+        lastLeave = Date.now();
+        handleSync();
+    };
+    document.addEventListener('visibilitychange', syncWhenLeaving);
     
     const savedSettings = localStorage.getItem('appSettings');
     if (savedSettings) {
@@ -618,6 +632,7 @@ export const useAppLogic = () => {
     return () => {
         window.removeEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
         document.removeEventListener('visibilitychange', syncWhenBack);
+        document.removeEventListener('visibilitychange', syncWhenLeaving);
         window.removeEventListener('online', syncWhenBack);
     };
   }, []);

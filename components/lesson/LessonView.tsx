@@ -304,7 +304,11 @@ const LessonClozeStage: React.FC<{
   items: LessonClozeItem[];
   cardsById: Map<string, Flashcard>;
   onFinishStage: (result: { rightCount: number; totalCount: number; hardIds: string[] }) => void;
-}> = ({ items, cardsById, onFinishStage }) => {
+}> = ({ items: offered, cardsById, onFinishStage }) => {
+  // The sentences and their choices are fixed for the stage: they are built
+  // with a shuffle, and every rating's sync rebuilt them, reshuffling the
+  // choices under the question being answered.
+  const [items] = useState(offered);
   const [index, setIndex] = useState(0);
   const [typed, setTyped] = useState('');
   const [checked, setChecked] = useState<{ status: 'correct' | 'close' | 'wrong'; chosen: string } | null>(null);
@@ -348,7 +352,24 @@ const LessonClozeStage: React.FC<{
     }
   };
 
-  if (!item) return null;
+  // No sentence to fill in (none of the words has one): the stage must
+  // still end, or the lesson stayed on an empty screen.
+  if (!item) {
+    return (
+      <section className="bg-white dark:bg-slate-800 rounded-3xl p-6 text-center flex flex-col gap-4">
+        <p className="text-sm text-ink-muted dark:text-slate-300">
+          برای این واژه‌ها جمله‌ای برای جای خالی پیدا نشد.
+        </p>
+        <button
+          type="button"
+          onClick={() => onFinishStage({ rightCount: 0, totalCount: 0, hardIds: [] })}
+          className="self-center min-h-[48px] px-6 rounded-2xl bg-brand-500 text-white font-bold"
+        >
+          ثبت و پایان جلسه
+        </button>
+      </section>
+    );
+  }
 
   const liveCard = cardsById.get(item.cardId);
 

@@ -232,6 +232,19 @@ export const DiagnosticsView: React.FC<DiagnosticsViewProps> = ({
   const handleRefreshAppCache = async () => {
     setCacheBusy(true);
     setCacheMessage('');
+    // The cached files are what lets the app open without the internet:
+    // they are dropped only when the server answers now. Offline, or on a
+    // network that blocks the site, the app could not open again until the
+    // connection came back.
+    // (A POST to the API: the service worker would answer '/' from the cache.)
+    const reachable = navigator.onLine !== false && await fetch('/api/proxy', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'ping' }), cache: 'no-store',
+    }).then(r => r.ok, () => false);
+    if (!reachable) {
+      setCacheBusy(false);
+      setCacheMessage('اکنون به سرور برنامه دسترسی نیست؛ کش دست نخورد تا برنامه بی‌اینترنت هم باز شود. وقتی وصل شدی دوباره امتحان کن.');
+      return;
+    }
     try {
       if (typeof caches !== 'undefined') {
         const names = await caches.keys();

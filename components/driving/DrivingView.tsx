@@ -166,7 +166,7 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
   const canSpeakPersian = canSpeakPersianInDrive(voice, settings, faDeviceAvailable);
 
   // Selected card pool for audio review loop
-  const activeCardQueue = useMemo(() => {
+  const pickedCardQueue = useMemo(() => {
     if (cardPoolKey === 'today' && todayQueue.length > 0) {
       return todayQueue.filter(c => c.kind !== 'grammar');
     }
@@ -180,6 +180,18 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
     }
     return liveCards.slice(0, 40);
   }, [cardPoolKey, todayQueue, liveCards]);
+
+  // The order of a drive's cards is fixed when it starts. Today's queue is
+  // shuffled again after every sync, and the loop, the screen and the
+  // bookmark button all index into it, so a sync mid-drive could repeat or
+  // skip cards and flag a word other than the one being spoken. Cards keep
+  // their latest data; a card deleted meanwhile drops out.
+  const [driveCardIds, setDriveCardIds] = useState<string[] | null>(null);
+  const activeCardQueue = useMemo(() => {
+    if (!driveCardIds) return pickedCardQueue;
+    const byId = new Map(liveCards.map(c => [c.id, c]));
+    return driveCardIds.map(id => byId.get(id)).filter((c): c is Flashcard => !!c);
+  }, [driveCardIds, pickedCardQueue, liveCards]);
 
   const selectedSource = useMemo(
     () => liveSources.find(s => s.id === selectedSourceId) || liveSources[0],
@@ -835,7 +847,8 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
         setStatusMessage('متن این بخش در دسترس نیست. اتصال را بررسی کن.');
       }
     } else {
-      if (activeCardQueue.length === 0) return;
+      if (pickedCardQueue.length === 0) return;
+      setDriveCardIds(pickedCardQueue.map(c => c.id));
       setCardIndex(0);
       setCardPhase('listen');
       setPaused(false);
@@ -973,6 +986,18 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
     handleNext,
   ]);
 
+  // After the drive the lock screen and the car's display no longer show it
+  // as playing (the handlers above are removed by that effect's cleanup).
+  useEffect(() => {
+    if (active || typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    try {
+      navigator.mediaSession.metadata = null;
+      navigator.mediaSession.playbackState = 'none';
+    } catch {
+      // MediaSession partially supported
+    }
+  }, [active]);
+
   // Giant One-Tap Bookmark handler (never interrupts playback!)
   const handleBookmarkNow = async () => {
     try {
@@ -1036,6 +1061,7 @@ export const DrivingView: React.FC<DrivingViewProps> = ({
     setChapterDrawerOpen(false);
     setActive(false);
     setPaused(false);
+    setDriveCardIds(null);
   };
 
   const currentCard = activeCardQueue[cardIndex % Math.max(1, activeCardQueue.length)];

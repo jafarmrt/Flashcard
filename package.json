@@ -1,7 +1,7 @@
 {
   "name": "lingua-cards",
   "private": true,
-  "version": "7.24.2",
+  "version": "7.24.3",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
@@ -10,7 +10,8 @@
     "lint:hooks": "eslint .",
     "test": "node --import tsx --test tests/*.test.ts",
     "start": "NODE_ENV=production tsx server.ts",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@fontsource-variable/literata": "^5.3.0",
@@ -29,6 +30,7 @@
     "webworker": "^0.8.4"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^22.14.0",
