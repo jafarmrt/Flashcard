@@ -22,9 +22,11 @@ export async function fakeOutsideServices(target: Page | BrowserContext): Promis
 
 // The checks' `test`: every page's context has the outside services faked.
 export const test = base.extend({
-  context: async ({ context }, use) => {
+  // (Playwright calls the second argument `use`; named otherwise so the
+  // React hooks lint does not take it for a hook.)
+  context: async ({ context }, provide) => {
     await fakeOutsideServices(context);
-    await use(context);
+    await provide(context);
   },
 });
 export { expect };
