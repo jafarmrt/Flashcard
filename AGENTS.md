@@ -325,9 +325,11 @@ safety, 7.24.1) are done. Still open:
   INCR+PEXPIRE, key `login-fails:<user>`; the old `login-fail:` JSON keys
   are no longer read); sync lock 65 s and KV requests time out at 15 s;
   TTLs on `tg:code:*` and `keys:<u>:unreadable:*`; security headers in
-  vercel.json and server.ts (no script CSP yet). Still open: the account
-  is one Redis value that grows (studyHistory, practice, tombstones): ask
-  the user for the sizes on the usage page before changing the layout;
+  vercel.json and server.ts (no script CSP yet). The account is one Redis
+  value that grows (studyHistory, practice, tombstones): on 2026-11-28 the
+  usage page showed 1.1 MB for it (and 602 kB for 36 chapter texts);
+  Upstash free allows 10 MB per request and 100 MB per record, so no
+  change of layout yet: look again when it nears ~5 MB;
   undoing a review after a sync leaves its log on the server (minor: stats
   only, and rare since the app syncs on leaving).
 - Phase 2: done in 7.24.3: e2e flows (sign in, read and make a card,
