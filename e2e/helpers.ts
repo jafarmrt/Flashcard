@@ -1,5 +1,33 @@
 // Shared steps for the end-to-end checks.
-import { expect, type Page } from '@playwright/test';
+import { test as base, expect, type BrowserContext, type Page } from '@playwright/test';
+
+// Services outside the app (the free dictionary and its health check) are
+// answered here, so a check never depends on them: in CI the free
+// dictionary's health check failed with 503 and that console error failed
+// the run. The meaning is made up and always the same.
+export async function fakeOutsideServices(target: Page | BrowserContext): Promise<void> {
+  await target.route('**/api/proxy', async route => {
+    const body = route.request().postDataJSON() || {};
+    if (body.action === 'ping-free-dict') return route.fulfill({ json: { message: 'pong' } });
+    if (body.action === 'dictionary-lookup' || body.action === 'free-enrich') {
+      return route.fulfill({ json: {
+        found: true, headword: body.word || body.term, pronunciation: '/ˈhɑːrbər/', partOfSpeech: 'noun',
+        definitions: ['a place where boats stay'], examples: [], translation: 'بندر', collocations: [],
+      } });
+    }
+    if (body.action === 'free-translate') return route.fulfill({ json: { translation: 'بندر' } });
+    return route.continue();
+  });
+}
+
+// The checks' `test`: every page's context has the outside services faked.
+export const test = base.extend({
+  context: async ({ context }, use) => {
+    await fakeOutsideServices(context);
+    await use(context);
+  },
+});
+export { expect };
 
 export const PASSWORD = 'long-enough-password-1';
 

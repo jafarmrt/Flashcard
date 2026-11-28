@@ -1,5 +1,4 @@
-import { test, expect } from '@playwright/test';
-import { countRows, register, seedDueCards, watchErrors } from './helpers';
+import { expect, test, countRows, register, seedDueCards, watchErrors } from './helpers';
 
 test('a review of due cards rates each card once and ends', async ({ page }) => {
   const errors = watchErrors(page);

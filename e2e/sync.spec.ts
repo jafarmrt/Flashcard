@@ -1,5 +1,5 @@
-import { test, expect, devices, type Page } from '@playwright/test';
-import { register, seedDueCards, signIn, watchErrors } from './helpers';
+import { devices, type Page } from '@playwright/test';
+import { expect, fakeOutsideServices, register, seedDueCards, signIn, test, watchErrors } from './helpers';
 
 const cardOn = (page: Page, id: string) => page.evaluate(cardId => new Promise<any>(resolve => {
   const open = indexedDB.open('LinguaCardsDB');
@@ -12,6 +12,8 @@ const cardOn = (page: Page, id: string) => page.evaluate(cardId => new Promise<a
 test('two devices on one account: cards and a review made on one reach the other', async ({ browser }) => {
   const phone = await browser.newContext({ ...devices['iPhone 13'] });
   const tablet = await browser.newContext({ ...devices['iPhone 13'] });
+  await fakeOutsideServices(phone);
+  await fakeOutsideServices(tablet);
   const a = await phone.newPage();
   const b = await tablet.newPage();
   const errorsA = watchErrors(a);

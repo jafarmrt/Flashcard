@@ -1,5 +1,4 @@
-import { test, expect } from '@playwright/test';
-import { openTab, register, signIn, watchErrors } from './helpers';
+import { expect, test, openTab, register, signIn, watchErrors } from './helpers';
 
 test('a new account opens on Today, and signing in again works', async ({ page }) => {
   const errors = watchErrors(page);

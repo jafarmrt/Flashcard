@@ -1,27 +1,9 @@
-import { test, expect, type Page } from '@playwright/test';
-import { countRows, openTab, register, watchErrors } from './helpers';
+import { countRows, expect, openTab, register, test, watchErrors } from './helpers';
 
 const TEXT = 'The old harbor was quiet at dusk. A small boat drifted past the beacon, and the sailors watched the water shiver under the wind.';
 
-// The dictionaries are outside services: their answer is made up here, so
-// the check runs without the internet and always sees the same meaning.
-async function fakeDictionaries(page: Page) {
-  await page.route('**/api/proxy', async route => {
-    const body = route.request().postDataJSON() || {};
-    if (body.action === 'dictionary-lookup' || body.action === 'free-enrich') {
-      return route.fulfill({ json: {
-        found: true, headword: body.word || body.term, pronunciation: '/ˈhɑːrbər/', partOfSpeech: 'noun',
-        definitions: ['a place where boats stay'], examples: [], translation: 'بندر', collocations: [],
-      } });
-    }
-    if (body.action === 'free-translate') return route.fulfill({ json: { translation: 'بندر' } });
-    return route.continue();
-  });
-}
-
 test('a pasted text is read, a tapped word becomes a card with its sentence, and the section is finished', async ({ page }) => {
   const errors = watchErrors(page);
-  await fakeDictionaries(page);
   await register(page);
   const cardsBefore = await countRows(page, 'flashcards');
 

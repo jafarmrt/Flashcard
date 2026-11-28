@@ -1,5 +1,4 @@
-import { test, expect } from '@playwright/test';
-import { countRows, openTab, register, seedDueCards, watchErrors } from './helpers';
+import { expect, test, countRows, openTab, register, seedDueCards, watchErrors } from './helpers';
 
 test('a paused lesson resumes with only the cards not rated yet, and its clock survives a sync', async ({ page }) => {
   const errors = watchErrors(page);
